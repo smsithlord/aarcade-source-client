@@ -718,6 +718,15 @@ bool KeyValues::LoadFromFile( IBaseFileSystem *filesystem, const char *resourceN
 	{
 		buffer[fileSize] = 0; // null terminate file as EOF
 		buffer[fileSize+1] = 0; // double NULL terminating in case this is a unicode file
+
+		// Added for Anarchy Arcade
+		//auto pch = strrchr(buffer, '}');
+		//if (pch - buffer + 1 <= bufSize)
+		//	buffer[pch - buffer+1] = 0;
+		//if (pch - buffer + 2 <= bufSize)
+		//	buffer[pch - buffer+2] = 0;
+		// End Added for Anarchy Arcade
+
 		bRetOK = LoadFromBuffer( resourceName, buffer, filesystem );
 	}
 	

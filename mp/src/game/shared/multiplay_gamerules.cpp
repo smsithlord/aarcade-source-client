@@ -752,6 +752,8 @@ ConVarRef suitcharger( "sk_suitcharger" );
 	//=========================================================
 	void CMultiplayRules::PlayerKilled( CBasePlayer *pVictim, const CTakeDamageInfo &info )
 	{
+		return;	// Added for Anarchy Arcade
+
 		DeathNotice( pVictim, info );
 
 		// Find the killer & the scorer

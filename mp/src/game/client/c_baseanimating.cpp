@@ -54,6 +54,8 @@
 #include "replay/replay_ragdoll.h"
 #include "studio_stats.h"
 #include "tier1/callqueue.h"
+#include "../../aarcade/client/c_prop_shortcut.h"
+#include "../../aarcade/client/c_anarchymanager.h"	// Added for Anarchy Arcade
 
 #ifdef TF_CLIENT_DLL
 #include "c_tf_player.h"
@@ -1979,7 +1981,11 @@ void C_BaseAnimating::StandardBlendingRules( CStudioHdr *hdr, Vector pos[], Quat
 
 	CIKContext auto_ik;
 	auto_ik.Init( hdr, GetRenderAngles(), GetRenderOrigin(), currentTime, gpGlobals->framecount, boneMask );
-	boneSetup.CalcAutoplaySequences( pos, q, currentTime, &auto_ik );
+
+	//if (!dynamic_cast<C_PropShortcutEntity*>(this))	// Added for Anarchy Arcade to fix the AA Voltron model crash bug
+	//{
+		boneSetup.CalcAutoplaySequences(pos, q, currentTime, &auto_ik);
+	//}
 
 	if ( hdr->numbonecontrollers() )
 	{
@@ -2905,7 +2911,7 @@ bool C_BaseAnimating::SetupBones( matrix3x4_t *pBoneToWorldOut, int nMaxBones, i
 			// to call GetAbsOrigin(), and they'll use our OLD bone transforms to get their attachments
 			// since we're right in the middle of setting up our new transforms. 
 			//
-			// Setting this flag forces move children to keep their abs transform invalidated.
+			// Setting this flag forces move children to keep their abs transform invalidated.WebSurfaceProxy: OnSimpleImageRendered
 			AddFlag( EFL_SETTING_UP_BONES );
 
 			// NOTE: For model scaling, we need to opt out of IK because it will mark the bones as already being calculated
@@ -2949,7 +2955,7 @@ bool C_BaseAnimating::SetupBones( matrix3x4_t *pBoneToWorldOut, int nMaxBones, i
 			// Let pose debugger know that we are blending
 			g_pPoseDebugger->StartBlending( this, hdr );
 
-			StandardBlendingRules( hdr, pos, q, currentTime, bonesMaskNeedRecalc );
+			StandardBlendingRules(hdr, pos, q, currentTime, bonesMaskNeedRecalc);
 
 			CBoneBitList boneComputed;
 			// don't calculate IK on ragdolls
@@ -3131,7 +3137,12 @@ ConVar r_drawothermodels( "r_drawothermodels", "1", FCVAR_CHEAT, "0=Off, 1=Norma
 //-----------------------------------------------------------------------------
 int C_BaseAnimating::DrawModel( int flags )
 {
-	VPROF_BUDGET( "C_BaseAnimating::DrawModel", VPROF_BUDGETGROUP_MODEL_RENDERING );
+	VPROF_BUDGET("C_BaseAnimating::DrawModel", VPROF_BUDGETGROUP_MODEL_RENDERING);
+	// Added for Anarchy Arcade
+	if ((g_pAnarchyManager->GetNoDrawShortcutsValue() == 1 || (g_pAnarchyManager->GetNoDrawShortcutsValue() == 2 && g_pAnarchyManager->UseSBSRendering() && g_pAnarchyManager->GetEye() != ISourceVirtualReality::VREye::VREye_Left)) && this->IsHotlink())
+		return 0;
+	// End Added for Anarchy Arcade
+
 	if ( !m_bReadyToDraw )
 		return 0;
 
@@ -3258,12 +3269,20 @@ bool C_BaseAnimating::OnInternalDrawModel( ClientModelRenderInfo_t *pInfo )
 //-----------------------------------------------------------------------------
 void C_BaseAnimating::DoInternalDrawModel( ClientModelRenderInfo_t *pInfo, DrawModelState_t *pState, matrix3x4_t *pBoneToWorldArray )
 {
+	// Added for Anarchy Arcade
+	if (!pInfo)
+	{
+		//DevMsg("C_BaseAnimating::DoInternalDrawModel called with no pInfo! Aborting!\n");
+		return;
+	}
+	// End added for Anarchy Arcade
+
 	if ( pState)
 	{
 		modelrender->DrawModelExecute( *pState, *pInfo, pBoneToWorldArray );
 	}
 
-	if ( vcollide_wireframe.GetBool() )
+  	if ( vcollide_wireframe.GetBool() )
 	{
 		if ( IsRagdoll() )
 		{
@@ -3455,7 +3474,7 @@ void C_BaseAnimating::DoAnimationEvents( CStudioHdr *pStudioHdr )
 	if ( nSeqNum >= nStudioNumSeq )
 	{
 		// This can happen e.g. while reloading Heavy's shotgun, switch to the minigun.
-		Warning( "%s[%d]: Playing sequence %d but there's only %d in total?\n", GetDebugName(), entindex(), nSeqNum, nStudioNumSeq );
+		// Warning( "%s[%d]: Playing sequence %d but there's only %d in total?\n", GetDebugName(), entindex(), nSeqNum, nStudioNumSeq );	// Added for Anarchy Arcade
 		return;
 	}
 

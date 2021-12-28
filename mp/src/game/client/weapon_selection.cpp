@@ -13,6 +13,7 @@
 #include <KeyValues.h>
 #include "filesystem.h"
 #include "iinput.h"
+#include "../aarcade/client/c_anarchymanager.h"	// Added for Anarchy Arcade
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -207,6 +208,10 @@ bool CBaseHudWeaponSelection::IsInSelectionMode()
 //-----------------------------------------------------------------------------
 void CBaseHudWeaponSelection::OpenSelection( void )
 {
+	// Added for Anarchy Arcade
+	if (!cvar->FindVar("allow_weapons")->GetBool())
+		return;
+
 	m_bSelectionVisible = true;
 	gHUD.LockRenderGroup( gHUD.LookupRenderGroupIndexByName( "weapon_selection" ) );
 }
@@ -405,6 +410,9 @@ bool CBaseHudWeaponSelection::IsHudMenuPreventingWeaponSelection()
 //-----------------------------------------------------------------------------
 void CBaseHudWeaponSelection::SelectSlot( int iSlot )
 {
+	if (g_pAnarchyManager->ActionBarUse(iSlot-1))	// Added for Anarchy Arcade
+		return;
+
 	// A menu may be overriding weapon selection commands
 	if ( HandleHudMenuInput( iSlot ) )
 	{
@@ -434,6 +442,9 @@ void CBaseHudWeaponSelection::UserCmd_Close(void)
 //-----------------------------------------------------------------------------
 void CBaseHudWeaponSelection::UserCmd_NextWeapon(void)
 {
+	if (g_pAnarchyManager->HandleCycleToNextWeapon())	// Added for Anarchy Arcade
+		return;
+
 	// If we're not allowed to draw, ignore weapon selections
 	if ( !BaseClass::ShouldDraw() )
 		return;
@@ -451,6 +462,9 @@ void CBaseHudWeaponSelection::UserCmd_NextWeapon(void)
 //-----------------------------------------------------------------------------
 void CBaseHudWeaponSelection::UserCmd_PrevWeapon(void)
 {
+	if (g_pAnarchyManager->HandleCycleToPrevWeapon())	// Added for Anarchy Arcade
+		return;
+
 	// If we're not allowed to draw, ignore weapon selections
 	if ( !BaseClass::ShouldDraw() )
 		return;

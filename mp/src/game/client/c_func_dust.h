@@ -105,6 +105,7 @@ public:
 
 private:
 	C_Func_Dust( const C_Func_Dust & ); // not defined, not accessible
+	bool				m_bIsModelless;	// Added for Anarchy Arcade
 };
 
 

@@ -18,8 +18,10 @@
 
 void CServerGameClients::GetPlayerLimits( int& minplayers, int& maxplayers, int &defaultMaxPlayers ) const
 {
-	minplayers = defaultMaxPlayers = 2; 
-	maxplayers = 16;
+	minplayers = defaultMaxPlayers = 1;	// Added for Anarchy Arcade
+	maxplayers = 32;
+	//minplayers = defaultMaxPlayers = 2; 
+	//maxplayers = 16;
 }
 
 // -------------------------------------------------------------------------------------------- //

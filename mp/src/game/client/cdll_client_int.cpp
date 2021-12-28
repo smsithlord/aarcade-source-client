@@ -148,6 +148,10 @@
 #include "fbxsystem/fbxsystem.h"
 #endif
 
+#include "../aarcade/client/c_anarchymanager.h"	// Added for Anarchy Arcade
+#include "ienginevgui.h"	// Added for Anarchy Arcade
+#include "vgui/IInput.h"	// Added for Anarchy Arcade
+
 extern vgui::IInputInternal *g_InputInternal;
 
 //=============================================================================
@@ -169,6 +173,8 @@ extern vgui::IInputInternal *g_InputInternal;
 #ifdef SIXENSE
 #include "sixense/in_sixense.h"
 #endif
+
+#include "../aarcade/client/c_anarchymanager.h"	// Added for Anarchy Arcade
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -368,7 +374,7 @@ public:
 
 	void OnGameUIActivated( void )
 	{
-		IGameEvent *event = gameeventmanager->CreateEvent( "gameui_activated" );
+		IGameEvent *event = gameeventmanager->CreateEventAA( "gameui_activated" );
 		if ( event )
 		{
 			gameeventmanager->FireEventClientSide( event );
@@ -377,7 +383,7 @@ public:
 
 	void OnGameUIHidden( void )
 	{
-		IGameEvent *event = gameeventmanager->CreateEvent( "gameui_hidden" );
+		IGameEvent *event = gameeventmanager->CreateEventAA( "gameui_hidden" );
 		if ( event )
 		{
 			gameeventmanager->FireEventClientSide( event );
@@ -1413,11 +1419,56 @@ void CHLClient::IN_OnMouseWheeled( int nDelta )
 //-----------------------------------------------------------------------------
 int CHLClient::IN_KeyEvent( int eventcode, ButtonCode_t keynum, const char *pszCurrentBinding )
 {
+	// Added for Anarchy Arcade
+	// Raw keyboard signal, if the client .dll returns 1, the engine processes the key as usual, otherwise,
+	//  if the client .dll returns 0, the key is swallowed.
+
+	// Handle pressing E on quest objects here in client code.
+	//const char* boundUseKey = engine->Key_LookupBindingExact("+use");
+	//gameuifuncs->GetBindingForButtonCode();
+	ButtonCode_t useButtonCode = gameuifuncs->GetButtonCodeForBind("use");
+	if (keynum == useButtonCode && eventcode == 1 && engine->IsInGame() && !g_pAnarchyManager->GetInputManager()->GetInputMode() && !enginevgui->IsGameUIVisible())
+	{
+		if (g_pAnarchyManager->GetQuestManager()->OnPlayerUse())
+			return 0;
+	}
+
+	if (keynum == KEY_V && eventcode == 1 && !g_pAnarchyManager->GetInputManager()->GetInputMode() && engine->IsInGame() && (vgui::input()->IsKeyDown(KEY_LCONTROL) || vgui::input()->IsKeyDown(KEY_RCONTROL)))
+	{
+		int iLength = vgui::system()->GetClipboardTextCount();
+		if (iLength > 0)
+		{
+			wchar* wideChars = new wchar[iLength];
+			vgui::system()->GetClipboardText(0, wideChars, iLength * sizeof(wchar));
+
+			char* chars = new char[iLength];
+			wcstombs(chars, wideChars, iLength);
+			delete[] wideChars;
+
+			std::string clipboardText = chars;
+			delete[] chars;
+
+			if (clipboardText.find("http://") == 0 || clipboardText.find("https://") == 0 || clipboardText.find("www") == 0 || (clipboardText.find(":") == 1 && g_pFullFileSystem->FileExists(clipboardText.c_str(), "")))
+			{
+				g_pAnarchyManager->CreateItemMenu(clipboardText);
+				return 0;
+			}
+			else if (clipboardText.find("{") == 0)
+			{
+				g_pAnarchyManager->CreateJSONItemMenu(clipboardText);
+				return 0;
+			}
+		}
+	}
+	// End Added for Anarchy Arcade
 	return input->KeyEvent( eventcode, keynum, pszCurrentBinding );
 }
 
 void CHLClient::ExtraMouseSample( float frametime, bool active )
 {
+	if (g_pAnarchyManager->IsPaused())	// Added for Anarchy Arcade
+		return;
+
 	Assert( C_BaseEntity::IsAbsRecomputationsEnabled() );
 	Assert( C_BaseEntity::IsAbsQueriesValid() );
 
@@ -1444,6 +1495,8 @@ void CHLClient::IN_SetSampleTime( float frametime )
 //-----------------------------------------------------------------------------
 void CHLClient::CreateMove ( int sequence_number, float input_sample_frametime, bool active )
 {
+	if (g_pAnarchyManager->IsPaused())	// Added for Anarchy Arcade
+		return;
 
 	Assert( C_BaseEntity::IsAbsRecomputationsEnabled() );
 	Assert( C_BaseEntity::IsAbsQueriesValid() );
@@ -1492,6 +1545,9 @@ void CHLClient::DecodeUserCmdFromBuffer( bf_read& buf, int slot )
 //-----------------------------------------------------------------------------
 void CHLClient::View_Render( vrect_t *rect )
 {
+	if (g_pAnarchyManager->IsPaused())	// Added for Anarchy Arcade
+		return;
+
 	VPROF( "View_Render" );
 
 	// UNDONE: This gets hit at startup sometimes, investigate - will cause NaNs in calcs inside Render()
@@ -1964,6 +2020,9 @@ bool CHLClient::DispatchUserMessage( int msg_type, bf_read &msg_data )
 
 void SimulateEntities()
 {
+	if (g_pAnarchyManager->IsPaused())	// Added for Anarchy Arcade
+		return;
+
 	VPROF_BUDGET("Client SimulateEntities", VPROF_BUDGETGROUP_CLIENT_SIM);
 
 	// Service timer events (think functions).
@@ -2098,9 +2157,11 @@ void UpdatePVSNotifiers()
 	}
 }
 
-
 void OnRenderStart()
 {
+	if (g_pAnarchyManager->IsPaused())	// Added for Anarchy Arcade
+		return;
+
 	VPROF( "OnRenderStart" );
 	MDLCACHE_CRITICAL_SECTION();
 	MDLCACHE_COARSE_LOCK();
@@ -2333,34 +2394,42 @@ void CHLClient::SaveReadFields( CSaveRestoreData *pSaveData, const char *pname, 
 
 void CHLClient::PreSave( CSaveRestoreData *s )
 {
-	g_pGameSaveRestoreBlockSet->PreSave( s );
+	//g_pGameSaveRestoreBlockSet->PreSave( s );// Added for Anarchy Arcade
 }
 
 void CHLClient::Save( CSaveRestoreData *s )
 {
+	/* Added for Anarchy Arcade
 	CSave saveHelper( s );
 	g_pGameSaveRestoreBlockSet->Save( &saveHelper );
+	*/
 }
 
 void CHLClient::WriteSaveHeaders( CSaveRestoreData *s )
 {
+	/* Added for Anarchy Arcade
 	CSave saveHelper( s );
 	g_pGameSaveRestoreBlockSet->WriteSaveHeaders( &saveHelper );
 	g_pGameSaveRestoreBlockSet->PostSave();
+	*/
 }
 
 void CHLClient::ReadRestoreHeaders( CSaveRestoreData *s )
 {
+	/* Added for Anarchy Arcade
 	CRestore restoreHelper( s );
 	g_pGameSaveRestoreBlockSet->PreRestore();
 	g_pGameSaveRestoreBlockSet->ReadRestoreHeaders( &restoreHelper );
+	*/
 }
 
 void CHLClient::Restore( CSaveRestoreData *s, bool b )
 {
+	/* Added for Anarchy Arcade
 	CRestore restore(s);
 	g_pGameSaveRestoreBlockSet->Restore( &restore, b );
 	g_pGameSaveRestoreBlockSet->PostRestore();
+	*/
 }
 
 static CUtlVector<EHANDLE> g_RestoredEntities;
@@ -2490,6 +2559,9 @@ void CHLClient::WriteSaveGameScreenshotOfSize( const char *pFilename, int width,
 // See RenderViewInfo_t
 void CHLClient::RenderView( const CViewSetup &setup, int nClearFlags, int whatToDraw )
 {
+	if (g_pAnarchyManager->IsPaused())	// Added for Anarchy Arcade
+		return;
+
 	VPROF("RenderView");
 	view->RenderView( setup, nClearFlags, whatToDraw );
 }
@@ -2505,8 +2577,13 @@ void CHLClient::ReloadFilesInList( IFileList *pFilesToReload )
 	ReloadSoundEntriesInList( pFilesToReload );
 }
 
+#include "../../aarcade/client/c_uitogglehandler.h"	// Added for Anarchy Arcade
+
 bool CHLClient::HandleUiToggle()
 {
+	// Added for Anarchy Arcade
+	return g_pUIToggleHandler->HandleUiToggle();
+	/*
 #if defined( REPLAY_ENABLED )
 	if ( !g_pEngineReplay || !g_pEngineReplay->IsSupportedModAndPlatform() )
 		return false;
@@ -2522,6 +2599,7 @@ bool CHLClient::HandleUiToggle()
 #else
 	return false;
 #endif
+	*/
 }
 
 bool CHLClient::ShouldAllowConsole()

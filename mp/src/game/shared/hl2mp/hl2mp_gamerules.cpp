@@ -115,6 +115,25 @@ static const char *s_PreserveEnts[] =
 	"info_player_deathmatch",
 	"info_player_combine",
 	"info_player_rebel",
+	"info_player_start",	// Added for Anarchy Arcade
+	"info_player_terrorist",		// Added for Anarchy Arcade
+	"info_player_counterterrorist",	// Added for Anarchy Arcade
+	"info_player_allies",	// Added for Anarchy Arcade
+	"info_player_axis",	// Added for Anarchy Arcade
+	"info_player_fof",	// Added for Anarchy Arcade
+	"info_player_coop",	// Added for Anarchy Arcade
+	"info_player_teamspawn",	// Added for Anarchy Arcade
+	"info_player_nmrih",	// Added for Anarchy Arcade
+	"info_player_american",	// Added for Anarchy Arcade
+	"info_player_british",	// Added for Anarchy Arcade
+	"emp_imp_commander",	// Added for Anarchy Arcade
+	"emp_nf_commander",	// Added for Anarchy Arcade
+	"info_es_spawn",	// Added for Anarchy Arcade
+	"info_hidden_spawn",	// Added for Anarchy Arcade
+	"info_marine_spawn",	// Added for Anarchy Arcade
+	"info_player_mi6",	// Added for Anarchy Arcade
+	"info_player_janus",	// Added for Anarchy Arcade
+	"ins_spawnpoint",	// Added for Anarchy Arcade
 	"info_map_parameters",
 	"keyframe_rope",
 	"move_rope",
@@ -774,7 +793,7 @@ void CHL2MPRules::ClientSettingsChanged( CBasePlayer *pPlayer )
 		//Too soon, set the cvar back to what it was.
 		//Note: this will make this function be called again
 		//but since our models will match it'll just skip this whole dealio.
-		if ( pHL2Player->GetNextModelChangeTime() >= gpGlobals->curtime )
+		if ( false && pHL2Player->GetNextModelChangeTime() >= gpGlobals->curtime )	// Added for Anarchy Arcade
 		{
 			char szReturnString[512];
 

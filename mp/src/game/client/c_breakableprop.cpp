@@ -37,6 +37,12 @@ void C_BreakableProp::SetFadeMinMax( float fademin, float fademax )
 	m_fadeMaxDist = fademax;
 }
 
+// Added for Anarchy Arcade
+int C_BreakableProp::DrawModel(int flags)
+{
+	return BaseClass::DrawModel(flags);
+}
+
 //-----------------------------------------------------------------------------
 // Copy fade from another breakable prop
 //-----------------------------------------------------------------------------

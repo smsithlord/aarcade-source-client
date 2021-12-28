@@ -59,6 +59,7 @@
 #include "c_prop_portal.h" //portal surface rendering functions
 #endif
 
+#include "../aarcade/client/c_anarchymanager.h"	// Added for Anarchy Arcade
 	
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -169,20 +170,34 @@ static void CalcDemoViewOverride( Vector &origin, QAngle &angles )
 // Selects the relevant member variable to update. You could do it manually, but...
 // We always set up the MONO eye, even when doing stereo, and it's set up to be mid-way between the left and right,
 // so if you don't really care about L/R (e.g. culling, sound, etc), just use MONO.
+// Added for Anarchy Arcade
+// This entire method is modified.
 CViewSetup &CViewRender::GetView(StereoEye_t eEye)
 {
 	if ( eEye == STEREO_EYE_MONO )
     {
 		return m_View;
     }
+	/*
+	else
+	{
+		return m_View;
+	}
+	*/
 	else if ( eEye == STEREO_EYE_RIGHT )
-    {
-        return m_ViewRight;
+	{
+		//return m_ViewLeft;
+		return m_View;
     }
 	else
-    {
-        Assert ( eEye == STEREO_EYE_LEFT );
-		return m_ViewLeft;
+	{
+		return m_View;
+		//return m_ViewRight;
+		//return m_ViewLeft;
+		//Assert(eEye == STEREO_EYE_LEFT);
+		//return m_ViewLeft;
+		//return m_ViewRight;
+		//return m_ViewRight;
     }
 }
 
@@ -416,7 +431,7 @@ void CViewRender::DriftPitch (void)
 	float		delta, move;
 
 	C_BasePlayer *player = C_BasePlayer::GetLocalPlayer();
-	if ( !player )
+	if ( !player || g_pAnarchyManager->IsVRActive())	// Added for Anarchy Arcade
 		return;
 
 #if defined( REPLAY_ENABLED )
@@ -487,7 +502,7 @@ void CViewRender::DriftPitch (void)
 
 StereoEye_t		CViewRender::GetFirstEye() const
 {
-	if( UseVR() )
+	if (g_pAnarchyManager->UseSBSRendering() && (!g_pAnarchyManager->IsVRActive() || g_pAnarchyManager->GetVRHMDRender()) && (!g_pAnarchyManager->IsVRActive() || g_pAnarchyManager->VRSpectatorMode() == 0 || g_pAnarchyManager->VRSpectatorMode() == 2)) // Added for Anarchy Arcade
 		return STEREO_EYE_LEFT;
 	else
 		return STEREO_EYE_MONO;
@@ -495,7 +510,7 @@ StereoEye_t		CViewRender::GetFirstEye() const
 
 StereoEye_t		CViewRender::GetLastEye() const
 {
-	if( UseVR() )
+	if (g_pAnarchyManager->UseSBSRendering() && (!g_pAnarchyManager->IsVRActive() || g_pAnarchyManager->GetVRHMDRender())) // Added for Anarchy Arcade
 		return STEREO_EYE_RIGHT;
 	else
 		return STEREO_EYE_MONO;
@@ -738,10 +753,11 @@ void CViewRender::SetUpViews()
 	//Adjust the viewmodel's FOV to move with any FOV offsets on the viewer's end
 	view.fovViewmodel = g_pClientMode->GetViewModelFOV() - flFOVOffset;
 
-	if ( UseVR() )
+	if (g_pAnarchyManager->UseSBSRendering() || UseVR() )	// Added for Anarchy Arcade
 	{
 		// Let the headtracking read the status of the HMD, etc.
 		// This call can go almost anywhere, but it needs to know the player FOV for sniper weapon zoom, etc
+		/*
 		if ( flFOVOffset == 0.0f )
 		{
 			g_ClientVirtualReality.ProcessCurrentTrackingState ( 0.0f );
@@ -750,9 +766,10 @@ void CViewRender::SetUpViews()
 		{
 			g_ClientVirtualReality.ProcessCurrentTrackingState ( view.fov );
 		}
+		*/
 
-		HeadtrackMovementMode_t hmmOverrideMode = g_pClientMode->ShouldOverrideHeadtrackControl();
-		g_ClientVirtualReality.OverrideView( &m_View, &ViewModelOrigin, &ViewModelAngles, hmmOverrideMode );
+		//HeadtrackMovementMode_t hmmOverrideMode = g_pClientMode->ShouldOverrideHeadtrackControl();
+		//g_ClientVirtualReality.OverrideView( &m_View, &ViewModelOrigin, &ViewModelAngles, hmmOverrideMode );
 
 		// left and right stereo views should default to being the same as the mono/middle view
 		m_ViewLeft = m_View;
@@ -760,7 +777,11 @@ void CViewRender::SetUpViews()
 		m_ViewLeft.m_eStereoEye = STEREO_EYE_LEFT;
 		m_ViewRight.m_eStereoEye = STEREO_EYE_RIGHT;
 
-		g_ClientVirtualReality.OverrideStereoView( &m_View, &m_ViewLeft, &m_ViewRight );
+		//m_ViewLeft.origin.x = m_View.origin.x - 10.0;
+		//m_ViewRight.origin.x = m_View.origin.x + 10.0;
+
+		//g_ClientVirtualReality.OverrideStereoView(&m_View, &m_ViewLeft, &m_ViewRight);
+		//g_pAnarchyManager->OverrideStereoView(&m_View, &m_ViewLeft, &m_ViewRight);
 	}
 	else
 	{
@@ -939,7 +960,8 @@ void CViewRender::WriteSaveGameScreenshotOfSize( const char *pFilename, int widt
 
 	if ( !bWriteResult )
 	{
-		Error( "Couldn't write bitmap data snapshot.\n" );
+		//Error( "Couldn't write bitmap data snapshot.\n" );	// Added for Anarchy Arcade
+		DevMsg("Couldn't write bitmap data snapshot.\n");	// Added for Anarchy Arcade
 	}
 	
 	free( pImage );
@@ -1054,12 +1076,61 @@ void CViewRender::SetUpOverView()
 //-----------------------------------------------------------------------------
 void CViewRender::Render( vrect_t *rect )
 {
-	Assert(s_DbgSetupOrigin == m_View.origin);
-	Assert(s_DbgSetupAngles == m_View.angles);
+	//Assert(s_DbgSetupOrigin == m_View.origin);
+	//Assert(s_DbgSetupAngles == m_View.angles);
+
+	// Added for Anarchy Arcade
+	if (g_pAnarchyManager->IsPaused())
+		return;
 
 	VPROF_BUDGET( "CViewRender::Render", "CViewRender::Render" );
-	tmZone( TELEMETRY_LEVEL0, TMZF_NONE, "%s", __FUNCTION__ );
+	tmZone(TELEMETRY_LEVEL0, TMZF_NONE, "%s", __FUNCTION__);
+	
+	m_View.zNear = g_pAnarchyManager->GetZNear();	// Added for Anarchy Arcade
+	/*
+	if (g_pAnarchyManager->IsVRActive())
+	{
+		C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
+		VMatrix playerMatrix;
+		playerMatrix.SetupMatrixOrgAngles(pPlayer->GetAbsOrigin(), pPlayer->GetAbsAngles());
 
+		C_DynamicProp* pVRHandLeft = g_pAnarchyManager->GetVRHand(0);
+		if (pVRHandLeft)
+		{
+			VMatrix handMatrix = g_pAnarchyManager->GetVRHandMatrix(0);
+
+			Vector origin = handMatrix.GetTranslation();
+			origin.z += 64.0;
+			handMatrix.SetTranslation(origin);
+
+			handMatrix = playerMatrix * handMatrix;
+			origin = handMatrix.GetTranslation();
+
+			QAngle angles;
+			MatrixAngles(handMatrix.As3x4(), angles);
+
+			engine->ServerCmd(VarArgs("set_object_pos %i %f %f %f %f %f %f;\n", pVRHandLeft->entindex(), origin.x, origin.y, origin.z, angles.x, angles.y, angles.z), false);
+		}
+
+		C_DynamicProp* pVRHandRight = g_pAnarchyManager->GetVRHand(1);
+		if (pVRHandRight)
+		{
+			VMatrix handMatrix = g_pAnarchyManager->GetVRHandMatrix(1);
+
+			Vector origin = handMatrix.GetTranslation();
+			origin.z += 64.0;
+			handMatrix.SetTranslation(origin);
+
+			handMatrix = playerMatrix * handMatrix;
+			origin = handMatrix.GetTranslation();
+
+			QAngle angles;
+			MatrixAngles(handMatrix.As3x4(), angles);
+
+			engine->ServerCmd(VarArgs("set_object_pos %i %f %f %f %f %f %f;\n", pVRHandRight->entindex(), origin.x, origin.y, origin.z, angles.x, angles.y, angles.z), false);
+		}
+	}
+	*/
 	vrect_t vr = *rect;
 
 	// Stub out the material system if necessary.
@@ -1071,10 +1142,663 @@ void CViewRender::Render( vrect_t *rect )
 	m_bForceNoVis			= false;
 	
 	C_BasePlayer *pPlayer = C_BasePlayer::GetLocalPlayer();
-
+	//m_View.angles.x = 0;
+	//m_View.angles.z = 0;
+	//engine->ClientCmd(VarArgs("setang %f %f %f; ", 0, m_View.angles.y, 0));
 
     // Set for console commands, etc.
     render->SetMainView ( m_View.origin, m_View.angles );
+
+	// Added for Anarchy Arcade
+	Vector originalOrigin = m_View.origin;// pPlayer->GetAbsOrigin();//m_View.origin;
+	QAngle originalAngles = m_View.angles;//pPlayer->GetAbsAngles();// m_View.angles;
+	originalAngles.x = 0;
+	//originalAngles.z = 0;
+
+	VMatrix originalProjectionMatrix = m_View.m_ViewToProjection;
+	StereoEye_t originalStereoEye = m_View.m_eStereoEye;
+	Vector foward;
+	Vector left;
+	Vector up;
+	float ipd;
+	if (pPlayer)
+	{
+		pPlayer->EyeVectors(&foward, &left, &up);
+		ipd = g_pAnarchyManager->GetIPD() * 0.0393701;
+	}
+	else
+		ipd = 63.0 * 0.0393701;
+
+	//POINT vrres;// = hmdGetResolution();
+	//if (g_pAnarchyManager->IsVRActive())
+	//{
+	//	vrres.x = 1920;// 2160;
+	//	vrres.y = 1080;// 1200;
+	//}
+
+	for (StereoEye_t eEye = GetLastEye(); eEye >= GetFirstEye(); eEye = (StereoEye_t)(eEye - 1))
+	//for (StereoEye_t eEye = GetFirstEye(); eEye <= GetLastEye(); eEye = (StereoEye_t)(eEye + 1))
+	{
+		//if (g_pAnarchyManager->UseSBSRendering() && eEye != STEREO_EYE_RIGHT)
+		//	continue;
+
+		CViewSetup &view = GetView(eEye);
+
+		//if (eEye == STEREO_EYE_MONO)
+		//{
+		m_View.m_eStereoEye = eEye;
+		//if (pPlayer && (eEye == STEREO_EYE_LEFT))
+		//{
+		//	m_View.origin = originalOrigin;
+		//	m_View.angles = originalAngles;
+		//}
+		//m_View.m_ViewToProjection = originalProjectionMatrix;
+		//}
+
+		if (pPlayer && (eEye == STEREO_EYE_LEFT || eEye == STEREO_EYE_RIGHT))//eEye != STEREO_EYE_MONO && 
+		{
+			//m_View.origin = originalOrigin;
+			//m_View.angles = originalAngles;
+
+			if (g_pAnarchyManager->IsVRActive())
+			{
+				//m_View.angles.x = 0;
+				//m_View.angles.z = 0;
+
+				//originalAngles.x = 0;
+				//originalAngles.z = 0;
+
+				// Get the headMatrix
+				VMatrix headMatrix = g_pAnarchyManager->GetVRHeadMatrix();
+				//headMatrix = g_pAnarchyManager->SMMatrixToVMatrix(headMatrix.Base(), false, false);
+
+				//Vector testerOrigin;
+				//QAngle testerAngles;
+				//MatrixAngles(headMatrix.As3x4(), testerAngles, testerOrigin);
+				//DevMsg("origin: %f %f %f\n", testerOrigin.x, testerOrigin.y, testerOrigin.z);
+
+				// Get the eye matrix
+				VMatrix eyeMatrix;
+				if (eEye == STEREO_EYE_LEFT)
+					eyeMatrix = g_pAnarchyManager->GetVRLeftEyeMatrix();
+				else
+					eyeMatrix = g_pAnarchyManager->GetVRRightEyeMatrix();
+
+				VMatrix goodProjection = VMatrix(eyeMatrix);
+				view.m_ViewToProjection = goodProjection;
+				/*
+				//if (!g_pAnarchyManager->GetShouldInvertVRMatrices())
+				eyeMatrix = eyeMatrix.InverseTR();
+
+				int iVal = (eEye == STEREO_EYE_LEFT) ? -1 : 1;
+				eyeMatrix = g_pAnarchyManager->SMMatrixToVMatrix(eyeMatrix.Base(), iVal, true);
+				*/
+				/*
+				float flMetersToGameUnits = 39.3701;
+				Vector eyeOffset = eyeMatrix.GetTranslation();
+				DevMsg("Length: %f %f %f\n", eyeOffset.x, eyeOffset.y, eyeOffset.z);
+				eyeOffset.x = (eyeOffset.x * 100.0) / flMetersToGameUnits;
+				eyeOffset.y = (eyeOffset.y * 100.0) / flMetersToGameUnits;
+				eyeOffset.z = (eyeOffset.z * 100.0) / flMetersToGameUnits;
+				*/
+
+				//float xOffset = eyeMatrix.GetTranslation().x;
+
+				// the eyeMatrix always returns 1 (in native VR units) as the x-offset, which gets changed into the conversion ratio upon SMMatrixToMatrix.
+				// so let's replace the offset with the actual IPD on the X, but be careful to actually USE the eyematrix provided.
+				//eyeMatrix.SetTranslation();
+
+				//Vector eyeOffset = eyeMatrix.GetTranslation();
+				//DevMsg("Length: %f %f %f\n", eyeOffset.x, eyeOffset.y, eyeOffset.z);
+				//DevMsg("Length: %f vs %f\n", eyeOffset.x, g_pAnarchyManager->GetIPD() * 0.0393701);
+				//Vector eyeOffset = eyeMatrix.GetTranslation();
+
+
+
+				/*
+				float flMetersToGameUnits = 39.3701;
+				float flEyeFactor = (eEye == STEREO_EYE_LEFT) ? 1.0 : -1.0;
+				Vector eyeOffset;
+				eyeOffset.x = 0;
+				eyeOffset.y = (ipd / 2.0 * flEyeFactor);
+				eyeOffset.z = 0;
+				eyeMatrix.SetTranslation(eyeOffset);
+				*/
+
+
+
+				//VMatrix eyeOffsetMatrix;
+				//QAngle eyeRotation;
+				//MatrixAngles(eyeMatrix.As3x4(), eyeRotation);
+				//eyeOffsetMatrix.SetupMatrixOrgAngles(Vector(eyeOffset.x, eyeOffset.y + (ipd / 2.0 * flEyeFactor), eyeOffset.z), eyeRotation);
+
+
+
+				/*
+				// get the head's rotation matrix
+				QAngle headRotation;
+				MatrixAngles(headMatrix.As3x4(), headRotation);
+				VMatrix headRotationMatrix;
+				headRotationMatrix.Identity();
+				headRotationMatrix.SetupMatrixOrgAngles(Vector(0, 0, 0), headRotation);
+
+				// get the head's position
+				Vector headOffset = headMatrix.GetTranslation();
+
+
+				//eyeOffsetMatrix.SetupMatrixOrgAngles(vrLeft * xOffset, QAngle(0, 0, 0));
+				//eyeMatrix.GetTranslation().x, 0, 0)
+				*/
+
+				/*
+				float flEyeFactor = (eEye == STEREO_EYE_LEFT) ? 1.0 : -1.0;
+				Vector eyeOffset = eyeMatrix.GetTranslation();
+				VMatrix eyeOffsetMatrix;
+				QAngle eyeRotation;
+				MatrixAngles(eyeMatrix.As3x4(), eyeRotation);
+				eyeOffsetMatrix.SetupMatrixOrgAngles(Vector(eyeOffset.x, eyeOffset.y + (ipd / 2.0 * flEyeFactor), eyeOffset.z), eyeRotation);
+				*/
+
+				//QAngle headRotation;
+				//MatrixAngles(headMatrix.As3x4(), headRotation);
+
+				//headMatrix = headMatrix * eyeOffsetMatrix;
+
+
+
+
+
+				/*
+				headMatrix = headMatrix * eyeMatrix;
+
+				// Get the player matrix
+				VMatrix composedMatrix;
+				composedMatrix.SetupMatrixOrgAngles(m_View.origin, m_View.angles);
+
+				// Apply worldFromEye for the current eye to the player's matrix.
+				composedMatrix = composedMatrix * headMatrix;
+
+				// Finally convert back to origin+angles.
+				MatrixAngles(composedMatrix.As3x4(), m_View.angles, m_View.origin);
+				*/
+
+				///*
+				//VMatrix pseudoPlayerPosition;
+				//pseudoPlayerPosition.SetupMatrixOrgAngles(m_View.origin, m_View.angles);
+
+				//VMatrix matOffset = g_pAnarchyManager->GetMidEyeFromEye(ISourceVirtualReality::VREye_Left);
+				//VMatrix worldFromEye = pseudoPlayerPosition * headMatrix * matOffset;
+
+				// Get the player matrix
+				VMatrix composedMatrix;
+				composedMatrix.SetupMatrixOrgAngles(originalOrigin, originalAngles);// m_View.origin, m_View.angles);
+
+				// Apply the head matrix
+				//Vector eyeTranslation = eyeMatrix.GetTranslation();
+				//eyeTranslation.z = 0;
+				//eyeTranslation.y = 0;
+				//eyeMatrix.SetTranslation(eyeTranslation);
+
+				// use original position
+				float flEyeFactor = (eEye == STEREO_EYE_LEFT) ? 1.0 : -1.0;
+				Vector pseudoOrigin = eyeMatrix.GetTranslation();
+				pseudoOrigin.y += (ipd / 2.0 * flEyeFactor);
+
+				/*
+				// convert
+				int iVal = (eEye == STEREO_EYE_LEFT) ? -1 : 1;
+				eyeMatrix = g_pAnarchyManager->SMMatrixToVMatrix(eyeMatrix.Base(), iVal, true);
+
+				// get rotation of the converted matrix
+				QAngle pseduoAngles;
+				MatrixAngles(eyeMatrix.As3x4(), pseduoAngles);
+				*/
+				QAngle pseudoAngles;
+
+				// build the peseudo matrix
+				VMatrix pseudoEyeMatrix;
+				pseudoEyeMatrix.SetupMatrixOrgAngles(pseudoOrigin, pseudoAngles);
+
+				// apply
+				composedMatrix = composedMatrix * headMatrix * pseudoEyeMatrix;
+
+				// Finally convert back to origin+angles.
+				MatrixAngles(composedMatrix.As3x4(), m_View.angles, m_View.origin);
+
+				// Extract the origin & angles
+				//QAngle angles;
+				//Vector origin;
+				//MatrixAngles(composedMatrix.As3x4(), angles, origin);
+				//eyeMatrix.SetupMatrixOrgAngles(origin, angles);
+				//m_View.origin = origin;
+				//m_View.angles = angles;
+				m_View.zNear = g_pAnarchyManager->GetZNear();// VIEW_NEARZ * 0.3;
+				//m_View.m_ViewToProjection = composedMatrix;
+				m_View.m_bViewToProjectionOverride = true;
+				//*/
+
+
+				//eyeMatrix.SetupMatrixOrgAngles(m_View.origin, m_View.angles);
+				//m_View.m_ViewToProjection = eyeMatrix;// eyeMatrix;
+				//m_View.m_ViewToProjection = composedMatrix;// eyeMatrix;
+				//POINT buf = hmdGetBufferSize();
+				//m_View.m_flAspectRatio = buf.x / buf.y;
+				//m_View.m_bViewToProjectionOverride = true;
+			}
+			else
+			{
+				if (g_pAnarchyManager->UseSBSRendering() && g_pAnarchyManager->GetNoDrawShortcutsValue() == 2)
+				{
+					//vr.x = view.width * 0.5;
+					//m_View.x = view.width * 0.5;
+				}
+				else
+				{
+					if (eEye == STEREO_EYE_LEFT)
+						m_View.origin -= left * (ipd / 2.0);
+					else if (eEye == STEREO_EYE_RIGHT)
+						m_View.origin += left * (ipd / 2.0);
+				}
+			}
+		}
+		else if (pPlayer && eEye == STEREO_EYE_MONO && g_pAnarchyManager->IsVRActive() && g_pAnarchyManager->VRSpectatorMode() == 1)
+		{
+			C_BaseEntity* pCamera = g_pAnarchyManager->GetBestSpectatorCameraObject();//C_PropShortcutEntity
+			if (pCamera)
+			{
+				//Vector cameraOrigin = pCamera->GetAbsOrigin();
+				//QAngle cameraAngles = pCamera->GetAbsAngles();
+				m_View.origin = pCamera->GetAbsOrigin();
+				m_View.angles = pCamera->GetAbsAngles();
+			}
+			else
+			{
+				VMatrix headMatrix = g_pAnarchyManager->GetVRHeadMatrix();
+				VMatrix composedMatrix;
+				composedMatrix.SetupMatrixOrgAngles(originalOrigin, originalAngles);
+
+				// apply
+				composedMatrix = composedMatrix * headMatrix;
+
+				// Finally convert back to origin+angles.
+				MatrixAngles(composedMatrix.As3x4(), m_View.angles, m_View.origin);
+			}
+
+			// adjust the view origin and rotation here
+			//m_View.origin = pPlayer->GetAbsOrigin();
+			//m_View.origin.z += 64.0;
+			//m_View.angles = pPlayer->GetAbsAngles();
+			////m_View.m_ViewToProjection = originalProjectionMatrix;
+			m_View.m_bViewToProjectionOverride = false;
+		}
+
+
+		/*
+		// Shift the head matrix on the X axis the distance specified in the eye matrix
+		Vector vrForward;
+		Vector vrLeft;
+		Vector vrUp;
+		headMatrix.GetBasisVectors(vrForward, vrLeft, vrUp);
+
+		float xOffset = eyeMatrix.GetTranslation().x;
+
+		VMatrix eyeOffsetMatrix;
+		eyeOffsetMatrix.SetupMatrixOrgAngles(vrLeft * xOffset, QAngle(0, 0, 0));
+		headMatrix = headMatrix * eyeOffsetMatrix;
+
+		// Get the rotation from the eye matrix
+		eyeOffsetMatrix.Identity();
+		QAngle eyeRotation;
+		MatrixAngles(eyeMatrix.As3x4(), eyeRotation);
+		eyeOffsetMatrix.SetupMatrixOrgAngles(Vector(0, 0, 0), eyeRotation);
+
+		// Apply the eye rotation
+		headMatrix = headMatrix * eyeOffsetMatrix;
+		*/
+
+		///* Added for Anarchy Arcade
+		if (g_pAnarchyManager->IsVRActive())
+			g_pAnarchyManager->SetLastFOV(view.fov);
+		else if (g_pAnarchyManager->UseSBSRendering())
+		{
+			view.fov = g_pAnarchyManager->GetLastFOV();
+
+			if (g_pAnarchyManager->GetNoDrawShortcutsValue() == 2)
+			{
+				static ConVarRef sv_restrict_aspect_ratio_fov("sv_restrict_aspect_ratio_fov");
+				float aspectRatio = engine->GetScreenAspectRatio() * 0.75f;	 // / (4/3)
+				float limitedAspectRatio = aspectRatio;
+				if ((sv_restrict_aspect_ratio_fov.GetInt() > 0 && engine->IsWindowedMode() && gpGlobals->maxClients > 1) ||
+					sv_restrict_aspect_ratio_fov.GetInt() == 2)
+				{
+					limitedAspectRatio = MIN(aspectRatio, 1.85f * 0.75f); // cap out the FOV advantage at a 1.85:1 ratio (about the widest any legit user should be)
+				}
+
+				view.fov = ScaleFOVByWidthRatio(view.fov, limitedAspectRatio);
+				view.fovViewmodel = ScaleFOVByWidthRatio(view.fovViewmodel, aspectRatio);
+			}
+		}
+		else
+		{
+			static ConVarRef sv_restrict_aspect_ratio_fov("sv_restrict_aspect_ratio_fov");
+			float aspectRatio = engine->GetScreenAspectRatio() * 0.75f;	 // / (4/3)
+			float limitedAspectRatio = aspectRatio;
+			if ((sv_restrict_aspect_ratio_fov.GetInt() > 0 && engine->IsWindowedMode() && gpGlobals->maxClients > 1) ||
+				sv_restrict_aspect_ratio_fov.GetInt() == 2)
+			{
+				limitedAspectRatio = MIN(aspectRatio, 1.85f * 0.75f); // cap out the FOV advantage at a 1.85:1 ratio (about the widest any legit user should be)
+			}
+
+			view.fov = ScaleFOVByWidthRatio(view.fov, limitedAspectRatio);
+			view.fovViewmodel = ScaleFOVByWidthRatio(view.fovViewmodel, aspectRatio);
+		}
+		//*/
+
+
+		// Let the client mode hook stuff.
+		g_pClientMode->PreRender(&view);	// Added for Anarchy Arcade TODO: This should only be called once per LEFT/RIGHT eye render cycle in SBS mode!
+
+		g_pClientMode->AdjustEngineViewport(vr.x, vr.y, vr.width, vr.height);
+
+		ToolFramework_AdjustEngineViewport(vr.x, vr.y, vr.width, vr.height);
+
+		float flViewportScale = mat_viewportscale.GetFloat();
+
+		view.m_nUnscaledX = vr.x;
+		view.m_nUnscaledY = vr.y;
+		view.m_nUnscaledWidth = vr.width;
+		view.m_nUnscaledHeight = vr.height;
+
+		switch (eEye)
+		{
+		case STEREO_EYE_MONO:
+		{
+
+			// Good test mode for debugging viewports that are not full-size.
+			//view.width			= vr.width * flViewportScale * 0.75f;
+			//view.height			= vr.height * flViewportScale * 0.75f;
+			//view.x				= vr.x + view.width * 0.10f;
+			//view.y				= vr.y + view.height * 0.20f;
+
+			view.x = vr.x * flViewportScale;
+			view.y = vr.y * flViewportScale;
+			view.width = vr.width * flViewportScale;
+			view.height = vr.height * flViewportScale;
+
+			float engineAspectRatio = (g_pAnarchyManager->IsVRActive() && g_pAnarchyManager->VRSpectatorMode() == 1) ? 0.0f : engine->GetScreenAspectRatio();	// Added for Anarchy Arcade
+			view.m_flAspectRatio = (engineAspectRatio > 0.0f) ? engineAspectRatio : ((float)view.width / (float)view.height);
+		}
+		break;
+
+		case STEREO_EYE_RIGHT:
+		case STEREO_EYE_LEFT:
+		{
+			// Added for Anarchy Arcade
+			//g_pHLVR->GetViewportBounds((ISourceVirtualReality::VREye) (eEye - 1), &view.x, &view.y, &view.width, &view.height);
+			g_pAnarchyManager->GetViewportBounds((ISourceVirtualReality::VREye) (eEye - 1), &view.x, &view.y, &view.width, &view.height);
+			// End added for Anarchy Arcade
+
+			if (g_pAnarchyManager->GetNoDrawShortcutsValue() == 2)
+			{
+				// doing a comparison render
+
+				//if (eEye == STEREO_EYE_LEFT)
+				//{
+				//	DevMsg("Left Eye:\n");
+					////view.x = view.width * 0.5;
+					//view.width = view.width * 0.5;
+					////view.m_flAspectRatio *= 2.0;
+				//}
+				//else
+				//	DevMsg("Right Eye:\n");
+				//DevMsg("\t%f and %f %f\n", view.zNear, view.zFar, view.fov);
+
+				//view.x = vr.x * flViewportScale;
+				//view.y = vr.y * flViewportScale;
+				//view.width = vr.width * flViewportScale;
+				//view.height = vr.height * flViewportScale;
+
+				//if (eEye == STEREO_EYE_LEFT)
+				//	view.x = -view.width * 0.5;
+
+				//vr.x = -view.x;
+				//view.m_bRenderToSubrectOfLargerScreen = true;
+
+				/*view.m_nUnscaledWidth = view.width;
+				view.m_nUnscaledHeight = view.height;
+				view.m_nUnscaledX = view.x;
+				view.m_nUnscaledY = view.y;*/
+
+				view.x = vr.x * flViewportScale;
+				view.y = vr.y * flViewportScale;
+				view.width = vr.width * flViewportScale;
+				view.height = vr.height * flViewportScale;
+
+				float engineAspectRatio = engine->GetScreenAspectRatio();
+				view.m_flAspectRatio = (engineAspectRatio > 0.0f) ? engineAspectRatio : ((float)view.width / (float)view.height);
+			}
+			else
+			{
+				view.m_flAspectRatio = view.width / view.height;// 1.777778 * 0.5;
+				view.m_nUnscaledWidth = view.width;
+				view.m_nUnscaledHeight = view.height;
+				view.m_nUnscaledX = view.x;
+				view.m_nUnscaledY = view.y;
+			}
+		}
+		break;
+
+		default:
+			Assert(false);
+			break;
+		}
+
+		// HLVR force actual aspect ratio
+		//view.m_flAspectRatio = (float)view.width / (float)view.height;
+		if (g_pAnarchyManager->IsVRActive() && view.m_flAspectRatio <= 0.f)
+			view.m_flAspectRatio = (float)view.width / (float)view.height;
+
+		int nClearFlags = VIEW_CLEAR_DEPTH | VIEW_CLEAR_STENCIL;
+
+		// Determine if we should draw view model ( client mode override )
+		bool drawViewModel = g_pClientMode->ShouldDrawViewModel();
+
+		if (cl_leveloverview.GetFloat() > 0)
+		{
+			SetUpOverView();
+			nClearFlags |= VIEW_CLEAR_COLOR;
+			drawViewModel = false;
+		}
+
+		// Apply any player specific overrides
+		if (pPlayer)
+		{
+			// Override view model if necessary
+			if (!pPlayer->m_Local.m_bDrawViewmodel)
+			{
+				drawViewModel = false;
+			}
+		}
+
+		int flags = 0;
+		if ((eEye == STEREO_EYE_MONO || UseVR()) && !engine->IsTakingScreenshot())	{
+			flags = RENDERVIEW_DRAWHUD;
+		}
+		if (drawViewModel && !engine->IsTakingScreenshot())
+		{
+			flags |= RENDERVIEW_DRAWVIEWMODEL;
+		}
+
+		if (eEye == STEREO_EYE_RIGHT)
+		{
+			// we should use the monitor view from the left eye for both eyes
+			flags |= RENDERVIEW_SUPPRESSMONITORRENDERING;
+		}
+
+		RenderView(view, nClearFlags, flags);
+
+		if (UseVR())
+		{
+			bool bDoUndistort = !engine->IsTakingScreenshot();
+
+			if (bDoUndistort)
+			{
+				g_ClientVirtualReality.PostProcessFrame(eEye);
+			}
+
+			// logic here all cloned from code in viewrender.cpp around RenderHUDQuad:
+			/*
+			// figure out if we really want to draw the HUD based on freeze cam
+			bool bInFreezeCam = (pPlayer && pPlayer->GetObserverMode() == OBS_MODE_FREEZECAM);
+
+			// draw the HUD after the view model so its "I'm closer" depth queues work right.
+			if (!bInFreezeCam && g_ClientVirtualReality.ShouldRenderHUDInWorld())
+			{
+				// TODO - a bit of a shonky test - basically trying to catch the main menu, the briefing screen, the loadout screen, etc.
+				bool bTranslucent = !g_pMatSystemSurface->IsCursorVisible();
+				g_ClientVirtualReality.OverlayHUDQuadWithUndistort(view, bDoUndistort, g_pClientMode->ShouldBlackoutAroundHUD(), bTranslucent);
+			}
+			*/
+		}
+
+		// TODO: should these be inside or outside the stereo eye stuff?
+		g_pClientMode->PostRender();	// Added for Anarchy Arcade TODO: This should only be called once per LEFT/RIGHT eye render cycle in SBS mode!
+
+		//if (g_pAnarchyManager->IsVRActive() && eEye == STEREO_EYE_LEFT)
+		//	g_pAnarchyManager->RenderVREyeToView(m_View, ISourceVirtualReality::VREye::VREye_Left);
+
+
+		if (!g_pAnarchyManager->IsVRActive() && g_pAnarchyManager->UseSBSRendering() && g_pAnarchyManager->GetNoDrawShortcutsValue() == 2)
+		{
+			// if this is the 1st eye, transpose it onto the other half of the screen.
+			if (eEye == STEREO_EYE_RIGHT)
+			{
+
+			}
+
+			// otherwise, if this is the 2nd eye, transpose both sides of the screen
+		}
+	}
+
+	///*
+	//m_View.m_ViewToProjection = originalProjectionMatrix;
+	//m_View.m_eStereoEye = originalStereoEye;
+	//m_View.origin = originalOrigin;
+	//m_View.angles = originalAngles;
+	//m_View.m_bViewToProjectionOverride = false;
+	//*/
+
+
+	if (false && !g_pAnarchyManager->IsVRActive() && g_pAnarchyManager->UseSBSRendering() && g_pAnarchyManager->GetNoDrawShortcutsValue() == 2)
+	{
+		/*
+		// transpose the sides of the screen.
+		CMatRenderContextPtr pRenderContext(materials);
+		ITexture* pRenderTexture = pRenderContext->GetRenderTarget();
+
+
+		Rect_t	DestinationRect, SourceRect;
+
+		SourceRect.width = m_View.width * 0.5;
+		SourceRect.height = m_View.height;
+		SourceRect.x = m_View.width * 0.5;
+		SourceRect.y = 0;
+
+
+		DestinationRect.width = m_View.width * 0.8;
+		DestinationRect.height = m_View.height;
+		DestinationRect.x = 0;
+		DestinationRect.y = 0;
+
+		//pRenderContext->CopyRenderTargetToTextureEx(pRenderTexture, 0, &SourceRect, &DestinationRect);
+		pRenderContext->CopyTextureToRenderTargetEx(0, pRenderTexture, &SourceRect, &DestinationRect);
+		*/
+
+		CMatRenderContextPtr pRenderContext(materials);
+
+		ITexture	*pFullFrameFB1 = materials->FindTexture("_rt_FullFrameFB1", TEXTURE_GROUP_RENDER_TARGET);
+		IMaterial	*pCopyMaterial = materials->FindMaterial("dev/upscale", TEXTURE_GROUP_OTHER);
+		pCopyMaterial->IncrementReferenceCount();
+
+		Rect_t	DownscaleRect, UpscaleRect;
+
+		m_View.m_nUnscaledWidth = m_View.width * 0.5;
+
+		DownscaleRect.x = m_View.x;
+		DownscaleRect.y = m_View.y;
+		DownscaleRect.width = m_View.width;
+		DownscaleRect.height = m_View.height;
+
+		UpscaleRect.x = m_View.m_nUnscaledX;
+		UpscaleRect.y = m_View.m_nUnscaledY;
+		UpscaleRect.width = m_View.m_nUnscaledWidth;
+		UpscaleRect.height = m_View.m_nUnscaledHeight;
+
+		pRenderContext->CopyRenderTargetToTextureEx(pFullFrameFB1, 0, &DownscaleRect, &DownscaleRect);
+		pRenderContext->DrawScreenSpaceRectangle(pCopyMaterial, UpscaleRect.x, UpscaleRect.y, UpscaleRect.width, UpscaleRect.height,
+			DownscaleRect.x, DownscaleRect.y, DownscaleRect.x + DownscaleRect.width - 1, DownscaleRect.y + DownscaleRect.height - 1,
+			pFullFrameFB1->GetActualWidth(), pFullFrameFB1->GetActualHeight());
+
+		pCopyMaterial->DecrementReferenceCount();
+
+		/*
+		CMatRenderContextPtr pRenderContext(materials);
+
+		ITexture	*pFullFrameFB1 = materials->FindTexture("_rt_FullFrameFB1", TEXTURE_GROUP_RENDER_TARGET);
+		IMaterial	*pCopyMaterial = materials->FindMaterial("dev/upscale", TEXTURE_GROUP_OTHER);
+		pCopyMaterial->IncrementReferenceCount();
+
+		Rect_t	DownscaleRect, UpscaleRect;
+
+		DownscaleRect.x = m_View.x;
+		DownscaleRect.y = m_View.y;
+		DownscaleRect.width = m_View.width;
+		DownscaleRect.height = m_View.height;
+
+		UpscaleRect.x = m_View.m_nUnscaledX;
+		UpscaleRect.y = m_View.m_nUnscaledY;
+		UpscaleRect.width = m_View.m_nUnscaledWidth;
+		UpscaleRect.height = m_View.m_nUnscaledHeight;
+
+		pRenderContext->CopyRenderTargetToTextureEx(pFullFrameFB1, 0, &DownscaleRect, &DownscaleRect);
+		pRenderContext->DrawScreenSpaceRectangle(pCopyMaterial, UpscaleRect.x, UpscaleRect.y, UpscaleRect.width, UpscaleRect.height,
+			DownscaleRect.x, DownscaleRect.y, DownscaleRect.x + DownscaleRect.width - 1, DownscaleRect.y + DownscaleRect.height - 1,
+			pFullFrameFB1->GetActualWidth(), pFullFrameFB1->GetActualHeight());
+
+		pCopyMaterial->DecrementReferenceCount();
+		*/
+	}
+
+	//g_pAnarchyManager->VRFrameReady();
+	engine->EngineStats_EndFrame();
+
+	// Draw all of the UI stuff "fullscreen"
+	// (this is not health, ammo, etc. Nor is it pre-game briefing interface stuff - this is the stuff that appears when you hit Esc in-game)
+	// In stereo mode this is rendered inside of RenderView so it goes into the render target
+	if (!g_ClientVirtualReality.ShouldRenderHUDInWorld() && !engine->IsTakingScreenshot())
+	{
+		CViewSetup view2d;
+		view2d.x = rect->x;
+		view2d.y = rect->y;
+		view2d.width = rect->width;
+		view2d.height = rect->height;
+
+		render->Push2DView(view2d, 0, NULL, GetFrustum());
+		render->VGui_Paint(PAINT_UIPANELS | PAINT_CURSOR);
+		render->PopView(GetFrustum());
+	}
+
+	/*
+	if (g_pAnarchyManager->IsVRActive())
+	{
+		g_pAnarchyManager->VRFrameReady();
+		g_pAnarchyManager->VRFrameEnd();
+	}
+	*/
+	// End Added for Anarchy Arcade
+
+
+	/* Added for Anarchy Arcade (ORIGINAL CODE)
 
     for( StereoEye_t eEye = GetFirstEye(); eEye <= GetLastEye(); eEye = (StereoEye_t)(eEye+1) )
 	{
@@ -1305,7 +2029,7 @@ void CViewRender::Render( vrect_t *rect )
 		render->VGui_Paint( PAINT_UIPANELS | PAINT_CURSOR );
 		render->PopView( GetFrustum() );
 	}
-
+	*/
 
 }
 

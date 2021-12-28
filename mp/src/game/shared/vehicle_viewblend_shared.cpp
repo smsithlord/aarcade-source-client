@@ -205,6 +205,8 @@ void RemapViewAngles( ViewSmoothingData_t *pData, QAngle &vehicleEyeAngles )
 	vehicleEyeAngles.z = ApplyViewLocking( vehicleEyeAngles.z, vecEyeAnglesRemapped.z, pData->rollLockData, eRollCurvePart );
 }
 
+ConVar vehicleeyeoffset("vehicle_eye_offset", "0 0 0", FCVAR_ARCHIVE | FCVAR_REPLICATED, "An XYZ offset to adjust vehicle eyes with.");	// Added for Anarchy Arcade
+
 //-----------------------------------------------------------------------------
 // Purpose: Vehicle dampening shared between server and client
 //-----------------------------------------------------------------------------
@@ -220,6 +222,28 @@ void SharedVehicleViewSmoothing(CBasePlayer *pPlayer,
 	Vector vehicleEyeOrigin;
 	QAngle vehicleEyeAngles;
 	pData->pVehicle->GetAttachment( eyeAttachmentIndex, vehicleEyeOrigin, vehicleEyeAngles );
+
+
+
+
+	// Added for Anarchy Arcade
+//#ifdef CLIENT_DLL
+	Vector originOffset;
+	UTIL_StringToVector(originOffset.Base(), vehicleeyeoffset.GetString());
+
+	Vector forward, right, up;
+	pData->pVehicle->GetVectors(&forward, &right, &up);
+
+	vehicleEyeOrigin += (forward * originOffset.x);
+	vehicleEyeOrigin += (right * originOffset.y);
+	vehicleEyeOrigin += (up * originOffset.z);
+	//vehicleEyeOrigin.z += originOffset.z;
+//#endif
+	// Ended Added for Anarchy Arcade
+
+
+
+
 	AngleMatrix( vehicleEyeAngles, vehicleEyePosToWorld );
 
 	// Dampen the eye positional change as we drive around.

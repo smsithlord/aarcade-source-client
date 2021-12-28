@@ -1036,6 +1036,8 @@ void CInput::ExtraMouseSample( float frametime, bool active )
 		}
 #endif
 	}
+	else
+		ControllerMove(frametime, cmd);	// Added for Anarchy Arcade
 
 	// Retreive view angles from engine ( could have been set in IN_AdjustAngles above )
 	engine->GetViewAngles( viewangles );
@@ -1077,7 +1079,8 @@ void CInput::ExtraMouseSample( float frametime, bool active )
 	// Let the headtracker override the view at the very end of the process so
 	// that vehicles and other stuff in g_pClientMode->CreateMove can override 
 	// first
-	if ( active && UseVR() )
+	if (active && UseVR())
+	//if (active && UseVR() && false)	// Added for Anarchy Arcade
 	{
 		C_BasePlayer *pPlayer = C_BasePlayer::GetLocalPlayer();
 		if( pPlayer && !pPlayer->GetVehicle() )
@@ -1234,6 +1237,7 @@ void CInput::CreateMove ( int sequence_number, float input_sample_frametime, boo
 #endif
 
 		if ( UseVR() )
+		//if (UseVR() && false)	// Added for Anarchy Arcade
 		{
 			C_BasePlayer *pPlayer = C_BasePlayer::GetLocalPlayer();
 			if( pPlayer && !pPlayer->GetVehicle() )

@@ -26,19 +26,21 @@ static ConVar cam_command( "cam_command", "0", FCVAR_CHEAT | FCVAR_CHEAT);	 // t
 static ConVar cam_snapto( "cam_snapto", "0", FCVAR_ARCHIVE | FCVAR_CHEAT);	 // snap to thirdperson view
 static ConVar cam_ideallag( "cam_ideallag", "4.0", FCVAR_ARCHIVE| FCVAR_CHEAT, "Amount of lag used when matching offset to ideal angles in thirdperson view" );
 static ConVar cam_idealdelta( "cam_idealdelta", "4.0", FCVAR_ARCHIVE| FCVAR_CHEAT, "Controls the speed when matching offset to ideal angles in thirdperson view" );
-ConVar cam_idealyaw( "cam_idealyaw", "0", FCVAR_ARCHIVE| FCVAR_CHEAT );	 // thirdperson yaw
-ConVar cam_idealpitch( "cam_idealpitch", "0", FCVAR_ARCHIVE | FCVAR_CHEAT  );	 // thirperson pitch
-ConVar cam_idealdist( "cam_idealdist", "150", FCVAR_ARCHIVE | FCVAR_CHEAT );	 // thirdperson distance
-ConVar cam_idealdistright( "cam_idealdistright", "0", FCVAR_ARCHIVE | FCVAR_CHEAT );	 // thirdperson distance
-ConVar cam_idealdistup( "cam_idealdistup", "0", FCVAR_ARCHIVE | FCVAR_CHEAT );	 // thirdperson distance
-static ConVar cam_collision( "cam_collision", "1", FCVAR_ARCHIVE | FCVAR_CHEAT, "When in thirdperson and cam_collision is set to 1, an attempt is made to keep the camera from passing though walls." );
+ConVar cam_idealyaw("cam_idealyaw", "0", FCVAR_ARCHIVE);	 // thirdperson yaw	// Added for Anarchy Arcade
+ConVar cam_idealpitch("cam_idealpitch", "0", FCVAR_ARCHIVE);	 // thirperson pitch	// Added for Anarchy Arcade
+ConVar cam_idealdist("cam_idealdist", "150", FCVAR_ARCHIVE);	 // thirdperson distance	// Added for Anarchy Arcade
+ConVar cam_idealdistright("cam_idealdistright", "0", FCVAR_ARCHIVE);	 // thirdperson distance	// Added for Anarchy Arcade
+ConVar cam_idealdistup("cam_idealdistup", "0", FCVAR_ARCHIVE);	 // thirdperson distance	// Added for Anarchy Arcade
+ConVar camismayamode("cam_is_maya_mode", "0", FCVAR_ARCHIVE | FCVAR_HIDDEN, "Internal.  Used to expose if the camera is in maya mode or not.");	// Added for Anarchy Arcade
+ConVar camisthirdpersonmode("cam_is_thirdperson_mode", "0", FCVAR_ARCHIVE | FCVAR_HIDDEN, "Internal.  Used to expose if the camera is in thirdperson mode or not.");	// Added for Anarchy Arcade
+static ConVar cam_collision("cam_collision", "1", FCVAR_NONE, "When in thirdperson and cam_collision is set to 1, an attempt is made to keep the camera from passing though walls.");	// Added for Anarchy Arcade
 static ConVar cam_showangles( "cam_showangles", "0", FCVAR_CHEAT, "When in thirdperson, print viewangles/idealangles/cameraoffsets to the console." );
-static ConVar c_maxpitch( "c_maxpitch", "90", FCVAR_ARCHIVE| FCVAR_CHEAT );
-static ConVar c_minpitch( "c_minpitch", "0", FCVAR_ARCHIVE| FCVAR_CHEAT );
-static ConVar c_maxyaw( "c_maxyaw",   "135", FCVAR_ARCHIVE | FCVAR_CHEAT);
-static ConVar c_minyaw( "c_minyaw",   "-135", FCVAR_ARCHIVE| FCVAR_CHEAT );
-static ConVar c_maxdistance( "c_maxdistance",   "200", FCVAR_ARCHIVE| FCVAR_CHEAT );
-static ConVar c_mindistance( "c_mindistance",   "30", FCVAR_ARCHIVE| FCVAR_CHEAT );
+static ConVar c_maxpitch( "c_maxpitch", "180", FCVAR_NONE );	// Added for Anarchy Arcade
+static ConVar c_minpitch("c_minpitch", "-179", FCVAR_NONE);	// Added for Anarchy Arcade
+static ConVar c_maxyaw("c_maxyaw", "180", FCVAR_NONE);	// Added for Anarchy Arcade
+static ConVar c_minyaw("c_minyaw", "-179", FCVAR_NONE);	// Added for Anarchy Arcade
+static ConVar c_maxdistance("c_maxdistance", "1000", FCVAR_NONE);	// Added for Anarchy Arcade
+static ConVar c_mindistance("c_mindistance", "50", FCVAR_NONE);	// Added for Anarchy Arcade
 static ConVar c_orthowidth( "c_orthowidth",   "100", FCVAR_ARCHIVE| FCVAR_CHEAT );
 static ConVar c_orthoheight( "c_orthoheight",   "100", FCVAR_ARCHIVE | FCVAR_CHEAT );
 
@@ -66,6 +68,10 @@ void CAM_ToThirdPerson(void)
 
 	input->CAM_ToThirdPerson();
 
+	// Added for Anarchy Arcade
+	engine->ClientCmd("cam_is_thirdperson_mode 1");
+	// End Added for Anarchy Arcade
+
 	// Let the local player know
 	C_BasePlayer *localPlayer = C_BasePlayer::GetLocalPlayer();
 	if ( localPlayer )
@@ -87,6 +93,16 @@ static bool & Is_CAM_ThirdPerson_MayaMode(void)
 }
 void CAM_ToThirdPerson_MayaMode(void)
 {
+	// Added for Anarchy Arcade
+	ConVar* pMayaModeConVar = cvar->FindVar("cam_is_maya_mode");
+	if (pMayaModeConVar->GetBool())
+		pMayaModeConVar->SetValue(false);
+	else
+		pMayaModeConVar->SetValue(true);
+
+	//engine->ClientCmd("toggle cam_is_maya_mode");
+	// End Added for Anarchy Arcade
+
 	bool &rb = Is_CAM_ThirdPerson_MayaMode();
 	rb = !rb;
 }
@@ -109,6 +125,10 @@ void CAM_ToFirstPerson(void)
 	}
 
 	input->CAM_ToFirstPerson();
+
+	// Added for Anarchy Arcade
+	engine->ClientCmd("cam_is_thirdperson_mode 0");
+	// End Added for Anarchy Arcade
 
 	// Let the local player know
 	if ( localPlayer )

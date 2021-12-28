@@ -28,6 +28,7 @@ public:
 	CGlowObjectManager() :
 	m_nFirstFreeSlot( GlowObjectDefinition_t::END_OF_FREE_LIST )
 	{
+		m_pGlowEnabledConVar = NULL;	// Added for Anarchy Arcade
 	}
 
 	int RegisterGlowObject( C_BaseEntity *pEntity, const Vector &vGlowColor, float flGlowAlpha, bool bRenderWhenOccluded, bool bRenderWhenUnoccluded, int nSplitScreenSlot )
@@ -115,7 +116,19 @@ public:
 
 	void RenderGlowEffects( const CViewSetup *pSetup, int nSplitScreenSlot );
 
+	// Added for Anarchy Arcade
+	bool GlowEnabled()
+	{
+		if (!m_pGlowEnabledConVar)
+			m_pGlowEnabledConVar = cvar->FindVar("glow_enabled");
+
+		return (m_pGlowEnabledConVar) ? m_pGlowEnabledConVar->GetBool() : false;
+	}
+	// End added for Anarchy Arcade
+
 private:
+
+	ConVar* m_pGlowEnabledConVar;	// Added for Anarchy Arcade
 
 	void RenderGlowModels( const CViewSetup *pSetup, int nSplitScreenSlot, CMatRenderContextPtr &pRenderContext );
 	void ApplyEntityGlowEffects( const CViewSetup *pSetup, int nSplitScreenSlot, CMatRenderContextPtr &pRenderContext, float flBloomScale, int x, int y, int w, int h );
@@ -124,11 +137,16 @@ private:
 	{
 		bool ShouldDraw( int nSlot ) const
 		{
+			// Added for Anarchy Arcade
+			/*
 			return m_hEntity.Get() && 
 				   ( m_nSplitScreenSlot == GLOW_FOR_ALL_SPLIT_SCREEN_SLOTS || m_nSplitScreenSlot == nSlot ) && 
 				   ( m_bRenderWhenOccluded || m_bRenderWhenUnoccluded ) && 
 				   m_hEntity->ShouldDraw() && 
 				   !m_hEntity->IsDormant();
+			*/
+			return true;
+			// End added for Anarchy Arcade
 		}
 
 		bool IsUnused() const { return m_nNextFreeSlot != GlowObjectDefinition_t::ENTRY_IN_USE; }

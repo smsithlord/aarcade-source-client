@@ -589,7 +589,10 @@ CBasePlayer::CBasePlayer( )
 	m_qangLockViewangles.Init();
 
 	// Setup our default FOV
-	m_iDefaultFOV = g_pGameRules->DefaultFOV();
+	// Added for Anarchy Arcade
+	ConVar* pLastFOVConVar = cvar->FindVar("lastfov");
+	m_iDefaultFOV = (pLastFOVConVar) ? pLastFOVConVar->GetFloat() : g_pGameRules->DefaultFOV();
+	// End added for Anarchy Arcade
 
 	m_hZoomOwner = NULL;
 
@@ -6066,6 +6069,9 @@ void CC_CH_CreateJeep( void )
 
 static ConCommand ch_createjeep("ch_createjeep", CC_CH_CreateJeep, "Spawn jeep in front of the player.", FCVAR_CHEAT);
 
+ConVar airboatmodel("air_boat_model", "", FCVAR_ARCHIVE | FCVAR_REPLICATED, "A MDL name to override the air boat with.");	// Added for Anarchy Arcade
+ConVar airboatoffset("air_boat_offset", "0 0 0", FCVAR_ARCHIVE | FCVAR_REPLICATED, "An XYZ offset to override the air boat with.");	// Added for Anarchy Arcade
+ConVar airboatangles("air_boat_angles", "0 0 0", FCVAR_ARCHIVE | FCVAR_REPLICATED, "A PYR angle offset to override the air boat with.");	// Added for Anarchy Arcade
 
 //-----------------------------------------------------------------------------
 // Create an airboat in front of the specified player
@@ -6082,12 +6088,100 @@ static void CreateAirboat( CBasePlayer *pPlayer )
 		QAngle vecAngles( 0, pPlayer->GetAbsAngles().y - 90, 0 );
 		pJeep->SetAbsOrigin( vecOrigin );
 		pJeep->SetAbsAngles( vecAngles );
+		// Added for Anarchy Arcade
 		pJeep->KeyValue( "model", "models/airboat.mdl" );
 		pJeep->KeyValue( "solid", "6" );
 		pJeep->KeyValue( "targetname", "airboat" );
 		pJeep->KeyValue( "vehiclescript", "scripts/vehicles/airboat.txt" );
+
+		if (Q_strcmp(airboatmodel.GetString(), ""))
+			pJeep->SetRenderMode(kRenderNone);
+
+		/*
+		
+		pJeep->KeyValue( "model", "models/airboat.mdl" );
+		pJeep->KeyValue( "solid", "6" );
+		pJeep->KeyValue( "targetname", "airboat" );
+		pJeep->KeyValue( "vehiclescript", "scripts/vehicles/airboat.txt" );
+
 		DispatchSpawn( pJeep );
 		pJeep->Activate();
+
+		*/
+
+		DispatchSpawn(pJeep);
+		pJeep->Activate();
+
+		if (Q_strcmp(airboatmodel.GetString(), ""))
+		{
+			pJeep->AddEffects(EF_NOSHADOW);
+
+			// Spawn a different model
+			CDynamicProp* pProp = dynamic_cast<CDynamicProp*>(CreateEntityByName("prop_dynamic"));
+
+			// Pass in standard key values
+			char buf[512];
+
+			Vector safeOrigin = vecOrigin;// pPlayer->GetAbsOrigin();
+			QAngle safeAngles = vecAngles;// pPlayer->GetA.....bsAngles();
+
+			Vector originOffset;
+			UTIL_StringToVector(originOffset.Base(), airboatoffset.GetString());
+
+			Vector forward, right, up;
+			pJeep->GetVectors(&forward, &right, &up);
+
+			safeOrigin += (right * originOffset.x) + (forward * originOffset.y) + (up * originOffset.z);
+
+			QAngle anglesOffset;
+			UTIL_StringToVector(anglesOffset.Base(), airboatangles.GetString());
+			safeAngles += anglesOffset;
+
+			// Pass in standard key values
+			Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", safeOrigin.x, safeOrigin.y, safeOrigin.z);
+			pProp->KeyValue("origin", buf);
+			Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", safeAngles.x, safeAngles.y, safeAngles.z);
+			pProp->KeyValue("angles", buf);
+
+			pProp->KeyValue("fademindist", "-1");
+			pProp->KeyValue("fadescale", "1");
+			pProp->KeyValue("MaxAnimTime", "10");
+			pProp->KeyValue("MinAnimTime", "5");
+			pProp->KeyValue("modelscale", "1.0");
+			pProp->KeyValue("renderamt", "255");
+			pProp->KeyValue("rendercolor", "255 255 255");
+			pProp->KeyValue("solid", "0");
+			pProp->KeyValue("DisableBoneFollowers", "0");
+			pProp->KeyValue("disablereceiveshadows", "0");
+			pProp->KeyValue("disableshadows", "0");
+			pProp->KeyValue("ExplodeDamage", "0");
+			pProp->KeyValue("skin", "0");
+			pProp->KeyValue("ExplodeRadius", "0");
+			pProp->KeyValue("fademaxdist", "0");
+			pProp->KeyValue("maxdxlevel", "0");
+			pProp->KeyValue("mindxlevel", "0");
+
+			pProp->KeyValue("PerformanceMode", "0");
+			pProp->KeyValue("pressuredelay", "0");
+			pProp->KeyValue("spawnflags", "0");
+			pProp->KeyValue("RandomAnimation", "0");
+			pProp->KeyValue("renderfx", "0");
+			pProp->KeyValue("rendermode", "0");
+			pProp->KeyValue("SetBodyGroup", "0");
+			pProp->KeyValue("StartDisabled", "0");
+
+			pProp->KeyValue("model", airboatmodel.GetString());
+
+			if (DispatchSpawn(pProp) > -1)
+			{
+				pProp->SetParent(pJeep, -1);
+
+				// finish spawning
+				//pProp->VPhysicsInitNormal(SOLID_NONE, 0, false);
+				pProp->SetCollisionGroup(COLLISION_GROUP_PLAYER);
+			}
+		}
+		// End Added for Anarchy Arcade
 	}
 }
 

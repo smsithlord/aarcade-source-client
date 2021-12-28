@@ -134,8 +134,11 @@ static void WriteAchievementGlobalState( KeyValues *pKV, bool bPersistToSteamClo
 
         if (pRemoteStorage)
         {
+			// Changed for Steamworks update
             int32 availableBytes = 0;
-            int32 totalBytes = 0;
+			int32 totalBytes = 0;
+			//uint64 availableBytes = 0;
+			//uint64 totalBytes = 0;
             if ( pRemoteStorage->GetQuota( &totalBytes, &availableBytes ) )
             {
                 if ( totalBytes > 0 )

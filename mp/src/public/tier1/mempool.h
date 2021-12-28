@@ -243,6 +243,17 @@ public:
 		return p;
 	}
 
+	// Added for Anarchy Arcade
+	T *GetObjectAA(bool bCreateNewIfEmpty = bDefCreateNewIfEmpty)
+	{
+		T *p;
+		if (!m_AvailableObjects.PopItem(&p))
+		{
+			p = (bCreateNewIfEmpty) ? new T : NULL;
+		}
+		return p;
+	}
+
 	void PutObject( T *p )
 	{
 		m_AvailableObjects.PushItem( p );

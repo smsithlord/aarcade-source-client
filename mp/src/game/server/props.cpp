@@ -191,7 +191,7 @@ void CBaseProp::Spawn( void )
 
 	// Load this prop's data from the propdata file
 	int iResult = ParsePropData();
-	if ( !OverridePropdata() )
+	if (!OverridePropdata() && false )//&& iResult == PARSE_FAILED_BAD_DATA )	// Added for Anarchy Arcade
 	{
 		if ( iResult == PARSE_FAILED_BAD_DATA )
 		{
@@ -1175,7 +1175,7 @@ void CBreakableProp::Event_Killed( const CTakeDamageInfo &info )
 		pPhysics->EnableMotion( true );
 		VPhysicsTakeDamage( info );
 	}
-	Break( info.GetInflictor(), info );
+	Break( info.GetInflictor(), info );	// Added for Anarchy Arcade
 	BaseClass::Event_Killed( info );
 }
 
@@ -1859,6 +1859,13 @@ END_SEND_TABLE()
 //-----------------------------------------------------------------------------
 CDynamicProp::CDynamicProp()
 {
+	// Added for Anarchy Arcade
+//#ifndef CLIENT_DLL
+	//this->SetIsHotlink(false);
+	//m_bIsHotlink = false;
+//#endif
+	// End added for Anarchy Arcade
+
 	m_nPendingSequence = -1;
 	if ( g_pGameRules->IsMultiplayer() )
 	{
@@ -1867,12 +1874,106 @@ CDynamicProp::CDynamicProp()
 	m_iGoalSequence = -1;
 }
 
+// Added for Anarchy Arcade
+#ifndef CLIENT_DLL
+void CDynamicProp::SetLerpSync(Vector lerpDestination, QAngle lerpAngles, float flSpeed)
+{
+	if (!m_bCanLerp)
+		m_bCanLerp = true;
+
+	m_flInterpStartTime = gpGlobals->curtime;
+	m_lerpStartingPos = GetAbsOrigin();
+	m_lerpStartingAngles = GetAbsAngles();
+	m_lerpDestination = lerpDestination;
+	m_lerpAngles = lerpAngles;
+
+	// speed = distance / time
+	// time = distance / speed
+	m_flPosInterpTime = UTIL_DistApprox(m_lerpDestination, GetAbsOrigin()) / flSpeed;
+
+	if (flSpeed == 100.0f)
+	{
+		if (m_flPosInterpTime < 1.0f)
+			m_flPosInterpTime = 1.0f;
+
+		if (m_flPosInterpTime > 3.0f)
+			m_flPosInterpTime = 3.0f;
+	}
+
+	SetThink(&CDynamicProp::LerpMove, gpGlobals->curtime, NULL);
+	SetNextThink(gpGlobals->curtime);
+}
+
+void CDynamicProp::LerpMove()
+{
+	// get the interpolation parameter [0..1]
+	float tt = (gpGlobals->curtime - m_flInterpStartTime) / m_flPosInterpTime;
+	if (tt > 1.0)
+		tt = 1.0;
+
+	//Vector nextPos = ((m_lerpDestination - m_lerpStartingPos) * SimpleSpline(tt)) + m_lerpStartingPos;
+
+	// rather than stomping origin, set the velocity so that we get there in the proper time
+	//Vector desiredVel = (nextPos - GetAbsOrigin()) * (1.0f / gpGlobals->frametime);
+
+	//	DevMsg("TT is: %f which is %f length\n", tt, desiredVel.Length());
+
+	//SetAbsVelocity(desiredVel);
+
+	if (tt == 1.0)
+	{
+		UTIL_SetOrigin(this, m_lerpDestination, true);
+		this->SetAbsAngles(m_lerpAngles);
+	}
+	else
+	{
+		Vector nextPos = VectorLerp(m_lerpStartingPos, m_lerpDestination, tt);
+		UTIL_SetOrigin(this, nextPos, true);
+		//UTIL_SetOrigin(this, nextPos, true);
+		//this->SetAbsAngles(m_lerpAngles);
+
+		if (tt < 0.5)
+		{
+			QAngle output;
+			//void InterpolateAngles(const QAngle& start, const QAngle& end, QAngle& output, float frac)
+
+			Quaternion src, dest;
+
+			// Convert to quaternions
+			AngleQuaternion(m_lerpStartingAngles, src);
+			AngleQuaternion(m_lerpAngles, dest);
+
+			Quaternion result;
+
+			// Slerp
+			QuaternionSlerp(src, dest, tt*2, result);
+
+			// Convert to euler
+			QuaternionAngles(result, output);
+
+			this->SetAbsAngles(output);
+		}
+		else
+			this->SetAbsAngles(m_lerpAngles);
+
+		this->SetSolid(SOLID_VPHYSICS);
+		SetNextThink(gpGlobals->curtime);
+	}
+}
+#endif
+// End added for Anarchy Arcade
 
 //------------------------------------------------------------------------------
 // Purpose:
 //------------------------------------------------------------------------------
 void CDynamicProp::Spawn( )
 {
+	// Added for Anarchy Arcade
+	m_flPosInterpTime = 1.0f;
+	m_flInterpStartTime = 0.0f;
+	m_bCanLerp = false;
+	// End added for Anarchy Arcade
+
 	// Condense classname's to one, except for "prop_dynamic_override"
 	if ( FClassnameIs( this, "dynamic_prop" ) )
 	{
@@ -1882,10 +1983,14 @@ void CDynamicProp::Spawn( )
 	// If the prop is not-solid, the bounding box needs to be 
 	// OBB to correctly surround the prop as it rotates.
 	// Check the classname so we don't mess with doors & other derived classes.
-	if ( GetSolid() == SOLID_NONE && FClassnameIs( this, "prop_dynamic" ) )
+	//if (!m_bIsHotlink)// Added for Anarchy Arcade
+	if (!this->IsHotlink())
 	{
-		SetSolid( SOLID_OBB );
-		AddSolidFlags( FSOLID_NOT_SOLID );
+		if (GetSolid() == SOLID_NONE && FClassnameIs(this, "prop_dynamic"))
+		{
+			SetSolid(SOLID_OBB);
+			AddSolidFlags(FSOLID_NOT_SOLID);
+		}
 	}
 
 	BaseClass::Spawn();
@@ -1899,7 +2004,24 @@ void CDynamicProp::Spawn( )
 		SetClassname("prop_dynamic");
 	}
 
-	AddFlag( FL_STATICPROP );
+	if (!this->IsHotlink())// Added for Anarchy Arcade
+		AddFlag( FL_STATICPROP );
+
+	// Added for Anarchy Arcade
+	//if (m_bIsHotlink && this->LookupSequence("inactiveidle") == ACT_INVALID && this->LookupSequence("activated") == ACT_INVALID && this->LookupSequence("activeidle") == ACT_INVALID && this->LookupSequence("deactivated") == ACT_INVALID )
+	//{
+		if (strstr(this->GetModelName().ToCStr(), "models\\patrons\\") != NULL)
+		{
+			m_bRandomAnimator = true;
+			m_flMinRandAnimTime = 8.0f;
+			m_flMaxRandAnimTime = 20.0f;
+
+			// start playing the idle aninmation right away
+			ResetSequence(SelectWeightedSequence(ACT_IDLE));
+			ResetClientsideFrame();
+		}
+	//}
+	// End added for Anarchy Arcade
 
 	if ( m_bRandomAnimator || ( m_iszDefaultAnim != NULL_STRING ) )
 	{
@@ -1917,13 +2039,18 @@ void CDynamicProp::Spawn( )
 		}
 	}
 
-	CreateVPhysics();
+	if (!this->IsHotlink())// Added for Anarchy Arcade
+		CreateVPhysics();
 
 	BoneFollowerHierarchyChanged();
 
-	if( m_bStartDisabled )
+
+	if (!this->IsHotlink())// Added for Anarchy Arcade
 	{
-		AddEffects( EF_NODRAW );
+		if (m_bStartDisabled)
+		{
+			AddEffects(EF_NODRAW);
+		}
 	}
 
 	if ( !PropDataOverrodeBlockLOS() )
@@ -1935,7 +2062,8 @@ void CDynamicProp::Spawn( )
 
 	if ( HasSpawnFlags( SF_DYNAMICPROP_DISABLE_COLLISION ) )
 	{
-		AddSolidFlags( FSOLID_NOT_SOLID );
+		if (!this->IsHotlink())// Added for Anarchy Arcade
+			AddSolidFlags( FSOLID_NOT_SOLID );
 	}
 
 	//m_debugOverlays |= OVERLAY_ABSBOX_BIT;
@@ -2153,6 +2281,23 @@ void CDynamicProp::NotifyPositionChanged( CBaseEntity *pEntity )
 	m_BoneFollowerManager.UpdateBoneFollowers(this);
 }
 
+
+// Added for Anarchy Arcade
+#ifndef CLIENT_DLL
+#include "../../aarcade/server/prop_shortcut_entity.h"	// Added for Anarchy Arcade
+
+void CDynamicProp::InitAsHotlink()
+{
+	// If this prop_dynamic is actually a hotlink, store a pointer to the hotlink so we can call animation callbacks.
+	CPropShortcutEntity* pHotlink = dynamic_cast<CPropShortcutEntity*>(this);
+	if (pHotlink)
+		this->SetIsHotlink(true);// m_bIsHotlink = true;
+	else
+		this->SetIsHotlink(false);// m_bIsHotlink = false;
+}
+#endif
+// End added for Anarchy Arcade
+
 //------------------------------------------------------------------------------
 // Purpose:
 //------------------------------------------------------------------------------
@@ -2166,7 +2311,35 @@ void CDynamicProp::AnimThink( void )
 
 	if ( m_bRandomAnimator && m_flNextRandAnim < gpGlobals->curtime )
 	{
-		ResetSequence( SelectWeightedSequence( ACT_IDLE ) );
+		// Added for Anarchy Arcade
+		if (this->IsHotlink())
+		{
+			int randseq = -1;
+			CStudioHdr *hdr = GetModelPtr();
+			if (hdr)
+			{
+				int numseq = hdr->GetNumSeq();
+				if (numseq > 0)
+				{
+					randseq = random->RandomInt(0, numseq - 1);
+					if (randseq == this->GetSequence())
+					{
+						randseq++;
+						if (randseq == numseq)
+							randseq = 0;
+					}
+				}
+			}
+
+			if (randseq >= 0)
+				ResetSequence(randseq);
+			else
+				ResetSequence(SelectWeightedSequence(ACT_IDLE));
+		}
+		else
+			ResetSequence(SelectWeightedSequence(ACT_IDLE));
+		// End added for Anarchy Arcade
+
 		ResetClientsideFrame();
 
 		// Fire output
@@ -2185,7 +2358,7 @@ void CDynamicProp::AnimThink( void )
 		else
 		{
 			// Fire output
-			m_pOutputAnimOver.FireOutput(NULL,this);
+		//	m_pOutputAnimOver.FireOutput(NULL,this);
 
 			// If I'm a random animator, think again when it's time to change sequence
 			if ( m_bRandomAnimator )
@@ -2194,6 +2367,19 @@ void CDynamicProp::AnimThink( void )
 			}
 			else 
 			{
+				// Added for Anarchy Arcade
+#ifndef CLIENT_DLL
+				if (this->IsHotlink())
+				{
+					CPropShortcutEntity* pHotlink = dynamic_cast<CPropShortcutEntity*>(this);
+					if (pHotlink)
+					{
+						pHotlink->AnimFinished();
+					}
+				}
+#endif
+				// End added for Anarchy Arcade
+
 				if (m_iszDefaultAnim != NULL_STRING)
 				{
 					PropSetAnim( STRING( m_iszDefaultAnim ) );
@@ -2203,6 +2389,16 @@ void CDynamicProp::AnimThink( void )
 	}
 	else
 	{
+		if (this->IsHotlink() && m_bRandomAnimator && !SequenceLoops() && this->IsSequenceFinished() && Q_strcmp(this->GetSequenceName(this->GetSequence()), "idle"))// && SelectWeightedSequence(ACT_IDLE) != this->GetSequence()) // Added for Anarchy Arcade
+		{
+			if (strstr(this->GetModelName().ToCStr(), "models\\patrons\\") != NULL)
+			{
+				// Play the idle animation between, if available.
+				ResetSequence(SelectWeightedSequence(ACT_IDLE));
+				ResetClientsideFrame();
+			}
+		}
+
 		SetNextThink( gpGlobals->curtime + 0.1f );
 	}
 
@@ -2476,6 +2672,7 @@ bool CPhysicsProp::IsGib()
 //-----------------------------------------------------------------------------
 // Purpose: Create a physics object for this prop
 //-----------------------------------------------------------------------------
+ConVar physicsprops("physics_props", "1", FCVAR_ARCHIVE, "Set to 0 to disable all physics props at spawn.");	// Added for Anarchy Arcade
 void CPhysicsProp::Spawn( )
 {
 	if (HasSpawnFlags(SF_PHYSPROP_IS_GIB))
@@ -2524,6 +2721,18 @@ void CPhysicsProp::Spawn( )
 		DisableAutoFade();
 	}
 	
+	// Added for Anarchy Arcade
+	// Disable all physics props that are part of the world...
+	if (!physicsprops.GetBool())
+	{
+		IPhysicsObject *pPhysicsObject = this->VPhysicsGetObject();
+		if (pPhysicsObject)
+		{
+			pPhysicsObject->EnableMotion(false);
+			//pPhysicsObject->Sleep();
+		}
+	}
+	// End added for Anarchy Arcade
 }
 
 //-----------------------------------------------------------------------------
@@ -5993,8 +6202,18 @@ bool UTIL_CreateScaledPhysObject( CBaseAnimating *pInstance, float flScale )
 		// For each convex, collect the verts and create a convex from it we'll retain for later
 		for ( int i = 0; i < nNumConvex; i++ )
 		{
+		//	bBadScale = false;
 			int nNumTris = pQuery->TriangleCount( i );
+
+			if (nNumTris < 3)	// Added for Anarchy Arcade
+			{
+				// Scale the base model as well
+				pInstance->SetModelScale(flScale);
+				return false;
+			}
+
 			int nNumVerts = nNumTris * 3;
+
 			// FIXME: Really?  stackalloc?
 			Vector *pVerts = (Vector *) stackalloc( sizeof(Vector) * nNumVerts );
 			Vector **ppVerts = (Vector **) stackalloc( sizeof(Vector *) * nNumVerts );
@@ -6002,6 +6221,7 @@ bool UTIL_CreateScaledPhysObject( CBaseAnimating *pInstance, float flScale )
 			{
 				// Get all the verts for this triangle and scale them up
 				pQuery->GetTriangleVerts( i, j, pVerts+(j*3) );
+
 				*(pVerts+(j*3)) *= flScale;
 				*(pVerts+(j*3)+1) *= flScale;
 				*(pVerts+(j*3)+2) *= flScale;
@@ -6009,11 +6229,11 @@ bool UTIL_CreateScaledPhysObject( CBaseAnimating *pInstance, float flScale )
 				// Setup our pointers (blech!)
 				*(ppVerts+(j*3)) = pVerts+(j*3);
 				*(ppVerts+(j*3)+1) = pVerts+(j*3)+1;
-				*(ppVerts+(j*3)+2) = pVerts+(j*3)+2;
+				*(ppVerts + (j * 3) + 2) = pVerts + (j * 3) + 2;
 			}
 
 			// Convert it back to a convex
-			pConvexes[i] = physcollision->ConvexFromVerts( ppVerts, nNumVerts );
+			pConvexes[i] = physcollision->ConvexFromVerts(ppVerts, nNumVerts);
 			Assert( pConvexes[i] != NULL );
 			if ( pConvexes[i] == NULL )
 				return false;

@@ -3343,6 +3343,9 @@ void CIKContext::AddDependencies( mstudioseqdesc_t &seqdesc, int iSequence, floa
 
 void CIKContext::AddAutoplayLocks( Vector pos[], Quaternion q[] )
 {
+	//pLink = ((pchain->linkindex + 2) >= pchain->numlinks) ? NULL : pchain->pLink(2); // Added for Anarchy Arcade
+	return; // Added for Anarchy Arcade
+
 	// skip all array access if no autoplay locks.
 	if (m_pStudioHdr->GetNumIKAutoplayLocks() == 0)
 	{

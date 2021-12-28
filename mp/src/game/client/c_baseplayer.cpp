@@ -57,6 +57,8 @@
 // NVNT haptics system interface
 #include "haptics/ihaptics.h"
 
+#include "../aarcade/client/c_anarchymanager.h"
+
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
 
@@ -179,6 +181,12 @@ BEGIN_RECV_TABLE_NOBASE( CPlayerLocalData, DT_Local )
 	// 3d skybox data
 	RecvPropInt(RECVINFO(m_skybox3d.scale)),
 	RecvPropVector(RECVINFO(m_skybox3d.origin)),
+
+	// Added for Anarchy Arcade
+	RecvPropVector(RECVINFO(m_skybox3d.angles)),
+	RecvPropInt(RECVINFO(m_skybox3d.skycolor), 0, RecvProxy_IntToColor32),
+	// End Added for Anarchy Arcade
+
 	RecvPropInt(RECVINFO(m_skybox3d.area)),
 
 	// 3d skybox fog data
@@ -190,6 +198,8 @@ BEGIN_RECV_TABLE_NOBASE( CPlayerLocalData, DT_Local )
 	RecvPropFloat( RECVINFO( m_skybox3d.fog.start ) ),
 	RecvPropFloat( RECVINFO( m_skybox3d.fog.end ) ),
 	RecvPropFloat( RECVINFO( m_skybox3d.fog.maxdensity ) ),
+
+	RecvPropFloat(RECVINFO(m_skybox3d.fog.farz)),	// Added for Anarchy Arcade
 
 	// fog data
 	RecvPropEHandle( RECVINFO( m_PlayerFog.m_hCtrl ) ),
@@ -579,7 +589,7 @@ void C_BasePlayer::SetObserverTarget( EHANDLE hObserverTarget )
 		// has a chance to become non-NULL even if it currently resolves to NULL.
 		m_hObserverTarget.Init( hObserverTarget.GetEntryIndex(), hObserverTarget.GetSerialNumber() );
 
-		IGameEvent *event = gameeventmanager->CreateEvent( "spec_target_updated" );
+		IGameEvent *event = gameeventmanager->CreateEventAA( "spec_target_updated" ); // Added for Anarchy Arcade
 		if ( event )
 		{
 			gameeventmanager->FireEventClientSide( event );
@@ -876,7 +886,7 @@ void C_BasePlayer::PostDataUpdate( DataUpdateType_t updateType )
 				}
 			}
 
-			IGameEvent *pEvent = gameeventmanager->CreateEvent( "show_freezepanel" );
+			IGameEvent *pEvent = gameeventmanager->CreateEventAA("show_freezepanel"); // Added for Anarchy Arcade
 			if ( pEvent )
 			{
 				pEvent->SetInt( "killer", target ? target->entindex() : 0 );
@@ -893,7 +903,7 @@ void C_BasePlayer::PostDataUpdate( DataUpdateType_t updateType )
 		}
 		else if ( m_bWasFreezeFraming && GetObserverMode() != OBS_MODE_FREEZECAM )
 		{
-			IGameEvent *pEvent = gameeventmanager->CreateEvent( "hide_freezepanel" );
+			IGameEvent *pEvent = gameeventmanager->CreateEventAA("hide_freezepanel"); // Added for Anarchy Arcade
 			if ( pEvent )
 			{
 				gameeventmanager->FireEventClientSide( pEvent );
@@ -1682,7 +1692,7 @@ void C_BasePlayer::CalcFreezeCamView( Vector& eyeOrigin, QAngle& eyeAngles, floa
 
 	if ( flCurTime >= spec_freeze_traveltime.GetFloat() && !m_bSentFreezeFrame )
 	{
-		IGameEvent *pEvent = gameeventmanager->CreateEvent( "freezecam_started" );
+		IGameEvent *pEvent = gameeventmanager->CreateEventAA("freezecam_started"); // Added for Anarchy Arcade
 		if ( pEvent )
 		{
 			gameeventmanager->FireEventClientSide( pEvent );
@@ -2290,6 +2300,9 @@ bool C_BasePlayer::ShouldPredict( void )
 //-----------------------------------------------------------------------------
 void C_BasePlayer::PhysicsSimulate( void )
 {
+	if (g_pAnarchyManager->IsPaused())	// Added for Anarchy Arcade
+		return;
+
 #if !defined( NO_ENTITY_PREDICTION )
 	VPROF( "C_BasePlayer::PhysicsSimulate" );
 	// If we've got a moveparent, we must simulate that first.

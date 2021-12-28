@@ -35,6 +35,9 @@
 #include "gameinterface.h"
 #include "ilagcompensationmanager.h"
 
+#include "../../aarcade/server/prop_shortcut_entity.h"	// Added for Anarchy Arcade
+#include "../../aarcade/server/canarchymanager.h"
+
 #ifdef HL2_DLL
 #include "hl2_player.h"
 #endif
@@ -209,6 +212,11 @@ void CBaseTrigger::Enable( void )
 	}
 }
 
+// Added for Anarchy Arcade
+bool CBaseTrigger::GetEnabled()
+{
+	return !m_bDisabled;
+}
 
 //------------------------------------------------------------------------------
 // Purpose :
@@ -2836,6 +2844,9 @@ void CAI_ChangeHintGroup::InputActivate( inputdata_t &inputdata )
 #define SF_CAMERA_PLAYER_INTERRUPT		64
 
 
+// Added for Anarchy Arcade
+/*
+
 //-----------------------------------------------------------------------------
 // Purpose: 
 //-----------------------------------------------------------------------------
@@ -2900,10 +2911,11 @@ private:
 private:
 	COutputEvent m_OnEndFollow;
 };
+*/
 
-#if HL2_EPISODIC
+//	#if HL2_EPISODIC	// Added for Anarchy Arcade
 const float CTriggerCamera::kflPosInterpTime = 2.0f;
-#endif
+//	#endif	// Added for Anarchy Arcade
 
 LINK_ENTITY_TO_CLASS( point_viewcontrol, CTriggerCamera );
 
@@ -2926,12 +2938,12 @@ BEGIN_DATADESC( CTriggerCamera )
 	DEFINE_KEYFIELD( m_iszTargetAttachment, FIELD_STRING, "targetattachment" ),
 	DEFINE_FIELD( m_iAttachmentIndex, FIELD_INTEGER ),
 	DEFINE_FIELD( m_bSnapToGoal, FIELD_BOOLEAN ),
-#if HL2_EPISODIC
+	//#if HL2_EPISODIC	// Added for Anarchy Arcade
 	DEFINE_KEYFIELD( m_bInterpolatePosition, FIELD_BOOLEAN, "interpolatepositiontoplayer" ),
 	DEFINE_FIELD( m_vStartPos, FIELD_VECTOR ),
 	DEFINE_FIELD( m_vEndPos, FIELD_VECTOR ),
 	DEFINE_FIELD( m_flInterpStartTime, FIELD_TIME ),
-#endif
+	//#endif	// Added for Anarchy Arcade
 	DEFINE_FIELD( m_nPlayerButtons, FIELD_INTEGER ),
 	DEFINE_FIELD( m_nOldTakeDamage, FIELD_INTEGER ),
 
@@ -2950,6 +2962,11 @@ END_DATADESC()
 //-----------------------------------------------------------------------------
 void CTriggerCamera::Spawn( void )
 {
+	m_pHotlinkEntity = NULL;	// Added for Anarchy Arcade
+	m_iHotlinkAttachmentIndex = -1;	// Added for Anarchy Arcade
+	m_bReadyToAnimateCamera = true;	// Added for Anarchy Arcade
+	bOnWayHome = false;	// Added for Anarchy Arcade
+
 	BaseClass::Spawn();
 
 	SetMoveType( MOVETYPE_NOCLIP );
@@ -3029,6 +3046,38 @@ void CTriggerCamera::InputDisable( inputdata_t &inputdata )
 	Disable();
 }
 
+// Added for Anarchy Arcade
+void CTriggerCamera::UpdateAttractCameraGoal(Vector origin, QAngle angles, int iTransitionType)
+{
+	/*m_vStartPos = origin;// m_hPlayer->EyePosition();
+	m_vecOriginalEyePos = GetLocalOrigin();// m_hPlayer->EyePosition();	// Is this correct here?
+	m_vecOriginalEyeAngles = angles;// m_hPlayer->EyeAngles();// GetLocalAngles();
+	m_vEndPos = GetAbsOrigin();
+	m_flInterpStartTime = gpGlobals->curtime;
+	*/
+
+	//bOnWayHome = false;
+	m_vStartPos = GetAbsOrigin();
+	m_vEndPos = origin;
+
+	if (iTransitionType < 2)
+	{
+		m_flInterpStartTime = gpGlobals->curtime;
+		SetThink(&CTriggerCamera::Move);
+		SetNextThink(gpGlobals->curtime);
+	}
+	else
+	{
+		m_flInterpStartTime = gpGlobals->curtime - g_pAnarchyManager->GetAttractModeTime();
+		if (m_flInterpStartTime < 0)
+			m_flInterpStartTime = 0;
+
+		this->SetLocalAngles(angles);
+	}
+
+}
+// End added for Anarchy Arcade
+
 //-----------------------------------------------------------------------------
 // Purpose: 
 //-----------------------------------------------------------------------------
@@ -3060,6 +3109,10 @@ void CTriggerCamera::Enable( void )
 		return;
 	}
 
+	CPropShortcutEntity* pOtherEntity = NULL;
+	Vector otherPos;
+	QAngle otherAngle;
+
 	// if the player was already under control of a similar trigger, disable the previous trigger.
 	{
 		CBaseEntity *pPrevViewControl = pPlayer->GetViewEntity();
@@ -3071,16 +3124,53 @@ void CTriggerCamera::Enable( void )
 				if ( pOtherCamera == this )
 				{
 					// what the hell do you think you are doing?
-					Warning("Viewcontrol %s was enabled twice in a row!\n", GetDebugName());
-					return;
+					//Warning("Viewcontrol %s was enabled twice in a row!\n", GetDebugName());	// Added for Anarchy Arcade
+//					return;	// Added for Anarchy Arcade
 				}
 				else
 				{
-					pOtherCamera->Disable();
+					pOtherEntity = dynamic_cast<CPropShortcutEntity*>(pOtherCamera->GetHotlinkEntity());
+					if (pOtherEntity)
+					{
+						int iAttachmentIndex = pOtherEntity->LookupAttachment("aacam");
+						if (iAttachmentIndex > 0)
+						{
+							//otherPos = pOtherCamera->GetAbsOrigin();
+							//otherAngle = pOtherCamera->GetAbsAngles();
+							pOtherEntity->GetBaseAnimating()->GetAttachment(iAttachmentIndex, otherPos, otherAngle);
+							pOtherEntity->CleanupCameraEntities();
+						}
+						else
+						{
+							pOtherEntity = NULL;
+							pOtherCamera->Disable();
+						}
+					}
+					else
+						pOtherCamera->Disable();
 				}
 			}
 		}
 	}
+
+	if (m_bInterpolatePosition)
+	{
+		Vector vecAttachmentPos;
+		QAngle vecAttachmentAngles;
+		if (m_pHotlinkEntity)
+			m_pHotlinkEntity->GetBaseAnimating()->GetAttachment(m_iHotlinkAttachmentIndex, vecAttachmentPos, vecAttachmentAngles);
+		else
+		{
+			vecAttachmentPos = g_pAnarchyManager->GetAttractModeOrigin();
+			vecAttachmentAngles = g_pAnarchyManager->GetAttractModeAngles();
+		}
+		//else
+		//	pOtherEntity->GetBaseAnimating()->GetAttachment(m_iHotlinkAttachmentIndex, vecAttachmentPos, vecAttachmentAngles);
+		this->SetAbsOrigin(vecAttachmentPos);
+		//this->SetAbsAngles(vecAttachmentAngles);
+		this->SetLocalAngles(vecAttachmentAngles);
+	}
+
 
 
 	m_nPlayerButtons = pPlayer->m_nButtons;
@@ -3161,20 +3251,30 @@ void CTriggerCamera::Enable( void )
 
 	// copy over player information. If we're interpolating from
 	// the player position, do something more elaborate.
-#if HL2_EPISODIC
+//#if HL2_EPISODIC	// Added for Anarchy Arcade
 	if (m_bInterpolatePosition)
 	{
 		// initialize the values we'll spline between
-		m_vStartPos = m_hPlayer->EyePosition();
+		m_vStartPos = (pOtherEntity) ? otherPos : m_hPlayer->EyePosition();
+		m_vecOriginalEyePos = m_hPlayer->EyePosition();
+		m_vecOriginalEyeAngles = (pOtherEntity) ? otherAngle : m_hPlayer->EyeAngles();// GetLocalAngles();
 		m_vEndPos = GetAbsOrigin();
 		m_flInterpStartTime = gpGlobals->curtime;
-		UTIL_SetOrigin( this, m_hPlayer->EyePosition() );
-		SetLocalAngles( QAngle( m_hPlayer->GetLocalAngles().x, m_hPlayer->GetLocalAngles().y, 0 ) );
+		UTIL_SetOrigin(this, m_vecOriginalEyePos);
+		SetLocalAngles(m_vecOriginalEyeAngles);
+		//SetLocalAngles( QAngle( m_hPlayer->GetLocalAngles().x, m_hPlayer->GetLocalAngles().y, 0 ) );
 
-		SetAbsVelocity( vec3_origin );
+		SetAbsVelocity(vec3_origin);
+
+		// Added for Anarchy Arcade
+		// We have to think if we're interpolating!
+		// FIXME: This should ONLY apply to cameras that AArcade is controlling!!
+		SetThink(&CTriggerCamera::Move);
+		SetNextThink(gpGlobals->curtime);
+		// End Added for Anarchy Arcade
 	}
 	else
-#endif
+//#endif	// Added for Anarchy Arcade
 	if (HasSpawnFlags(SF_CAMERA_PLAYER_POSITION ) )
 	{
 		UTIL_SetOrigin( this, m_hPlayer->EyePosition() );
@@ -3354,6 +3454,217 @@ void CTriggerCamera::FollowTarget( )
 	Move();
 }
 
+// Added for Anarchy Arcade
+void CTriggerCamera::BindHotlink(CBaseEntity* pHotlink, int iAttachmentIndex, const char* sequenceName)
+{
+	m_pHotlinkEntity = pHotlink;
+	m_iHotlinkAttachmentIndex = iAttachmentIndex;
+	m_sequenceName = sequenceName;
+}
+
+const char* CTriggerCamera::GetSequenceName()
+{
+	return m_sequenceName.c_str();
+}
+
+void CTriggerCamera::CamToPlayer()
+{
+	if (bOnWayHome)
+		return;
+
+	m_state = USE_ON;
+
+	if (!m_hPlayer || !m_hPlayer->IsPlayer())
+	{
+		m_hPlayer = UTIL_GetLocalPlayer();
+	}
+
+	if (!m_hPlayer)
+	{
+		DispatchUpdateTransmitState();
+		return;
+	}
+
+	Assert(m_hPlayer->IsPlayer());
+	CBasePlayer *pPlayer = NULL;
+
+	if (m_hPlayer->IsPlayer())
+	{
+		pPlayer = ((CBasePlayer*)m_hPlayer.Get());
+	}
+	else
+	{
+		Warning("CTriggerCamera could not find a player!\n");
+		return;
+	}
+
+	// if the player was already under control of a similar trigger, disable the previous trigger.
+	{
+		CBaseEntity *pPrevViewControl = pPlayer->GetViewEntity();
+		if (pPrevViewControl && pPrevViewControl != pPlayer)
+		{
+			CTriggerCamera *pOtherCamera = dynamic_cast<CTriggerCamera *>(pPrevViewControl);
+			if (pOtherCamera)
+			{
+				if (pOtherCamera == this)
+				{
+					// what the hell do you think you are doing?
+					//Warning("Viewcontrol %s was enabled twice in a row!\n", GetDebugName());
+					//					return;	// Added for Anarchy Arcade
+					//return;
+				}
+				else
+				{
+					pOtherCamera->Disable();
+				}
+			}
+		}
+	}
+
+	m_nPlayerButtons = pPlayer->m_nButtons;
+
+
+	// Make the player invulnerable while under control of the camera.  This will prevent situations where the player dies while under camera control but cannot restart their game due to disabled player inputs.
+	m_nOldTakeDamage = m_hPlayer->m_takedamage;
+	m_hPlayer->m_takedamage = DAMAGE_NO;
+
+	if (HasSpawnFlags(SF_CAMERA_PLAYER_NOT_SOLID))
+	{
+		m_hPlayer->AddSolidFlags(FSOLID_NOT_SOLID);
+	}
+
+	m_flReturnTime = gpGlobals->curtime + m_flWait;
+	m_flSpeed = m_initialSpeed;
+	m_targetSpeed = m_initialSpeed;
+
+	// this pertains to view angles, not translation.
+	if (HasSpawnFlags(SF_CAMERA_PLAYER_SNAP_TO))
+	{
+		m_bSnapToGoal = true;
+	}
+
+	if (HasSpawnFlags(SF_CAMERA_PLAYER_TARGET))
+	{
+		m_hTarget = m_hPlayer;
+	}
+	else
+	{
+		m_hTarget = GetNextTarget();
+	}
+
+	// If we don't have a target, ignore the attachment / etc
+	if (m_hTarget)
+	{
+		m_iAttachmentIndex = 0;
+		if (m_iszTargetAttachment != NULL_STRING)
+		{
+			if (!m_hTarget->GetBaseAnimating())
+			{
+				Warning("%s tried to target an attachment (%s) on target %s, which has no model.\n", GetClassname(), STRING(m_iszTargetAttachment), STRING(m_hTarget->GetEntityName()));
+			}
+			else
+			{
+				m_iAttachmentIndex = m_hTarget->GetBaseAnimating()->LookupAttachment(STRING(m_iszTargetAttachment));
+				if (m_iAttachmentIndex <= 0)
+				{
+					Warning("%s could not find attachment %s on target %s.\n", GetClassname(), STRING(m_iszTargetAttachment), STRING(m_hTarget->GetEntityName()));
+				}
+			}
+		}
+	}
+
+	if (HasSpawnFlags(SF_CAMERA_PLAYER_TAKECONTROL))
+	{
+		((CBasePlayer*)m_hPlayer.Get())->EnableControl(FALSE);
+	}
+
+	if (m_sPath != NULL_STRING)
+	{
+		m_pPath = gEntList.FindEntityByName(NULL, m_sPath, NULL, m_hPlayer);
+	}
+	else
+	{
+		m_pPath = NULL;
+	}
+
+	m_flStopTime = gpGlobals->curtime;
+	if (m_pPath)
+	{
+		if (m_pPath->m_flSpeed != 0)
+			m_targetSpeed = m_pPath->m_flSpeed;
+
+		m_flStopTime += m_pPath->GetDelay();
+	}
+
+
+	// copy over player information. If we're interpolating from
+	// the player position, do something more elaborate.
+	//#if HL2_EPISODIC	// Added for Anarchy Arcade
+	if (m_bInterpolatePosition)
+	{
+		bOnWayHome = true;
+		this->SetParent(NULL);
+		this->SetMoveType(MOVETYPE_NOCLIP);
+		m_bReadyToAnimateCamera = false;
+
+		// initialize the values we'll spline between
+		m_vStartPos = GetAbsOrigin();
+		m_vEndPos = m_vecOriginalEyePos;
+
+		//DevMsg("Start vs end: %f/%f/%f vs %f/%f/%f\n", m_vStartPos.x, m_vStartPos.y, m_vStartPos.z, m_vEndPos.x, m_vEndPos.y, m_vEndPos.z);
+
+		m_flInterpStartTime = gpGlobals->curtime;
+		//		UTIL_SetOrigin(this, m_hPlayer->EyePosition());
+		//		SetLocalAngles(QAngle(m_hPlayer->GetLocalAngles().x,m_flInterpStartTime m_hPlayer->GetLocalAngles().y, 0));
+
+		SetAbsVelocity(vec3_origin);
+
+		//DevMsg("Time A: %f\n", m_flInterpStartTime);
+		//DispatchUpdateTransmitState();
+
+		// Added for Anarchy Arcade
+		// We have to think if we're interpolating!
+		SetThink(&CTriggerCamera::Move);
+		SetNextThink(gpGlobals->curtime);
+		// End Added for Anarchy Arcade
+	}
+	else
+		//#endif	// Added for Anarchy Arcade
+		if (HasSpawnFlags(SF_CAMERA_PLAYER_POSITION))
+		{
+			UTIL_SetOrigin(this, m_hPlayer->EyePosition());
+			SetLocalAngles(QAngle(m_hPlayer->GetLocalAngles().x, m_hPlayer->GetLocalAngles().y, 0));
+			SetAbsVelocity(m_hPlayer->GetAbsVelocity());
+		}
+		else
+		{
+			SetAbsVelocity(vec3_origin);
+		}
+
+
+	pPlayer->SetViewEntity(this);
+
+	// Hide the player's viewmodel
+	if (pPlayer->GetActiveWeapon())
+	{
+		pPlayer->GetActiveWeapon()->AddEffects(EF_NODRAW);
+	}
+
+	// Only track if we have a target
+	if (m_hTarget)
+	{
+		// follow the player down
+		SetThink(&CTriggerCamera::FollowTarget);
+		SetNextThink(gpGlobals->curtime);
+	}
+
+	m_moveDistance = 0;
+	Move();
+
+	DispatchUpdateTransmitState();
+}
+// End Added for Anarchy Arcade
+
 void CTriggerCamera::Move()
 {
 	if ( HasSpawnFlags( SF_CAMERA_PLAYER_INTERRUPT ) )
@@ -3379,13 +3690,14 @@ void CTriggerCamera::Move()
 
 	// In vanilla HL2, the camera is either on a path, or doesn't move. In episodic
 	// we add the capacity for interpolation to the start point. 
-#if HL2_EPISODIC
+//#if HL2_EPISODIC	// Added for Anarchy Arcade
 	if (m_pPath)
-#else
+/* Added for Anarchy Arcade
 	// Not moving on a path, return
 	if (!m_pPath)
 		return;
 #endif
+*/
 	{
 		// Subtract movement from the previous frame
 		m_moveDistance -= m_flSpeed * gpGlobals->frametime;
@@ -3422,30 +3734,228 @@ void CTriggerCamera::Move()
 		float fraction = 2 * gpGlobals->frametime;
 		SetAbsVelocity( ((m_vecMoveDir * m_flSpeed) * fraction) + (GetAbsVelocity() * (1-fraction)) );
 	}
-#if HL2_EPISODIC
+//#if HL2_EPISODIC	// Added for Anarchy Arcade
 	else if (m_bInterpolatePosition)
 	{
-		// get the interpolation parameter [0..1]
-		float tt = (gpGlobals->curtime - m_flInterpStartTime) / kflPosInterpTime;
-		if (tt >= 1.0f)
+		// Added for Anarchy Arcade
+		QAngle vecGoal;
+		Vector vecOrigin;
+
+		if (!bOnWayHome)
 		{
+			if ( m_pHotlinkEntity )
+				m_pHotlinkEntity->GetBaseAnimating()->GetAttachment(m_iHotlinkAttachmentIndex, vecOrigin, vecGoal);
+			else
+			{
+				vecOrigin = g_pAnarchyManager->GetAttractModeOrigin();
+				vecGoal = g_pAnarchyManager->GetAttractModeAngles();
+			}
+		}
+		else
+		{
+			vecGoal = m_vecOriginalEyeAngles;
+			vecOrigin = m_vecOriginalEyePos;
+		}
+
+		float dx = vecGoal.x - GetLocalAngles().x;
+		float dy = vecGoal.y - GetLocalAngles().y;
+		float dz = vecGoal.z - GetLocalAngles().z;
+
+		if (dx < -180)
+			dx += 360;
+		if (dx > 180)
+			dx = dx - 360;
+
+		if (dy < -180)
+			dy += 360;
+		if (dy > 180)
+			dy = dy - 360;
+
+		if (dz < -180)
+			dz += 360;
+		if (dz > 180)
+			dz = dz - 360;
+
+		/*QAngle localAngles = GetLocalAngles();
+		float flAngleX = 180 - abs(abs(localAngles.x - vecGoal.x) - 180);
+		float flAngleY = 180 - abs(abs(localAngles.y - vecGoal.y) - 180);
+		float flAngleZ = 180 - abs(abs(localAngles.z - vecGoal.z) - 180);
+
+		DevMsg("%f/%f/%f\n", flAngleX, flAngleY, flAngleZ);*/
+
+		bool bAnglesAreGood = false;
+		if (FloatMakePositive(dx) <= 1.0f && FloatMakePositive(dy) <= 1.0f && FloatMakePositive(dz) <= 1.0f)
+		{
+			bAnglesAreGood = true;
+			SetLocalAngularVelocity(QAngle(0, 0, 0));
+		}
+		// End Added for Anarchy Arcade
+
+		// get the interpolation parameter [0..1]
+		float tt = (this == g_pAnarchyManager->GetAttractCameraEntity()) ? (gpGlobals->curtime - m_flInterpStartTime) / g_pAnarchyManager->GetAttractModeTime() : (gpGlobals->curtime - m_flInterpStartTime) / kflPosInterpTime;
+		//if (tt >= 1.0f)	// Added for Anarchy Arcade
+		if (tt >= 1.0f && bAnglesAreGood)	// Added for Anarchy Arcade
+		{
+			/* Added for Anarchy Arcade
 			// we're there, we're done
 			UTIL_SetOrigin( this, m_vEndPos );
 			SetAbsVelocity( vec3_origin );
 
 			m_bInterpolatePosition = false;
+			*/
+
+			// Added for Anarchy Arcade
+			SetNextThink(0);
+
+			if (!bOnWayHome)
+			{
+				if (m_pHotlinkEntity)
+				{
+					this->SetParent(m_pHotlinkEntity, m_iHotlinkAttachmentIndex);// , false);
+					this->SetParentAttachment("Set Parent Attachment", "aacam", false);
+				}
+				else
+				{
+					// Adjust our velocity so we don't fly too far away...
+					this->SetAbsVelocity(this->GetAbsVelocity().Normalized()*g_pAnarchyManager->GetAttractModeDrift());
+					g_pAnarchyManager->OnAttractModeTransformReached();
+				}
+			}
+
+			if (m_pHotlinkEntity)
+			{
+				m_bReadyToAnimateCamera = true;
+				CPropShortcutEntity* pHotlinkForReal = dynamic_cast<CPropShortcutEntity*>(m_pHotlinkEntity);
+				if (pHotlinkForReal)
+				{
+					if (!bOnWayHome)
+						pHotlinkForReal->PlaySequence(m_sequenceName.c_str());
+					else
+					{
+						m_hPlayer->SetAbsAngles(this->GetAbsAngles());
+						pHotlinkForReal->CleanupCameraEntities();
+					}
+				}
+			}
+
+			// End Added for Anarchy Arcade
 		}
 		else
 		{
-			Assert(tt >= 0);
+			if (tt < 1.0f)			// Added for Anarchy Arcade
+			{
+				Assert(tt >= 0);
 
-			Vector nextPos = ( (m_vEndPos - m_vStartPos) * SimpleSpline(tt) ) + m_vStartPos;
-			// rather than stomping origin, set the velocity so that we get there in the proper time
-			Vector desiredVel = (nextPos - GetAbsOrigin()) * (1.0f / gpGlobals->frametime);
-			SetAbsVelocity( desiredVel );
+				Vector nextPos = ((m_vEndPos - m_vStartPos) * SimpleSpline(tt)) + m_vStartPos;
+				// rather than stomping origin, set the velocity so that we get there in the proper time
+				Vector desiredVel = (nextPos - GetAbsOrigin()) * (1.0f / gpGlobals->frametime);
+				SetAbsVelocity(desiredVel);
+			}
+
+			// Added for Anarchy Arcade
+			if (!bAnglesAreGood)
+			{
+				if (m_iHotlinkAttachmentIndex)
+				{
+					QAngle angles = GetLocalAngles();
+
+					if (angles.y > 360)
+						angles.y -= 360;
+
+					if (angles.y < 0)
+						angles.y += 360;
+
+					SetLocalAngles(angles);
+
+					QAngle vecGoal;
+					Vector vecOrigin;
+					if (!bOnWayHome)
+					{
+
+						if (m_pHotlinkEntity)
+							m_pHotlinkEntity->GetBaseAnimating()->GetAttachment(m_iHotlinkAttachmentIndex, vecOrigin, vecGoal);
+						else
+						{
+							vecOrigin = g_pAnarchyManager->GetAttractModeOrigin();
+							vecGoal = g_pAnarchyManager->GetAttractModeAngles();
+						}
+					}
+					else
+					{
+						vecGoal = m_vecOriginalEyeAngles;
+						vecOrigin = m_vecOriginalEyePos;
+					}
+
+					float dx = vecGoal.x - GetLocalAngles().x;
+					float dy = vecGoal.y - GetLocalAngles().y;
+					float dz = vecGoal.z - GetLocalAngles().z;
+
+					if (dx < -180)
+						dx += 360;
+					if (dx > 180)
+						dx = dx - 360;
+
+					if (dy < -180)
+						dy += 360;
+					if (dy > 180)
+						dy = dy - 360;
+
+					if (dz < -180)
+						dz += 360;
+					if (dz > 180)
+						dz = dz - 360;
+
+					dx = dx * 180 * gpGlobals->frametime;
+					dy = dy * 180 * gpGlobals->frametime;
+					dz = dz * 180 * gpGlobals->frametime;
+
+					// Make sure deltas are not too small
+					/*
+					float minVal = 1.0f;
+					if (dx > 0 && dx < minVal)
+					dx = minVal;
+					else if (dx < 0 && dx > -minVal)
+					dx = -minVal;
+
+					if (dy > 0 && dy < minVal)
+					dy = minVal;
+					else if (dy < 0 && dy > -minVal)
+					dy = -minVal;
+
+					if (dz > 0 && dz < minVal)
+					dz = minVal;
+					else if (dz < 0 && dz > -minVal)
+					dz = -minVal;
+					*/
+
+					// Make sure deltas are not too big
+					float maxVal = 60.0f;
+					if (dx > maxVal)
+						dx = maxVal;
+					else if (dx < -maxVal)
+						dx = -maxVal;
+
+					if (dy > maxVal)
+						dy = maxVal;
+					else if (dy < -maxVal)
+						dy = -maxVal;
+
+					if (dz > maxVal)
+						dz = maxVal;
+					else if (dz < -maxVal)
+						dz = -maxVal;
+
+					QAngle vecAngVel;
+					vecAngVel.Init(dx, dy, dz);
+
+					SetLocalAngularVelocity(vecAngVel);
+				}
+			}
+
+			SetNextThink(gpGlobals->curtime);
 		}
 	}
-#endif
+//#endif	// Added for Anarchy Arcade
 }
 
 

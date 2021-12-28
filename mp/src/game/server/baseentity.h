@@ -583,7 +583,8 @@ public:
 	// If iAttachment is a valid attachment on the parent, then your local origin and angles 
 	// are relative to the attachment on this entity. If iAttachment == -1, it'll preserve the
 	// current m_iParentAttachment.
-	virtual void	SetParent( CBaseEntity* pNewParent, int iAttachment = -1 );
+	//virtual void	SetParent( CBaseEntity* pNewParent, int iAttachment = -1 );
+	virtual void	SetParent(CBaseEntity* pNewParent, int iAttachment = -1, bool useLocalSpace = true);	// Added for Anarchy Arcade
 	CBaseEntity* GetParent();
 	int			GetParentAttachment();
 
@@ -1802,6 +1803,34 @@ public:
 	}
 
 	virtual bool ShouldBlockNav() const { return true; }
+
+	// Added for Anarchy Arcade
+#ifdef GLOWS_ENABLE
+	// Glows
+	void				AddGlowEffect(void);
+	void				RemoveGlowEffect(void);
+	bool				IsGlowEffectActive(void);
+
+private:
+	int m_iOldTransmitState;
+
+protected:
+	CNetworkVar(bool, m_bGlowEnabled);
+#endif // GLOWS_ENABLE
+	// End added for Anarchy Arcade
+
+	// Added for Anarchy Arcade
+#ifndef CLIENT_DLL
+	void SetIsHotlink(bool bValue) { m_bIsHotlink = bValue; }
+
+public:
+	bool IsHotlink() { return m_bIsHotlink; }
+
+private:
+	bool m_bIsHotlink;
+	ConVar* m_pDamagePhysicsConVar;
+#endif
+	// End Added for Anarchy Arcade
 };
 
 // Send tables exposed in this module.

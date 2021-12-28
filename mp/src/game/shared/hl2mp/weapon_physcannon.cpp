@@ -45,6 +45,16 @@
 #include "vphysics/friction.h"
 #include "debugoverlay_shared.h"
 
+// Added for Anarcy Arcade
+//#ifdef CLIENT_DLL
+//#include "../aarcade/client/c_anarchymanager.h"
+//#include <vgui/VGUI.h>
+//#include "vgui/IInput.h"
+//#include <vgui/ISurface.h>
+//#include "vgui/MouseCode.h"
+//#include "vgui/KeyCode.h"
+//#endif
+
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
 
@@ -645,6 +655,7 @@ void CGrabController::DetachEntity( bool bClearVelocity )
 
 static bool InContactWithHeavyObject( IPhysicsObject *pObject, float heavyMass )
 {
+	/*
 	bool contact = false;
 	IPhysicsFrictionSnapshot *pSnapshot = pObject->CreateFrictionSnapshot();
 	while ( pSnapshot->IsValid() )
@@ -659,6 +670,8 @@ static bool InContactWithHeavyObject( IPhysicsObject *pObject, float heavyMass )
 	}
 	pObject->DestroyFrictionSnapshot( pSnapshot );
 	return contact;
+	*/
+	return false;
 }
 
 IMotionEvent::simresult_e CGrabController::Simulate( IPhysicsMotionController *pController, IPhysicsObject *pObject, float deltaTime, Vector &linear, AngularImpulse &angular )
@@ -1083,6 +1096,7 @@ public:
 	void	PrimaryAttack();
 	void	SecondaryAttack();
 	void	WeaponIdle();
+	void	Reloading();	// Added for Anarchy Arcade
 	void	ItemPreFrame();
 	void	ItemPostFrame();
 
@@ -1231,6 +1245,15 @@ protected:
 	float	m_flCheckSuppressTime;		// Amount of time to suppress the checking for targets
 	bool	m_flLastDenySoundPlayed;	// Debounce for deny sound
 	int		m_nAttack2Debounce;
+	bool	m_bAiming;
+	bool	m_bFiring;
+	bool	m_bReloading;
+	bool	m_bHoldingReload;
+	bool	m_bHoldingFire;
+	float	m_flFiringHeldTime;
+	float	m_flReloadHeldTime;
+	bool	m_bDoubleReloading;
+	float	m_flDoubleReloadingTime;
 
 	CNetworkVar( bool,	m_bActive );
 	CNetworkVar( int,	m_EffectState );		// Current state of the effects on the gun
@@ -1333,6 +1356,15 @@ CWeaponPhysCannon::CWeaponPhysCannon( void )
 	m_flCheckSuppressTime	= 0.0f;
 	m_EffectState			= (int)EFFECT_NONE;
 	m_flLastDenySoundPlayed	= false;
+
+	m_bAiming = false;	// Added for Anarchy Arcade
+	m_bFiring = false;	// Added for Anarchy Arcade
+	m_bReloading = false;	// Added for Anarchy Arcade
+	m_bHoldingReload = false;
+	m_bHoldingFire = false;
+	m_flReloadHeldTime = 0;
+	m_bDoubleReloading = false;
+	m_flDoubleReloadingTime = 0;
 
 #ifdef CLIENT_DLL
 	m_nOldEffectState		= EFFECT_NONE;
@@ -1522,7 +1554,7 @@ void CWeaponPhysCannon::Drop( const Vector &vecVelocity )
 bool CWeaponPhysCannon::CanHolster( void ) 
 { 
 	//Don't holster this weapon if we're holding onto something
-	if ( m_bActive )
+	if (m_bActive )
 		return false;
 
 	return BaseClass::CanHolster();
@@ -1537,6 +1569,15 @@ bool CWeaponPhysCannon::Holster( CBaseCombatWeapon *pSwitchingTo )
 	//Don't holster this weapon if we're holding onto something
 	if ( m_bActive )
 		return false;
+
+#ifndef CLIENT_DLL
+	CBasePlayer *pOwner = ToBasePlayer( GetOwner() );
+	if ( pOwner != NULL )
+	{
+		edict_t *pClient = engine->PEntityOfEntIndex(pOwner->entindex());
+		engine->ClientCommand(pClient, "remote_holstered;\n");
+	}
+#endif
 
 	ForceDrop();
 	DestroyEffects();
@@ -1795,6 +1836,12 @@ float CWeaponPhysCannon::TraceLength()
 }
 
 
+// Added for Anarchy Arcade
+void CWeaponPhysCannon::Reloading(void)
+{
+	return;
+}
+
 //-----------------------------------------------------------------------------
 // Purpose: 
 //
@@ -1803,6 +1850,9 @@ float CWeaponPhysCannon::TraceLength()
 //-----------------------------------------------------------------------------
 void CWeaponPhysCannon::PrimaryAttack( void )
 {
+	// Added for Anarchy Arcade
+	//DevMsg("PhysCannon primary fire!\n");
+	return;
 	if( m_flNextPrimaryAttack > gpGlobals->curtime )
 		return;
 
@@ -1919,6 +1969,19 @@ void CWeaponPhysCannon::PrimaryAttack( void )
 //-----------------------------------------------------------------------------
 void CWeaponPhysCannon::SecondaryAttack( void )
 {
+	// Added for Anarchy Arcade
+	return;
+	CBasePlayer *pOwnerz = ToBasePlayer( GetOwner() );
+
+	if ( pOwnerz == NULL )
+		return;
+
+	// See if we should drop a held item
+	if ( pOwnerz->m_afButtonPressed & IN_ATTACK2 )
+		DevMsg("PhysCannon secondary fire!\n");
+
+	return;
+
 #ifndef CLIENT_DLL
 	if ( m_flNextSecondaryAttack > gpGlobals->curtime )
 		return;
@@ -1976,6 +2039,10 @@ void CWeaponPhysCannon::SecondaryAttack( void )
 //-----------------------------------------------------------------------------
 void CWeaponPhysCannon::WeaponIdle( void )
 {
+	// Added for Anarchy Arcade
+	//DevMsg("weapon idle!\n");
+	return;
+
 	if ( HasWeaponIdleTimeElapsed() )
 	{
 		if ( m_bActive )
@@ -2658,63 +2725,267 @@ void CWeaponPhysCannon::DoEffectIdle( void )
 //-----------------------------------------------------------------------------
 void CWeaponPhysCannon::ItemPostFrame()
 {
+	// Added for Anarchy Arcade (the entire method)
+
 	CBasePlayer *pOwner = ToBasePlayer( GetOwner() );
 	if ( pOwner == NULL )
-	{
-		// We found an object. Debounce the button
-		m_nAttack2Debounce = 0;
 		return;
-	}
 
-	//Check for object in pickup range
-	if ( m_bActive == false )
+	bool idling = true;
+
+	bool bIsAim = false;
+	// ALWAYS CHECK FOR AIM
+	if (pOwner->m_nButtons & IN_ATTACK2)
 	{
-		CheckForTarget();
+		bIsAim = true;
 
-		if ( ( m_flElementDebounce < gpGlobals->curtime ) && ( m_nChangeState != ELEMENT_STATE_NONE ) )
+		if (!m_bAiming)
 		{
-			if ( m_nChangeState == ELEMENT_STATE_OPEN )
-			{
-				OpenElements();
-			}
-			else if ( m_nChangeState == ELEMENT_STATE_CLOSED )
-			{
-				CloseElements();
-			}
+			// Aiming has begun
+			m_bAiming = true;
+			//DevMsg("+input_mode\n");
 
-			m_nChangeState = ELEMENT_STATE_NONE;
+#ifndef CLIENT_DLL
+			edict_t *pClient = engine->PEntityOfEntIndex( pOwner->entindex() );
+			engine->ClientCommand(pClient, "+input_mode\n");
+#endif
+		}
+		else
+		{
+			// Aiming continued
+			SecondaryAttack();
 		}
 	}
-
-	// NOTE: Attack2 will be considered to be pressed until the first item is picked up.
-	int nAttack2Mask = pOwner->m_nButtons & (~m_nAttack2Debounce);
-	if ( nAttack2Mask & IN_ATTACK2 )
+	else if (m_bAiming)
 	{
-		SecondaryAttack();
+		bIsAim = true;
+
+		// Aiming has stopped
+		m_bAiming = false;
+		//DevMsg("-input_mode\n");
+
+#ifndef CLIENT_DLL
+		edict_t *pClient = engine->PEntityOfEntIndex( pOwner->entindex() );
+		engine->ClientCommand(pClient, "-input_mode\n");
+#endif
 	}
 	else
 	{
-		// Reset our debouncer
-		m_flLastDenySoundPlayed = false;
+#ifndef CLIENT_DLL
+		// NOTE: The code really doesn't know WTF the state of IN_ATTACK2 is (the code thinks its 0), so the VGUI does its OWN check on the other side of this call.
+		edict_t *pClient = engine->PEntityOfEntIndex(pOwner->entindex());
+		engine->ClientCommand(pClient, "mouse_idle\n");
+#endif
+	}
 
-		if ( m_bActive == false )
+	bool bIsReload = false;
+	bool bIsReloadHold = false;
+	bool bIsDoubleReload = false;
+	// CHECK FOR RELOAD (if not holding down AIM)
+	if (!bIsAim && pOwner->m_nButtons & IN_RELOAD)
+	{
+		bIsReload = true;
+
+		if (!m_bReloading)
 		{
-			DoEffect( EFFECT_READY );
+			// Reload has begun
+			m_bReloading = true;
+
+			if (m_flDoubleReloadingTime == 0)
+				m_flDoubleReloadingTime = gpGlobals->curtime + 0.3f;
+		}
+		else
+		{
+			if (!m_bHoldingReload)
+			{
+				if (m_flReloadHeldTime == 0)
+				{
+					m_flReloadHeldTime = gpGlobals->curtime + 1.0f;
+				}
+				else if (false && gpGlobals->curtime >= m_flReloadHeldTime)
+				{
+					bIsReloadHold = true;
+
+					// Hold has begun
+					//DevMsg("task_clear\n");
+					m_bHoldingReload = true;
+
+#ifndef CLIENT_DLL
+					edict_t *pClient = engine->PEntityOfEntIndex(pOwner->entindex());
+					engine->ClientCommand(pClient, "task_clear\n");
+#endif
+				}
+
+				if (!bIsReloadHold)
+				{
+					// Reloading continued
+					Reloading();
+				}
+			}
+			else
+			{
+				// Hold continued
+				bIsReloadHold = true;
+			}
 		}
 	}
-	
-	if (( pOwner->m_nButtons & IN_ATTACK2 ) == 0 )
+	else if (m_bReloading)
 	{
-		m_nAttack2Debounce = 0;
+		bIsReload = true;
+
+		// reset even if no event is triggered
+		m_bReloading = false;
+		m_flReloadHeldTime = 0;
+
+		if (m_bHoldingReload)
+		{
+			bIsReloadHold = true;
+
+			// Holding has stopped
+			m_bHoldingReload = false;
+			//DevMsg("Holding has ended!\n");
+		}
+		else
+		{
+		//	if (m_flDoubleReloadingTime == 0)
+	//		{
+//				m_flDoubleReloadingTime = gpGlobals->curtime + 0.3f;
+			//}
+			if (false && !m_bDoubleReloading)
+				m_bDoubleReloading = true;
+			else if (false && m_flDoubleReloadingTime > 0 && gpGlobals->curtime < m_flDoubleReloadingTime)
+			{
+				bIsDoubleReload = true;
+
+				// Double Reload has begun (and stopped)
+				//DevMsg("DOUBLE RELOAD!\n");
+				m_flDoubleReloadingTime = 0;
+				m_bDoubleReloading = false;
+
+				//DevMsg("+task_menu\n");
+#ifndef CLIENT_DLL
+					edict_t *pClient = engine->PEntityOfEntIndex(pOwner->entindex());
+					engine->ClientCommand(pClient, "+task_menu\n");
+#endif
+			}
+			else
+			{
+				m_flDoubleReloadingTime = gpGlobals->curtime;
+				// Reloading has stopped
+			}
+		}
 	}
 
-	if ( pOwner->m_nButtons & IN_ATTACK )
+	bool bIsFire = false;
+	bool bIsFireHold = false;
+	// CHECK FOR ATTACK (if not RELOADING)
+	if (!bIsReload && !bIsReloadHold && !bIsDoubleReload && pOwner->m_nButtons & IN_ATTACK)
 	{
-		PrimaryAttack();
+		bIsFire = true;
+
+		if (!m_bFiring)
+		{
+			// Firing begun
+			//DevMsg("Firing has begun!\n");
+			m_bFiring = true;
+
+#ifndef CLIENT_DLL
+			edict_t *pClient = engine->PEntityOfEntIndex(pOwner->entindex());
+			engine->ClientCommand(pClient, "specialgamepadinputmode\n");
+#endif
+		}
+		else
+		{
+			// Firing continued
+			//PrimaryAttack();
+			if (!m_bHoldingFire)
+			{
+				if (m_flFiringHeldTime == 0)
+				{
+					m_flFiringHeldTime = gpGlobals->curtime + 1.0f;
+				}
+				else if (gpGlobals->curtime >= m_flFiringHeldTime)
+				{
+					bIsFireHold = true;
+
+					// Hold has begun
+					//DevMsg("task_clear\n");
+					m_bHoldingFire = true;
+
+#ifndef CLIENT_DLL
+					edict_t *pClient = engine->PEntityOfEntIndex(pOwner->entindex());
+					engine->ClientCommand(pClient, "startedHoldingPrimaryFire;\n");
+#endif
+
+				}
+
+				if (!bIsReloadHold)
+				{
+					// Reloading continued
+					Reloading();
+				}
+			}
+			else
+			{
+				// Hold continued
+				bIsReloadHold = true;
+			}
+		}
 	}
-	else 
+	else if (m_bFiring)
 	{
-		WeaponIdle();
+		bIsFire = true;
+
+		// reset even if no event is triggered
+		m_bReloading = false;
+		m_flReloadHeldTime = 0;
+		m_flFiringHeldTime = 0;
+
+		if (m_bHoldingFire)
+		{
+			m_bFiring = false;
+			bIsFireHold = true;
+			//DevMsg("Released holding fire\n");
+			// Holding has stopped
+			m_bHoldingFire = false;
+#ifndef CLIENT_DLL
+			edict_t *pClient = engine->PEntityOfEntIndex(pOwner->entindex());
+			engine->ClientCommand(pClient, "stoppedHoldingPrimaryFire;\n");
+#endif
+			//DevMsg("Holding has ended!\n");
+		}
+		else
+		{
+			// Firing has stopped
+			m_bFiring = false;
+			//DevMsg("select\n");
+#ifndef CLIENT_DLL
+			edict_t *pClient = engine->PEntityOfEntIndex(pOwner->entindex());
+				engine->ClientCommand(pClient, "select;\n");
+#endif
+		}
+	}
+
+	if (!bIsAim && !bIsReload && !bIsReloadHold && !bIsFireHold && !bIsDoubleReload && !bIsFire)
+	{
+		if (m_flDoubleReloadingTime > 0 && gpGlobals->curtime >= m_flDoubleReloadingTime)
+		{
+			// Reload triggered
+			//DevMsg("task_remember\n");
+
+			m_flDoubleReloadingTime = 0;
+			m_bDoubleReloading = false;
+
+#ifndef CLIENT_DLL
+			edict_t *pClient = engine->PEntityOfEntIndex(pOwner->entindex());
+			engine->ClientCommand(pClient, "task_remember\n");
+#endif
+		}
+		else
+		{
+			//DevMsg("Idling\n");
+			WeaponIdle();
+		}
 	}
 }
 

@@ -37,6 +37,8 @@
 #include "hud_vote.h"
 #include "ienginevgui.h"
 #include "sourcevr/isourcevirtualreality.h"
+#include "clienteffectprecachesystem.h"	// Added for Anarchy Arcade
+//#include "../../game/client/glow_outline_effect.h" // Added for Anarchy Arcade
 #if defined( _X360 )
 #include "xbox/xbox_console.h"
 #endif
@@ -76,7 +78,8 @@ class CHudVote;
 
 static vgui::HContext s_hVGuiContext = DEFAULT_VGUI_CONTEXT;
 
-ConVar cl_drawhud( "cl_drawhud", "1", FCVAR_CHEAT, "Enable the rendering of the hud" );
+//ConVar cl_drawhud( "cl_drawhud", "1", FCVAR_CHEAT, "Enable the rendering of the hud" );
+ConVar cl_drawhud("cl_drawhud", "0", FCVAR_ARCHIVE, "Enable the rendering of the hud");	// Added for Anarchy Arcade
 ConVar hud_takesshots( "hud_takesshots", "0", FCVAR_CLIENTDLL | FCVAR_ARCHIVE, "Auto-save a scoreboard screenshot at the end of a map." );
 ConVar hud_freezecamhide( "hud_freezecamhide", "0", FCVAR_CLIENTDLL | FCVAR_ARCHIVE, "Hide the HUD during freeze-cam" );
 ConVar cl_show_num_particle_systems( "cl_show_num_particle_systems", "0", FCVAR_CLIENTDLL, "Display the number of active particle systems." );
@@ -398,22 +401,6 @@ void ClientModeShared::VGui_Shutdown()
 //-----------------------------------------------------------------------------
 void ClientModeShared::Shutdown()
 {
-}
-
-//-----------------------------------------------------------------------------
-// Purpose: 
-// Input  : frametime - 
-//			*cmd - 
-//-----------------------------------------------------------------------------
-bool ClientModeShared::CreateMove( float flInputSampleTime, CUserCmd *cmd )
-{
-	// Let the player override the view.
-	C_BasePlayer *pPlayer = C_BasePlayer::GetLocalPlayer();
-	if(!pPlayer)
-		return true;
-
-	// Let the player at it
-	return pPlayer->CreateMove( flInputSampleTime, cmd );
 }
 
 //-----------------------------------------------------------------------------
@@ -789,6 +776,7 @@ bool ClientModeShared::DoPostScreenSpaceEffects( const CViewSetup *pSetup )
 			return false;
 	}
 #endif 
+	g_GlowObjectManager.RenderGlowEffects(pSetup, 0);	// Added for Anarchy Arcade
 	return true;
 }
 
@@ -809,6 +797,10 @@ vgui::Panel *ClientModeShared::GetMessagePanel()
 //-----------------------------------------------------------------------------
 void ClientModeShared::StartMessageMode( int iMessageModeType )
 {
+	// Added for Anarchy Arcade
+	engine->ClientCmd("chat_message");
+	return;
+	// End added for Anarchy Arcade
 	// Can only show chat UI in multiplayer!!!
 	if ( gpGlobals->maxClients == 1 )
 	{
@@ -1515,3 +1507,29 @@ void ClientModeShared::DeactivateInGameVGuiContext()
 	vgui::ivgui()->ActivateContext( DEFAULT_VGUI_CONTEXT );
 }
 
+#include "../aarcade/client/c_anarchymanager.h"	// Added for Anarchy Arcade
+//-----------------------------------------------------------------------------
+// Purpose: 
+// Input  : frametime - 
+//			*cmd - 
+//-----------------------------------------------------------------------------
+bool ClientModeShared::CreateMove(float flInputSampleTime, CUserCmd *cmd)
+{
+	if (g_pAnarchyManager->IsPaused())	// Added for Anarchy Arcade
+		return true;
+
+	// Let the player override the view.
+	C_BasePlayer *pPlayer = C_BasePlayer::GetLocalPlayer();
+	if (!pPlayer)
+		return true;
+
+	// Let the player at it
+	return pPlayer->CreateMove(flInputSampleTime, cmd);
+}
+
+// Added for Anarchy Arcade
+CLIENTEFFECT_REGISTER_BEGIN(PrecachePostProcessingEffectsGlow)
+CLIENTEFFECT_MATERIAL("dev/glow_color")
+CLIENTEFFECT_MATERIAL("dev/halo_add_to_screen")
+CLIENTEFFECT_REGISTER_END_CONDITIONAL(engine->GetDXSupportLevel() >= 90)
+// End added for Anarchy Arcade

@@ -615,7 +615,7 @@ void CUtlBuffer::GetStringInternal( char *pString, size_t maxLenInChars )
 		return;
 	}
 
-	Assert( maxLenInChars != 0 );
+	//Assert( maxLenInChars != 0 );	// Added for Anarchy Arcade
 
 	if ( maxLenInChars == 0 )
 	{

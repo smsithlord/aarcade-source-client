@@ -285,7 +285,7 @@ void C_PropAirboat::DrawHudElements( )
 //-----------------------------------------------------------------------------
 void C_PropAirboat::UpdateViewAngles( C_BasePlayer *pLocalPlayer, CUserCmd *pCmd )
 {
-	if ( r_AirboatViewBlendTo.GetInt() )
+	if ( r_AirboatViewBlendTo.GetInt() && false )	// Added for Anarchy Arcade
 	{
 		//
 		// Autocenter the view after a period of no mouse movement while throttling.

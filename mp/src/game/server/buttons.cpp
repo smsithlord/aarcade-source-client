@@ -651,6 +651,22 @@ void CBaseButton::ButtonTouch( CBaseEntity *pOther )
 //-----------------------------------------------------------------------------
 void CBaseButton::ButtonActivate( void )
 {
+	// Added for Anarchy Arcade
+	//char parent[128];
+	//if (this->GetKeyValue("parent", &parent, 128) &&
+	if (this->GetParent() && !Q_strcmp(this->GetParent()->GetClassname(), "node_info"))// && !g_pGameRules->IsMultiplayer())
+	{
+		//engine->ServerCommand(UTIL_VarArgs("showhubsmenu %i\n", this->entindex()));
+
+		CBasePlayer* pLocalPlayer = UTIL_GetLocalPlayer();
+		if (pLocalPlayer)
+		{
+			edict_t *pClient = engine->PEntityOfEntIndex(pLocalPlayer->entindex());
+			engine->ClientCommand(pClient, UTIL_VarArgs("showhubsmenu %i\n", this->entindex()));//
+		}
+	}
+	// End added for Anarchy Arcade
+
 	if ( m_sNoise != NULL_STRING )
 	{
 		CPASAttenuationFilter filter( this );

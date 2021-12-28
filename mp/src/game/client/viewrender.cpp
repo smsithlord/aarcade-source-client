@@ -77,6 +77,8 @@
 // Projective textures
 #include "C_Env_Projected_Texture.h"
 
+#include "../aarcade/client/c_anarchymanager.h"	// Added for Anarchy Arcade
+
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
 
@@ -109,12 +111,18 @@ ConVar r_entityclips( "r_entityclips", "1" ); //FIXME: Nvidia drivers before 81.
 static ConVar r_drawopaqueworld( "r_drawopaqueworld", "1", FCVAR_CHEAT );
 static ConVar r_drawtranslucentworld( "r_drawtranslucentworld", "1", FCVAR_CHEAT );
 static ConVar r_3dsky( "r_3dsky","1", 0, "Enable the rendering of 3d sky boxes" );
-static ConVar r_skybox( "r_skybox","1", FCVAR_CHEAT, "Enable the rendering of sky boxes" );
+static ConVar r_skybox("r_skybox", "1", FCVAR_CHEAT, "Enable the rendering of sky boxes");
+
+// Added for Anarchy Arcade
+/*
 #ifdef TF_CLIENT_DLL
 ConVar r_drawviewmodel( "r_drawviewmodel","1", FCVAR_ARCHIVE );
 #else
 ConVar r_drawviewmodel( "r_drawviewmodel","1", FCVAR_CHEAT );
 #endif
+*/
+ConVar r_drawviewmodel("r_drawviewmodel", "0", FCVAR_ARCHIVE);	// Added for Anarchy Arcade
+
 static ConVar r_drawtranslucentrenderables( "r_drawtranslucentrenderables", "1", FCVAR_CHEAT );
 static ConVar r_drawopaquerenderables( "r_drawopaquerenderables", "1", FCVAR_CHEAT );
 static ConVar r_threaded_renderables( "r_threaded_renderables", "0" );
@@ -514,7 +522,7 @@ public:
 	{}
 
 	//	void Setup( const CViewSetup &, const WaterRenderInfo_t& info );
-
+	
 protected:
 	void			CalcWaterEyeAdjustments( const VisibleFogVolumeInfo_t &fogInfo, float &newWaterHeight, float &waterZAdjust, bool bSoftwareUserClipPlane );
 
@@ -1059,8 +1067,12 @@ void CViewRender::DrawViewModels( const CViewSetup &view, bool drawViewmodel )
 	ITexture *pRTDepth = NULL;
 	if( view.m_eStereoEye != STEREO_EYE_MONO )
 	{
-		pRTColor = g_pSourceVR->GetRenderTarget( (ISourceVirtualReality::VREye)(view.m_eStereoEye-1), ISourceVirtualReality::RT_Color );
-		pRTDepth = g_pSourceVR->GetRenderTarget( (ISourceVirtualReality::VREye)(view.m_eStereoEye-1), ISourceVirtualReality::RT_Depth );
+		// Added for Anarchy Arcade
+		pRTColor = g_pAnarchyManager->GetRenderTarget((ISourceVirtualReality::VREye)(view.m_eStereoEye - 1), ISourceVirtualReality::RT_Color);
+		//pRTDepth = g_pAnarchyManager->GetRenderTarget((ISourceVirtualReality::VREye)(view.m_eStereoEye - 1), ISourceVirtualReality::RT_Depth);
+		//pRTColor = g_pSourceVR->GetRenderTarget( (ISourceVirtualReality::VREye)(view.m_eStereoEye-1), ISourceVirtualReality::RT_Color );
+		//pRTDepth = g_pSourceVR->GetRenderTarget( (ISourceVirtualReality::VREye)(view.m_eStereoEye-1), ISourceVirtualReality::RT_Depth );
+		// End added for Anarchy Arcade
 	}
 
 	render->Push3DView( viewModelSetup, 0, pRTColor, GetFrustum(), pRTDepth );
@@ -1799,6 +1811,10 @@ void CViewRender::SetupVis( const CViewSetup& view, unsigned int &visFlags, View
 //-----------------------------------------------------------------------------
 void CViewRender::RenderPlayerSprites()
 {
+	// Added for Anarchy Arcade
+	if (g_pAnarchyManager->IsPaused())
+		return;
+
 	tmZone( TELEMETRY_LEVEL0, TMZF_NONE, "%s", __FUNCTION__ );
 
 	GetClientVoiceMgr()->DrawHeadLabels();
@@ -1814,6 +1830,8 @@ void CViewRender::SetupMain3DView( const CViewSetup &view, int &nClearFlags )
 	// FIXME: I really want these fields removed from CViewSetup 
 	// and passed in as independent flags
 	// Clear the color here if requested.
+
+	//DevMsg("%i\n", view.m_eStereoEye);	// Added for Anarchy Arcade
 
 	int nDepthStencilFlags = nClearFlags & ( VIEW_CLEAR_DEPTH | VIEW_CLEAR_STENCIL );
 	nClearFlags &= ~( nDepthStencilFlags ); // Clear these flags
@@ -1832,11 +1850,16 @@ void CViewRender::SetupMain3DView( const CViewSetup &view, int &nClearFlags )
 	{
 		ITexture *pRTColor = NULL;
 		ITexture *pRTDepth = NULL;
+
+		// Added for Anarchy Arcade
 		if( view.m_eStereoEye != STEREO_EYE_MONO )
 		{
-			pRTColor = g_pSourceVR->GetRenderTarget( (ISourceVirtualReality::VREye)(view.m_eStereoEye-1), ISourceVirtualReality::RT_Color );
-			pRTDepth = g_pSourceVR->GetRenderTarget( (ISourceVirtualReality::VREye)(view.m_eStereoEye-1), ISourceVirtualReality::RT_Depth );
+			pRTColor = g_pAnarchyManager->GetRenderTarget((ISourceVirtualReality::VREye)(view.m_eStereoEye - 1), ISourceVirtualReality::RT_Color);
+			//pRTDepth = GetFullFrameDepthTexture();//g_pAnarchyManager->GetRenderTarget((ISourceVirtualReality::VREye)(view.m_eStereoEye - 1), ISourceVirtualReality::RT_Depth);
+			//pRTColor = g_pSourceVR->GetRenderTarget( (ISourceVirtualReality::VREye)(view.m_eStereoEye-1), ISourceVirtualReality::RT_Color );
+			//pRTDepth = g_pSourceVR->GetRenderTarget( (ISourceVirtualReality::VREye)(view.m_eStereoEye-1), ISourceVirtualReality::RT_Depth );
 		}
+		// End added for Anarchy Arcade
 
 		render->Push3DView( view, nClearFlags, pRTColor, GetFrustum(), pRTDepth );
 	}
@@ -1911,6 +1934,10 @@ const char *COM_GetModDirectory();
 // This renders the entire 3D view.
 void CViewRender::RenderView( const CViewSetup &view, int nClearFlags, int whatToDraw )
 {
+	// Added for Anarchy Arcade
+	if (g_pAnarchyManager->IsPaused())
+		return;
+
 	m_UnderWaterOverlayMaterial.Shutdown();					// underwater view will set
 
 	m_CurrentView = view;
@@ -1936,7 +1963,17 @@ void CViewRender::RenderView( const CViewSetup &view, int nClearFlags, int whatT
 		}
 	}
 
+	if ( view.m_eStereoEye == STEREO_EYE_RIGHT )
+		g_pAnarchyManager->SetEye(ISourceVirtualReality::VREye::VREye_Right);
+	else
+		g_pAnarchyManager->SetEye(ISourceVirtualReality::VREye::VREye_Left);
+
 	CMatRenderContextPtr pRenderContext( materials );
+	if (g_pAnarchyManager->IsVRActive() && view.m_eStereoEye != STEREO_EYE_MONO)	// Added for Anarchy Arcade
+		pRenderContext->SetRenderTarget(g_pAnarchyManager->GetRenderTarget(ISourceVirtualReality::VREye::VREye_Left, ISourceVirtualReality::EWhichRenderTarget::RT_Color));
+	else
+		pRenderContext->SetRenderTarget(NULL);
+
 	ITexture *saveRenderTarget = pRenderContext->GetRenderTarget();
 	pRenderContext.SafeRelease(); // don't want to hold for long periods in case in a locking active share thread mode
 
@@ -2174,7 +2211,7 @@ void CViewRender::RenderView( const CViewSetup &view, int nClearFlags, int whatT
 	// if we're in VR mode we might need to override the render target
 	if( UseVR() )
 	{
-		saveRenderTarget = g_pSourceVR->GetRenderTarget( (ISourceVirtualReality::VREye)(view.m_eStereoEye - 1), ISourceVirtualReality::RT_Color );
+		saveRenderTarget = g_pSourceVR->GetRenderTarget( (ISourceVirtualReality::VREye) view.m_eStereoEye, ISourceVirtualReality::RT_Color );
 	}
 
 	// Draw the 2D graphics
@@ -2299,14 +2336,14 @@ void CViewRender::RenderView( const CViewSetup &view, int nClearFlags, int whatT
 		}
 		pRenderContext->PopRenderTargetAndViewport();
 
-		if ( UseVR() )
+		if ( g_pAnarchyManager->UseSBSRendering() || UseVR() )
 		{
 			// figure out if we really want to draw the HUD based on freeze cam
 			C_BasePlayer *pPlayer = C_BasePlayer::GetLocalPlayer();
 			bool bInFreezeCam = ( pPlayer && pPlayer->GetObserverMode() == OBS_MODE_FREEZECAM );
 
 			// draw the HUD after the view model so its "I'm closer" depth queues work right.
-			if( !bInFreezeCam && g_ClientVirtualReality.ShouldRenderHUDInWorld() )
+			if( !bInFreezeCam )// && g_ClientVirtualReality.ShouldRenderHUDInWorld() )
 			{
 				// Now we've rendered the HUD to its texture, actually get it on the screen.
 				// Since we're drawing it as a 3D object, we need correctly set up frustum, etc.
@@ -2315,7 +2352,7 @@ void CViewRender::RenderView( const CViewSetup &view, int nClearFlags, int whatT
 
 				// TODO - a bit of a shonky test - basically trying to catch the main menu, the briefing screen, the loadout screen, etc.
 				bool bTranslucent = !g_pMatSystemSurface->IsCursorVisible();
-				g_ClientVirtualReality.RenderHUDQuad( g_pClientMode->ShouldBlackoutAroundHUD(), bTranslucent );
+				g_ClientVirtualReality.RenderHUDQuad(false, bTranslucent);// g_pClientMode->ShouldBlackoutAroundHUD(), bTranslucent );
 				CleanupMain3DView( view );
 			}
 		}
@@ -2340,6 +2377,149 @@ void CViewRender::RenderView( const CViewSetup &view, int nClearFlags, int whatT
 
 	render->PopView( GetFrustum() );
 	g_WorldListCache.Flush();
+
+	if (view.m_eStereoEye == STEREO_EYE_RIGHT && g_pAnarchyManager->IsVRActive() && g_pAnarchyManager->VRSpectatorMode() == 0)
+	{
+		g_pAnarchyManager->RenderVREyeToView(view, ISourceVirtualReality::VREye::VREye_Left);
+
+
+
+
+		//g_pAnarchyManager->VRFrameReady();
+
+		//if (g_pAnarchyManager->IsVRActive())
+		//	g_pAnarchyManager->VRFrameReady();
+	}
+	else if (view.m_eStereoEye == STEREO_EYE_MONO && g_pAnarchyManager->IsVRActive() && g_pAnarchyManager->VRSpectatorMode() == 1 && g_pAnarchyManager->VRSpectatorMirrorMode())
+	{
+		g_pAnarchyManager->RenderMonoEyeToVRSpectatorCamera(view);
+	}
+	else if (!g_pAnarchyManager->IsVRActive() && g_pAnarchyManager->UseSBSRendering() && g_pAnarchyManager->GetNoDrawShortcutsValue() == 2)
+	{
+		/*
+		// transpose the sides of the screen.
+		CMatRenderContextPtr pRenderContext(materials);
+		ITexture* pRenderTexture = pRenderContext->GetRenderTarget();
+
+
+		Rect_t	DestinationRect, SourceRect;
+
+		SourceRect.width = m_View.width * 0.5;
+		SourceRect.height = m_View.height;
+		SourceRect.x = m_View.width * 0.5;
+		SourceRect.y = 0;
+
+
+		DestinationRect.width = m_View.width * 0.8;
+		DestinationRect.height = m_View.height;
+		DestinationRect.x = 0;
+		DestinationRect.y = 0;
+
+		//pRenderContext->CopyRenderTargetToTextureEx(pRenderTexture, 0, &SourceRect, &DestinationRect);
+		pRenderContext->CopyTextureToRenderTargetEx(0, pRenderTexture, &SourceRect, &DestinationRect);
+		*/
+
+		if (view.m_eStereoEye == STEREO_EYE_RIGHT)
+		{
+			CMatRenderContextPtr pRenderContext(materials);
+
+			//ITexture	*pFullFrameDepth = pRTDepth = GetFullFrameDepthTexture();
+			ITexture	*pFullFrameFB1 = materials->FindTexture("_rt_FullFrameFB1", TEXTURE_GROUP_RENDER_TARGET);
+			IMaterial	*pCopyMaterial = materials->FindMaterial("dev/upscale", TEXTURE_GROUP_OTHER);
+			pCopyMaterial->IncrementReferenceCount();
+
+			Rect_t	SourceRect, DestinationRect;
+
+			float flAmount = g_pAnarchyManager->GetComparisonRenderAmount();
+
+			SourceRect.x = view.x + (view.width * flAmount);
+			SourceRect.y = view.y;
+			SourceRect.width = view.width - (view.width * flAmount);
+			SourceRect.height = view.height;
+
+			DestinationRect.x = view.x + (view.width * flAmount);//view.m_nUnscaledX;
+			DestinationRect.y = view.m_nUnscaledY;
+			DestinationRect.width = view.width - (view.width * flAmount);//view.m_nUnscaledWidth;
+			DestinationRect.height = view.m_nUnscaledHeight;
+
+			pRenderContext->CopyRenderTargetToTextureEx(pFullFrameFB1, 0, &SourceRect, &SourceRect);
+			pRenderContext->DrawScreenSpaceRectangle(pCopyMaterial, DestinationRect.x, DestinationRect.y, DestinationRect.width, DestinationRect.height,
+				SourceRect.x, SourceRect.y, SourceRect.x + SourceRect.width - 1, SourceRect.y + SourceRect.height - 1,
+				pFullFrameFB1->GetActualWidth(), pFullFrameFB1->GetActualHeight());
+
+			pCopyMaterial->DecrementReferenceCount();
+		}
+		else if (view.m_eStereoEye == STEREO_EYE_LEFT)
+		{
+			CMatRenderContextPtr pRenderContext(materials);
+
+			ITexture	*pFullFrameFB1 = materials->FindTexture("_rt_FullFrameFB1", TEXTURE_GROUP_RENDER_TARGET);
+			IMaterial	*pCopyMaterial = materials->FindMaterial("dev/upscale", TEXTURE_GROUP_OTHER);
+			pCopyMaterial->IncrementReferenceCount();
+
+			Rect_t	SourceRect, DestinationRect, FullRect;
+
+			FullRect.x = view.x;
+			FullRect.y = view.y;
+			FullRect.width = view.width;
+			FullRect.height = view.height;
+
+			float flAmount = g_pAnarchyManager->GetComparisonRenderAmount();
+
+			SourceRect.x = view.x;
+			SourceRect.y = view.y;
+			SourceRect.width = view.width * flAmount;
+			SourceRect.height = view.height;
+
+			DestinationRect.x = view.m_nUnscaledX;//view.m_nUnscaledX;
+			DestinationRect.y = view.m_nUnscaledY;
+			DestinationRect.width = view.width * flAmount;//view.m_nUnscaledWidth;
+			DestinationRect.height = view.m_nUnscaledHeight;
+
+			// Copy our half to the buffer
+			pRenderContext->CopyRenderTargetToTextureEx(pFullFrameFB1, 0, &SourceRect, &SourceRect);
+
+			if (flAmount > 0)
+			{
+				// Draw a line down the middle separating the 2 renders
+				Rect_t BarSourceRect, BarRect;
+
+				BarSourceRect.x = 0;
+				BarSourceRect.y = 0;
+				BarSourceRect.width = 1;
+				BarSourceRect.height = 1;
+
+				BarRect.width = 10;
+				BarRect.height = view.height;
+				BarRect.y = 0;
+				BarRect.x = (view.width * flAmount) - (BarRect.width / 2);
+
+				if (BarRect.x < 0)
+				{
+					BarRect.width += BarRect.x;
+					BarRect.x = 0;
+				}
+
+				// Copy our bar to the buffer & draw it
+				pRenderContext->CopyRenderTargetToTextureEx(pFullFrameFB1, 0, &BarSourceRect, &BarRect);
+				//pRenderContext->DrawScreenSpaceRectangle(pCopyMaterial, BarRect.x, BarRect.y, BarRect.width, BarRect.height,
+				//	BarSourceRect.x, BarSourceRect.y, BarSourceRect.x + BarSourceRect.width - 1, BarSourceRect.y + BarSourceRect.height - 1,
+				//	pFullFrameFB1->GetActualWidth(), pFullFrameFB1->GetActualHeight());
+			}
+
+
+			// Now draw our fullscreen render to the screen
+			//pRenderContext->DrawScreenSpaceRectangle(pCopyMaterial, FullRect.x, FullRect.y, FullRect.width, FullRect.height,
+			//	FullRect.x, FullRect.y, FullRect.x + FullRect.width - 1, FullRect.y + FullRect.height - 1,
+			//	pFullFrameFB1->GetActualWidth(), pFullFrameFB1->GetActualHeight());
+
+			pRenderContext->DrawScreenSpaceRectangle(pCopyMaterial, FullRect.x, FullRect.y, FullRect.width, FullRect.height,
+				FullRect.x, FullRect.y, FullRect.width, FullRect.height,
+				pFullFrameFB1->GetActualWidth(), pFullFrameFB1->GetActualHeight());
+
+			pCopyMaterial->DecrementReferenceCount();
+		}
+	}
 }
 
 //-----------------------------------------------------------------------------
@@ -3184,7 +3364,7 @@ ClientWorldListInfo_t *ClientWorldListInfo_t::AllocPooled( const ClientWorldList
 {
 	size_t nBytes = AlignValue( ( exemplar.m_LeafCount * ((sizeof(LeafIndex_t) * 2) + sizeof(LeafFogVolume_t)) ), 4096 );
 
-	ClientWorldListInfo_t *pResult = gm_Pool.GetObject();
+	ClientWorldListInfo_t *pResult = gm_Pool.GetObjectAA();	// Added for Anarchy Arcade
 
 	byte *pMemory = (byte *)pResult->m_pLeafList;
 
@@ -4757,6 +4937,60 @@ void CSkyboxView::DrawInternal( view_id_t iSkyBoxViewID, bool bInvokePreAndPostR
 		VectorScale( origin, scale, origin );
 	}
 	Enable3dSkyboxFog();
+
+	// Added for Anarchy Arcade
+//#ifdef MAPBASE
+	// Skybox angle support.
+	// 
+	// If any of the angles aren't 0, do the rotation code.
+	if (m_pSky3dParams->angles.GetX() != 0 ||
+		m_pSky3dParams->angles.GetY() != 0 ||
+		m_pSky3dParams->angles.GetZ() != 0)
+	{
+		// Unfortunately, it's not as simple as "angles += m_pSky3dParams->angles".
+		// This stuff took a long time to figure out. I'm glad I got it working.
+
+		// First, create a matrix for the sky's angles.
+		matrix3x4_t matSkyAngles;
+		AngleMatrix(m_pSky3dParams->angles, matSkyAngles);
+
+		// The code in between the lines below was mostly lifted from projected texture screenspace code and was a huge lifesaver.
+		// The comments are my attempt at explaining the little I understand of what's going on here.
+		// ----------------------------------------------------------------------
+
+		// These are the vectors that would eventually become our final angle directions.
+		Vector vecSkyForward, vecSkyRight, vecSkyUp;
+
+		// Get vectors from our original angles.
+		Vector vPlayerForward, vPlayerRight, vPlayerUp;
+		AngleVectors(angles, &vPlayerForward, &vPlayerRight, &vPlayerUp);
+
+		// Transform them from our sky angles matrix and put the results in those vectors we declared earlier.
+		VectorTransform(vPlayerForward, matSkyAngles, vecSkyForward);
+		VectorTransform(vPlayerRight, matSkyAngles, vecSkyRight);
+		VectorTransform(vPlayerUp, matSkyAngles, vecSkyUp);
+
+		// Normalize them.
+		VectorNormalize(vecSkyForward);
+		VectorNormalize(vecSkyRight);
+		VectorNormalize(vecSkyUp);
+
+		// Now do a bit of quaternion magic and apply that to our original angles.
+		// This works perfectly, so I'm not gonna touch it.
+		Quaternion quat;
+		BasisToQuaternion(vecSkyForward, vecSkyRight, vecSkyUp, quat);
+		QuaternionAngles(quat, angles);
+
+		// End of code mostly lifted from projected texture screenspace stuff
+		// ----------------------------------------------------------------------
+
+		// Now just rotate our origin with that matrix.
+		// We create a copy of the origin since VectorRotate doesn't want in1 to be the same variable as the destination.
+		VectorRotate(Vector(origin), matSkyAngles, origin);
+	}
+//#endif
+	// End Added for Anarchy Arcade
+
 	VectorAdd( origin, m_pSky3dParams->origin, origin );
 
 	// BUGBUG: Fix this!!!  We shouldn't need to call setup vis for the sky if we're connecting
@@ -4844,6 +5078,24 @@ bool CSkyboxView::Setup( const CViewSetup &view, int *pClearFlags, SkyboxVisibil
 	*pClearFlags |= VIEW_CLEAR_DEPTH; // Need to clear depth after rednering the skybox
 
 	m_DrawFlags = DF_RENDER_UNDERWATER | DF_RENDER_ABOVEWATER | DF_RENDER_WATER;
+
+	// Added for Anarchy Arcade
+//#ifdef MAPBASE
+	if (m_pSky3dParams->skycolor.GetA() != 0 && *pSkyboxVisible != SKYBOX_NOT_VISIBLE)
+	{
+		m_ClearFlags |= (VIEW_CLEAR_COLOR | VIEW_CLEAR_DEPTH);
+		m_DrawFlags |= DF_CLIP_SKYBOX;
+
+		color32 color = m_pSky3dParams->skycolor.Get();
+
+		CMatRenderContextPtr pRenderContext(materials);
+		pRenderContext->ClearColor4ub(color.r, color.g, color.b, color.a);
+		pRenderContext.SafeRelease();
+	}
+	else
+//#endif
+		// End Added for Anarchy Arcade
+
 	if( r_skybox.GetBool() )
 	{
 		m_DrawFlags |= DF_DRAWSKYBOX;
@@ -4864,8 +5116,11 @@ void CSkyboxView::Draw()
 	ITexture *pRTDepth = NULL;
 	if( m_eStereoEye != STEREO_EYE_MONO )
 	{
-		pRTColor = g_pSourceVR->GetRenderTarget( (ISourceVirtualReality::VREye)(m_eStereoEye-1), ISourceVirtualReality::RT_Color );
-		pRTDepth = g_pSourceVR->GetRenderTarget( (ISourceVirtualReality::VREye)(m_eStereoEye-1), ISourceVirtualReality::RT_Depth );
+		// Added for Anarchy Arcade
+		pRTColor = g_pAnarchyManager->GetRenderTarget((ISourceVirtualReality::VREye)(m_eStereoEye - 1), ISourceVirtualReality::RT_Color);
+		pRTDepth = g_pAnarchyManager->GetRenderTarget((ISourceVirtualReality::VREye)(m_eStereoEye - 1), ISourceVirtualReality::RT_Depth);
+		//pRTColor = g_pSourceVR->GetRenderTarget( (ISourceVirtualReality::VREye)(m_eStereoEye-1), ISourceVirtualReality::RT_Color );
+		//pRTDepth = g_pSourceVR->GetRenderTarget( (ISourceVirtualReality::VREye)(m_eStereoEye-1), ISourceVirtualReality::RT_Depth );
 	}
 
 	DrawInternal(VIEW_3DSKY, true, pRTColor, pRTDepth );

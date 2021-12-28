@@ -23,6 +23,7 @@
 #include "fx_water.h"
 #include "positionwatcher.h"
 #include "vphysics/constraints.h"
+#include "../aarcade/client/c_anarchymanager.h"	// Added for Anarchy Arcade
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
 
@@ -473,9 +474,12 @@ void CPhysicsSystem::PhysicsSimulate()
 	physicssound::PlayImpactSounds( m_impactSounds );
 }
 
-
 void PhysicsSimulate()
 {
+	// Added for Anarchy Arcade
+	if (g_pAnarchyManager->IsPaused())
+		return;
+
 	g_PhysicsSystem.PhysicsSimulate();
 }
 

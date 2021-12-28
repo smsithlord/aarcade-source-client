@@ -395,6 +395,8 @@ CHL2_Player::CHL2_Player()
 
 	m_flArmorReductionTime = 0.0f;
 	m_iArmorReductionFrom = 0;
+
+	m_flUseHoldTimer = -1.0f;	// Added for Anarchy Arcade
 }
 
 //
@@ -824,6 +826,23 @@ void CHL2_Player::PreThink(void)
 	{
 		m_iTrain = TRAIN_NEW; // turn off train
 	}
+
+	// Added for Anarchy Arcade
+	if (m_flUseHoldTimer >= 0 )
+	{
+		if (gpGlobals->curtime >= m_flUseHoldTimer)
+		{
+			// Go into Showcase Camera mode...
+			m_flUseHoldTimer = -1.0;
+
+			edict_t *pClient = engine->PEntityOfEntIndex(UTIL_GetLocalPlayer()->entindex());
+			engine->ClientCommand(pClient, "toggle_attract_mode");
+
+			m_Local.m_nOldButtons |= IN_USE;
+			m_afButtonPressed &= ~IN_USE;
+		}
+	}
+	// End Added for Anarchy Arcade
 
 
 	//
@@ -2792,6 +2811,14 @@ void CHL2_Player::PlayerUse ( void )
 	if ( ! ((m_nButtons | m_afButtonPressed | m_afButtonReleased) & IN_USE) )
 		return;
 
+	// Added for Anarchy Acade
+	if (m_afButtonPressed & IN_USE)
+	{
+		// we need to handle some stuff on client side for quests...
+		engine->ClientCommand(UTIL_GetLocalPlayer()->edict(), "on_player_use");
+	}
+	// End Added for Anarchy Arcade
+
 	if ( m_afButtonPressed & IN_USE )
 	{
 		// Currently using a latched entity?
@@ -2836,11 +2863,12 @@ void CHL2_Player::PlayerUse ( void )
 	}
 
 	CBaseEntity *pUseEntity = FindUseEntity();
-
+	
 	bool usedSomething = false;
 
 	// Found an object
-	if ( pUseEntity )
+	if (pUseEntity && !pUseEntity->IsHotlink())	// Added for Anarchy Arcade
+	//if (pUseEntity)
 	{
 		//!!!UNDONE: traceline here to prevent +USEing buttons through walls			
 		int caps = pUseEntity->ObjectCaps();
@@ -2905,6 +2933,40 @@ void CHL2_Player::PlayerUse ( void )
 		// lets the ladder code unset this flag.
 		m_bPlayUseDenySound = true;
 	}
+
+	// Added for Anarchy Arcade
+	// 1 - If USE is PRESSED and NOTHING is under our crosshair, start a HOLD timer.
+	// 2 - If USE is RELEASED **before** the HOLD timer elapses, abort camera action.
+	// 3 - If HOLD timer elapses, initiate SHOWCASE CAMERA MODE and clear the HOLD timer.
+	if (!usedSomething && m_afButtonPressed & IN_USE && (!pUseEntity || pUseEntity->IsHotlink()))
+	{
+		//DevMsg("Start the hold timer!\n");
+		m_flUseHoldTimer = gpGlobals->curtime + 1.0f;
+		m_bPlayUseDenySound = false;
+		return;
+	}
+
+	if (m_flUseHoldTimer >= 0 && m_afButtonReleased & IN_USE)
+	{
+		// If the button has been released and was in a hold, clear the hold state.
+		//DevMsg("Hold timer canceled!\n");
+		m_flUseHoldTimer = -1.0f;
+
+		// Found an object
+		if (pUseEntity && pUseEntity->IsHotlink())
+		{
+			//!!!UNDONE: traceline here to prevent +USEing buttons through walls			
+			int caps = pUseEntity->ObjectCaps();
+			variant_t emptyVariant;
+			
+			pUseEntity->AcceptInput("Use", this, this, emptyVariant, USE_TOGGLE);
+			usedSomething = false;
+			m_bPlayUseDenySound = false;
+		}
+		else
+			m_bPlayUseDenySound = true;
+	}
+	// End Added for Anarchy Arcade
 
 	// Debounce the use key
 	if ( usedSomething && pUseEntity )

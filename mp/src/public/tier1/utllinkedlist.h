@@ -680,7 +680,8 @@ I CUtlLinkedList<T,S,ML,I,M>::AllocInternal( bool multilist )
 			if ( !m_Memory.IsValidIterator( it ) )
 			{
 				// We rarely if ever handle alloc failure. Continuing leads to corruption.
-				Error( "CUtlLinkedList overflow! (exhausted memory allocator)\n" );
+				//Error( "CUtlLinkedList overflow! (exhausted memory allocator)\n" );	// Added for Anarchy Arcade
+				DevMsg("CUtlLinkedList overflow! (exhausted memory allocator)\n");	// Added for Anarchy Arcade
 				return InvalidIndex();
 			}
 		}
@@ -689,7 +690,8 @@ I CUtlLinkedList<T,S,ML,I,M>::AllocInternal( bool multilist )
 		if ( !IndexInRange( m_Memory.GetIndex( it ) ) )
 		{
 			// We rarely if ever handle alloc failure. Continuing leads to corruption.
-			Error( "CUtlLinkedList overflow! (exhausted index range)\n" );
+			//Error("CUtlLinkedList overflow! (exhausted index range)\n");	// Added for Anarchy Arcade
+			DevMsg("CUtlLinkedList overflow! (exhausted index range)\n");	// Added for Anarchy Arcade
 			return InvalidIndex();
 		}
 

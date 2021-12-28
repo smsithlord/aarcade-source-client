@@ -41,6 +41,9 @@ public:
 
 private:
 
+	bool m_bIsShortcut;	// Added for Anarchy Arcade
+	bool m_bHasCheckedForShortcut;	// Added for Anarchy Arcade
+
 	ClientShadowHandle_t m_LightHandle;
 
 	EHANDLE	m_hTargetEntity;
@@ -80,6 +83,8 @@ END_RECV_TABLE()
 C_EnvProjectedTexture::C_EnvProjectedTexture( void )
 {
 	m_LightHandle = CLIENTSHADOW_INVALID_HANDLE;
+	m_bIsShortcut = false;	// Added for Anarchy Arcade
+	m_bHasCheckedForShortcut = false;	// Added for Anarchy Arcade
 }
 
 C_EnvProjectedTexture::~C_EnvProjectedTexture( void )
@@ -107,6 +112,7 @@ void C_EnvProjectedTexture::OnDataChanged( DataUpdateType_t updateType )
 	BaseClass::OnDataChanged( updateType );
 }
 
+#include "../aarcade/client/c_anarchymanager.h" // Added for Anarchy Arcade
 void C_EnvProjectedTexture::UpdateLight( bool bForceUpdate )
 {
 	if ( m_bState == false )
@@ -193,7 +199,32 @@ void C_EnvProjectedTexture::UpdateLight( bool bForceUpdate )
 	state.m_flShadowSlopeScaleDepthBias = mat_slopescaledepthbias_shadowmap.GetFloat();
 	state.m_flShadowDepthBias = mat_depthbias_shadowmap.GetFloat();
 	state.m_bEnableShadows = m_bEnableShadows;
-	state.m_pSpotlightTexture = materials->FindTexture( m_SpotlightTextureName, TEXTURE_GROUP_OTHER, false );
+	// Added for Anarchy Arcade
+	if (!m_bHasCheckedForShortcut)
+	{
+		C_BaseEntity* pParentEntity = this->GetMoveParent();
+		C_PropShortcutEntity* pParentShortcut = dynamic_cast<C_PropShortcutEntity*>(pParentEntity);
+		if (pParentShortcut)
+			m_bIsShortcut = true;
+
+		m_bHasCheckedForShortcut = true;
+	}
+
+	if ( m_bIsShortcut )
+	{
+		C_EmbeddedInstance* pDisplayInstance = g_pAnarchyManager->GetCanvasManager()->GetDisplayInstance();
+		if (!pDisplayInstance)
+			pDisplayInstance = g_pAnarchyManager->GetCanvasManager()->GetFirstInstanceToDisplay();
+
+		if (pDisplayInstance)
+			state.m_pSpotlightTexture = pDisplayInstance->GetTexture();
+		else
+			state.m_pSpotlightTexture = materials->FindTexture("vgui/canvas", TEXTURE_GROUP_MODEL, 0);// null;
+//			state.m_pSpotlightTexture = materials->FindTexture("console/background01_widescreen", TEXTURE_GROUP_VGUI, 0);// null;
+	}
+	else
+		state.m_pSpotlightTexture = materials->FindTexture( m_SpotlightTextureName, TEXTURE_GROUP_OTHER, false );
+	// End added for Anarchy Arcade
 	state.m_nSpotlightTextureFrame = m_nSpotlightTextureFrame;
 
 	state.m_nShadowQuality = m_nShadowQuality; // Allow entity to affect shadow quality
@@ -221,15 +252,40 @@ void C_EnvProjectedTexture::UpdateLight( bool bForceUpdate )
 
 	g_pClientShadowMgr->SetFlashlightLightWorld( m_LightHandle, m_bLightWorld );
 
-	if ( bForceUpdate == false )
+	// Added for Anarchy Arcade
+	if (!m_bHasCheckedForShortcut)
 	{
-		g_pClientShadowMgr->UpdateProjectedTexture( m_LightHandle, true );
+		C_BaseEntity* pParentEntity = this->GetMoveParent();
+		C_PropShortcutEntity* pParentShortcut = dynamic_cast<C_PropShortcutEntity*>(pParentEntity);
+		if (pParentShortcut)
+			m_bIsShortcut = true;
+
+		m_bHasCheckedForShortcut = true;
 	}
+
+	//if (m_bIsShortcut)
+	g_pClientShadowMgr->UpdateProjectedTexture( m_LightHandle, true );
+	// End added for Anarchy Arcade
 }
 
-void C_EnvProjectedTexture::Simulate( void )
+void C_EnvProjectedTexture::Simulate(void)
 {
-	UpdateLight( false );
+	// Added for Anarchy Arcade
+	if (!m_bHasCheckedForShortcut)
+	{
+		C_BaseEntity* pParentEntity = this->GetMoveParent();
+		C_PropShortcutEntity* pParentShortcut = dynamic_cast<C_PropShortcutEntity*>(pParentEntity);
+		if (pParentShortcut)
+			m_bIsShortcut = true;
+
+		m_bHasCheckedForShortcut = true;
+	}
+
+	//if (m_bIsShortcut)
+		UpdateLight(GetMoveParent() != NULL);
+	//else
+	//	UpdateLight(false);
+	// End added for Anarchy Arcade
 
 	BaseClass::Simulate();
 }

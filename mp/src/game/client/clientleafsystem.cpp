@@ -1483,7 +1483,7 @@ inline void AddRenderableToRenderList( CClientRenderablesList &renderList, IClie
 	}
 	else
 	{
-		engine->Con_NPrintf( 10, "Warning: overflowed CClientRenderablesList group %d", group );
+		//engine->Con_NPrintf( 10, "Warning: overflowed CClientRenderablesList group %d", group );	// Added for Anarchy Arcade
 	}
 }
 

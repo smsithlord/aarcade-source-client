@@ -59,6 +59,11 @@ struct ShaderStencilState_t
 
 void CGlowObjectManager::RenderGlowEffects( const CViewSetup *pSetup, int nSplitScreenSlot )
 {
+	// Added for Anarchy Arcade
+	if (!this->GlowEnabled())
+		return;
+	// End added for Anarchy Arcade
+
 	if ( g_pMaterialSystemHardwareConfig->SupportsPixelShaders_2_0() )
 	{
 		if ( glow_outline_effect_enable.GetBool() )
@@ -83,6 +88,11 @@ static void SetRenderTargetAndViewPort( ITexture *rt, int w, int h )
 
 void CGlowObjectManager::RenderGlowModels( const CViewSetup *pSetup, int nSplitScreenSlot, CMatRenderContextPtr &pRenderContext )
 {
+	// Added for Anarchy Arcade
+	if (!this->GlowEnabled())
+		return;
+	// End added for Anarchy Arcade
+
 	//==========================================================================================//
 	// This renders solid pixels with the correct coloring for each object that needs the glow.	//
 	// After this function returns, this image will then be blurred and added into the frame	//

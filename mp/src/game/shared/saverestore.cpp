@@ -3006,6 +3006,8 @@ int CEntitySaveRestoreBlockHandler::RestoreGlobalEntity( CBaseEntity *pEntity, C
 
 CSaveRestoreData *SaveInit( int size )
 {
+	return NULL;	// Added for Anarchy Arcade
+
 	CSaveRestoreData	*pSaveData;
 
 #if ( defined( CLIENT_DLL ) || defined( DISABLE_DEBUG_HISTORY ) )

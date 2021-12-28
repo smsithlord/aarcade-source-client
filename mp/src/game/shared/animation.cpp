@@ -529,10 +529,13 @@ void GetSequenceLinearMotion( CStudioHdr *pstudiohdr, int iSequence, const float
 	if( iSequence < 0 || iSequence >= pstudiohdr->GetNumSeq() )
 	{
 		// Don't spam on bogus model
+		// Added for Anarchy Arcade
+		/*
 		if ( pstudiohdr->GetNumSeq() > 0 )
 		{
 			ExecuteNTimes( 20, Msg( "Bad sequence (%i out of %i max) in GetSequenceLinearMotion() for model '%s'!\n", iSequence, pstudiohdr->GetNumSeq(), pstudiohdr->pszName() ) );
 		}
+		*/
 		pVec->Init();
 		return;
 	}

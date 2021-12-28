@@ -94,6 +94,7 @@ void CDustEffect::SimulateParticles( CParticleSimulateIterator *pIterator )
 	CFuncDustParticle *pParticle = (CFuncDustParticle*)pIterator->GetFirst();
 	while ( pParticle )
 	{
+		//DevMsg("Particle: %02f/%02f/%02f\n", pParticle->m_Pos.x, pParticle->m_Pos.y, pParticle->m_Pos.z);	// Added for Anarchy Arcade
 		// Velocity.
 		if( !(m_pDust->m_DustFlags & DUSTFLAGS_FROZEN) )
 		{
@@ -141,6 +142,7 @@ void CDustEffect::SimulateParticles( CParticleSimulateIterator *pIterator )
 
 C_Func_Dust::C_Func_Dust() : m_Effect( "C_Func_Dust" )
 {
+	m_bIsModelless = false;	// Added for Anarchy Arcade
 	m_Effect.m_pDust = this;
 	m_Effect.SetDynamicallyAllocated( false ); // So it doesn't try to delete itself.
 }
@@ -158,7 +160,20 @@ void C_Func_Dust::OnDataChanged( DataUpdateType_t updateType )
 	{
 		m_hMaterial = m_Effect.GetPMaterial( "particle/sparkles" );
 
-		m_Effect.SetSortOrigin( WorldSpaceCenter( ) );
+		// Added for Anarchy Arcade
+		C_BaseEntity* pParentEntity = C_BasePlayer::GetLocalPlayer();
+		//m_Effect.SetSortOrigin( WorldSpaceCenter( ) );
+		Vector center = WorldSpaceCenter();
+		if (center.Length() == 0)
+		{
+			m_bIsModelless = true;
+			center = pParentEntity->GetAbsOrigin();
+			this->SetAbsOrigin(pParentEntity->GetAbsOrigin());
+			this->SetAbsAngles(pParentEntity->GetAbsAngles());
+		}
+		//DevMsg("Origin: %02f/%02f/%02f\n", center.x, center.y, center.z);
+		m_Effect.SetSortOrigin(center);
+		// End added for Anarchy Arcade
 
 		// Let us think each frame.
 		SetNextClientThink( CLIENT_THINK_ALWAYS );
@@ -196,6 +211,18 @@ void C_Func_Dust::ClientThink()
 	// Tell the particle manager our bbox.
 	Vector vWorldMins, vWorldMaxs;
 	CollisionProp()->WorldSpaceAABB( &vWorldMins, &vWorldMaxs );
+
+	// Added for Anarchy Arcade
+	if (m_bIsModelless)
+	{
+		C_BaseEntity* pParentEntity = this;//C_BasePlayer::GetLocalPlayer();
+		vWorldMins = pParentEntity->GetAbsOrigin() + Vector(-512, -512, 0);
+		vWorldMaxs = pParentEntity->GetAbsOrigin() + Vector(512, 512, 512);
+		//DevMsg("Mins: %02f/%02f/%02f\n", vWorldMins.x, vWorldMins.y, vWorldMins.z);
+		//DevMsg("Maxs: %02f/%02f/%02f\n", vWorldMaxs.x, vWorldMaxs.y, vWorldMaxs.z);
+	}
+	// End added for Anarchy Arcade
+
 	vWorldMins -= Vector( m_flSizeMax, m_flSizeMax, m_flSizeMax );
 	vWorldMaxs += Vector( m_flSizeMax, m_flSizeMax, m_flSizeMax );
 	m_Effect.GetBinding().SetBBox( vWorldMins, vWorldMaxs );
@@ -213,13 +240,40 @@ void C_Func_Dust::AttemptSpawnNewParticle()
 	// Find a random spot inside our bmodel.
 	static int nTests=10;
 
-	for( int iTest=0; iTest < nTests; iTest++ )
+	bool bIsAArcadeFog = false;	// Added for Anarchy Arcade
+	C_BaseEntity* pParentEntity = this;// C_BasePlayer::GetLocalPlayer();	// Added for Anarchy Arcade
+
+	for (int iTest = 0; iTest < nTests; iTest++)
 	{
-		Vector vPercent = RandomVector( 0, 1 );
+		Vector vPercent = RandomVector(0, 1);
+		// Added for Anarchy Arcade
+
+		//Vector vTest = WorldAlignMins() + (WorldAlignMaxs() - WorldAlignMins()) * vPercent;
+
+		//if (vWorldMax)
 		Vector vTest = WorldAlignMins() + (WorldAlignMaxs() - WorldAlignMins()) * vPercent;
+		//DevMsg("Length: %02f\n", vTest.Length());
+		if (m_bIsModelless)
+		{
+			//Vector vTest = vWorldMins + (vWorldMaxs - vWorldMins) * vPercent;
+
+			Vector vWorldMins = pParentEntity->GetAbsOrigin() + Vector(-512, -512, 0);// = WorldAlignMins();
+			Vector vWorldMaxs = pParentEntity->GetAbsOrigin() + Vector(512, 512, 512);// = WorldAlignMaxs();
+			//CollisionProp()->WorldSpaceAABB(&vWorldMins, &vWorldMaxs);
+
+			// Added for Anarchy Arcade
+			//if (vWorldMins.Length() == 0 && vWorldMaxs.Length() == 0)
+			//{
+				//vWorldMins += Vector(-512, -512, -512);
+				//vWorldMaxs += Vector(512, 512, 512);
+				vTest = vWorldMins + (vWorldMaxs - vWorldMins) * vPercent;
+				bIsAArcadeFog = true;
+			//}
+		}
+		// End added for Anarchy Arcade
 
 		int contents = enginetrace->GetPointContents_Collideable( GetCollideable(), vTest );
-		if( contents & CONTENTS_SOLID )
+		if (contents & CONTENTS_SOLID || bIsAArcadeFog)	// Added for Anarchy Arcade
 		{
 			CFuncDustParticle *pParticle = (CFuncDustParticle*)m_Effect.AddParticle( 10, m_hMaterial, vTest );
 			if( pParticle )

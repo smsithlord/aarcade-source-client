@@ -7,6 +7,7 @@
 //=============================================================================//
 #include "cbase.h"
 #include "vgui_basepanel.h"
+#include "../../aarcade/client/c_anarchymanager.h"	// Added for Anarchy Arcade
 #include <KeyValues.h>
 #include <vgui/IScheme.h>
 #include <vgui/IVGui.h>
@@ -66,6 +67,9 @@ CBasePanel::~CBasePanel( void )
 //-----------------------------------------------------------------------------
 void CBasePanel::PaintBackground( void )
 {
+	if (g_pAnarchyManager->IsPaused())	// Added for Anarchy Arcade
+		return;
+
 	if ( !m_bTexturedBackground )
 	{
 		BaseClass::PaintBackground();
@@ -139,6 +143,9 @@ void CBasePanel::SetReflectMouse( bool reflect )
 
 void CBasePanel::OnCursorMoved(int x,int y)
 {
+	if (g_pAnarchyManager->IsPaused())	// Added for Anarchy Arcade
+		return;
+
 	if ( !m_bReflectMouse )
 		return;
 
@@ -155,6 +162,9 @@ void CBasePanel::OnCursorMoved(int x,int y)
 
 void CBasePanel::OnMousePressed(vgui::MouseCode code)
 {
+	if (g_pAnarchyManager->IsPaused())	// Added for Anarchy Arcade
+		return;
+
 	if ( !m_bReflectMouse )
 		return;
 
@@ -169,6 +179,9 @@ void CBasePanel::OnMousePressed(vgui::MouseCode code)
 
 void CBasePanel::OnMouseDoublePressed(vgui::MouseCode code)
 {
+	if (g_pAnarchyManager->IsPaused())	// Added for Anarchy Arcade
+		return;
+
 	if ( !m_bReflectMouse )
 		return;
 
@@ -183,6 +196,9 @@ void CBasePanel::OnMouseDoublePressed(vgui::MouseCode code)
 
 void CBasePanel::OnMouseReleased(vgui::MouseCode code)
 {
+	if (g_pAnarchyManager->IsPaused())	// Added for Anarchy Arcade
+		return;
+
 	if ( !m_bReflectMouse )
 		return;
 
@@ -197,6 +213,9 @@ void CBasePanel::OnMouseReleased(vgui::MouseCode code)
 
 void CBasePanel::OnMouseWheeled(int delta)
 {
+	if (g_pAnarchyManager->IsPaused())	// Added for Anarchy Arcade
+		return;
+
 	if ( !m_bReflectMouse )
 		return;
 

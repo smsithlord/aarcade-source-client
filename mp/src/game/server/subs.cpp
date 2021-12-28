@@ -64,6 +64,29 @@ LINK_ENTITY_TO_CLASS(info_player_deathmatch,CBaseDMStart);
 LINK_ENTITY_TO_CLASS(info_player_start,CPointEntity);
 LINK_ENTITY_TO_CLASS(info_landmark,CPointEntity);
 
+// Added for Anarchy Arcade
+LINK_ENTITY_TO_CLASS(info_player_terrorist, CPointEntity);
+LINK_ENTITY_TO_CLASS(info_player_counterterrorist, CPointEntity);
+LINK_ENTITY_TO_CLASS(info_player_allies, CPointEntity);
+LINK_ENTITY_TO_CLASS(info_player_axis, CPointEntity);
+LINK_ENTITY_TO_CLASS(info_player_fof, CPointEntity);
+LINK_ENTITY_TO_CLASS(info_player_coop, CPointEntity);
+LINK_ENTITY_TO_CLASS(info_player_teamspawn, CPointEntity);
+LINK_ENTITY_TO_CLASS(info_player_combine, CPointEntity);
+LINK_ENTITY_TO_CLASS(info_player_rebel, CPointEntity);
+LINK_ENTITY_TO_CLASS(info_player_nmrih, CPointEntity);
+LINK_ENTITY_TO_CLASS(info_player_american, CPointEntity);
+LINK_ENTITY_TO_CLASS(info_player_british, CPointEntity);
+LINK_ENTITY_TO_CLASS(emp_imp_commander, CPointEntity);
+LINK_ENTITY_TO_CLASS(emp_nf_commander, CPointEntity);
+LINK_ENTITY_TO_CLASS(info_es_spawn, CPointEntity);
+LINK_ENTITY_TO_CLASS(info_hidden_spawn, CPointEntity);
+LINK_ENTITY_TO_CLASS(info_marine_spawn, CPointEntity);
+LINK_ENTITY_TO_CLASS(info_player_janus, CPointEntity);
+LINK_ENTITY_TO_CLASS(info_player_mi6, CPointEntity);
+LINK_ENTITY_TO_CLASS(ins_spawnpoint, CPointEntity);
+// End Added for Anarchy Arcade
+
 bool CBaseDMStart::IsTriggered( CBaseEntity *pEntity )
 {
 	bool master = UTIL_IsMasterTriggered( m_Master, pEntity );

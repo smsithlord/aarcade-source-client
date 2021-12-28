@@ -388,6 +388,8 @@ void CNavArea::Save( CUtlBuffer &fileBuffer, unsigned int version ) const
  */
 NavErrorType CNavArea::Load( CUtlBuffer &fileBuffer, unsigned int version, unsigned int subVersion )
 {
+	return NAV_INVALID_FILE; // Added for Anarchy Arcade
+
 	// load ID
 	m_id = fileBuffer.GetUnsignedInt();
 

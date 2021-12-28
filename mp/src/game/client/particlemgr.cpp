@@ -30,6 +30,9 @@
 #include "rtime.h"
 #endif
 #include "tier0/icommandline.h"
+
+#include "aarcade/client/c_anarchymanager.h"	// Added for Anarchy Arcade
+
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
 
@@ -294,6 +297,9 @@ void CParticleEffectBinding::BBoxCalcEnd( bool bboxSet, Vector &bbMin, Vector &b
 
 int CParticleEffectBinding::DrawModel( int flags )
 {
+	if (g_pAnarchyManager->IsPaused())	// Added for Anarchy Arcade
+		return 0;
+
 	VPROF_BUDGET( "CParticleEffectBinding::DrawModel", VPROF_BUDGETGROUP_PARTICLE_RENDERING );
 #ifndef PARTICLEPROTOTYPE_APP
 	if ( !r_DrawParticles.GetInt() )
@@ -652,6 +658,9 @@ void CParticleEffectBinding::GrowBBoxFromParticlePositions( CEffectMaterial *pMa
 //-----------------------------------------------------------------------------
 void CParticleEffectBinding::SimulateParticles( float flTimeDelta )
 {
+	if (g_pAnarchyManager->IsPaused())	// Added for Anarchy Arcade
+		return;
+
 	if ( !m_pSim->ShouldSimulate() )
 		return;
 
@@ -771,6 +780,13 @@ int CParticleEffectBinding::DrawMaterialParticles(
 	bool bWireframe
 	 )
 {
+	//if (true || g_pAnarchyManager->IsPaused())	// Added for Anarchy Arcade
+	//	return 0;
+	if (g_pAnarchyManager->IsPaused())	// Added for Anarchy Arcade
+		return 0;
+
+	//DevMsg("Material here: %s\n", pMaterial->m_pGroup->m_pPageMaterial->GetName());
+
 	// Setup everything.
 	CMeshBuilder builder;
 	ParticleDraw particleDraw;
@@ -778,7 +794,8 @@ int CParticleEffectBinding::DrawMaterialParticles(
 	StartDrawMaterialParticles( pMaterial, flTimeDelta, pMesh, builder, particleDraw, bWireframe );
 
 	if ( m_nActiveParticles > MAX_TOTAL_PARTICLES )
-		Error( "CParticleEffectBinding::DrawMaterialParticles: too many particles (%d should be less than %d)", m_nActiveParticles, MAX_TOTAL_PARTICLES );
+		//Error("CParticleEffectBinding::DrawMaterialParticles: too many particles (%d should be less than %d)", m_nActiveParticles, MAX_TOTAL_PARTICLES);	// Added for Anarchy Arcade
+		DevMsg("CParticleEffectBinding::DrawMaterialParticles: too many particles (%d should be less than %d)", m_nActiveParticles, MAX_TOTAL_PARTICLES);	// Added for Anarchy Arcade
 
 	// Simluate and render all the particles.
 	CParticleRenderIterator renderIterator;
@@ -800,7 +817,9 @@ int CParticleEffectBinding::DrawMaterialParticles(
 
 	// Flush out any remaining particles.
 	builder.End( false, true );
-	
+
+	//if (g_pAnarchyManager->IsPaused())	// Added for Anarchy Arcade
+		//DevMsg("Material name: %s\n", pMaterial->name);
 	return m_nActiveParticles;
 }
 
@@ -1933,6 +1952,9 @@ void CParticleMgr::UpdateNewEffects( float flTimeDelta )
 
 void CParticleMgr::UpdateAllEffects( float flTimeDelta )
 {
+	if (g_pAnarchyManager->IsPaused())	// Added for Anarchy Arcade
+		return;
+
 	// These reflect the convars so we don't parse the strings every particle.
 	g_cl_particle_show_bbox = cl_particle_show_bbox.GetBool();
 	g_cl_particle_show_bbox_cost = cl_particle_show_bbox_cost.GetInt();

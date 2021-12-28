@@ -1310,8 +1310,281 @@ void CHL2MP_Player::DeathSound( const CTakeDamageInfo &info )
 	EmitSound( filter, entindex(), ep );
 }
 
+#include <vector>
 CBaseEntity* CHL2MP_Player::EntSelectSpawnPoint( void )
 {
+	// Added for Anarchy Arcade BEGIN
+	CBaseEntity *pSpot = NULL;
+
+
+	bool bNeedsSpawnPoint = true;
+	// check if we have a player_spawn_override value to use...
+	ConVar* pSpawnOverrideConVar = cvar->FindVar("player_spawn_override");
+	if (Q_strcmp(pSpawnOverrideConVar->GetString(), ""))
+	{
+		// find the info_target with this name
+		std::vector<CBaseEntity*> targetEntities;
+		CBaseEntity* pTargetEntity = gEntList.FindEntityByName(NULL, MAKE_STRING(pSpawnOverrideConVar->GetString()));
+		while (pTargetEntity)
+		{
+			targetEntities.push_back(pTargetEntity);
+			pTargetEntity = gEntList.FindEntityByName(pTargetEntity, MAKE_STRING(pSpawnOverrideConVar->GetString()));
+		}
+
+		// just use the FIRST one with this name for now.
+		// later on, it might need to get all target entities with this name & randomly select from them so people don't all spawn at the exact same spot.
+
+		if (targetEntities.size() > 0)
+		{
+			pSpot = targetEntities[0];
+			bNeedsSpawnPoint = false;
+		}
+	}
+
+	if (bNeedsSpawnPoint)
+	{
+		//ConVar* SpawnPositionVar = cvar->FindVar("spawn_position");
+		//int SpawnPosition = SpawnPositionVar->GetInt();
+		int SpawnPosition = 420;
+
+		std::vector<CBaseEntity*> potentials;
+
+		int count = 0;
+
+		pSpot = gEntList.FindEntityByClassname(NULL, "info_player_start");
+		while (pSpot && count < SpawnPosition)
+		{
+			potentials.push_back(pSpot);
+			count++;
+
+			pSpot = gEntList.FindEntityByClassname(pSpot, "info_player_start");
+		}
+
+		pSpot = gEntList.FindEntityByClassname(NULL, "info_player_counterterrorist");
+		while (pSpot && count < SpawnPosition)
+		{
+			potentials.push_back(pSpot);
+			count++;
+
+			pSpot = gEntList.FindEntityByClassname(pSpot, "info_player_counterterrorist");
+		}
+
+		pSpot = gEntList.FindEntityByClassname(NULL, "info_player_terrorist");
+		while (pSpot && count < SpawnPosition)
+		{
+			potentials.push_back(pSpot);
+			count++;
+
+			pSpot = gEntList.FindEntityByClassname(pSpot, "info_player_terrorist");
+		}
+
+		pSpot = gEntList.FindEntityByClassname(NULL, "info_player_deathmatch");
+		while (pSpot && count < SpawnPosition)
+		{
+			potentials.push_back(pSpot);
+			count++;
+
+			pSpot = gEntList.FindEntityByClassname(pSpot, "info_player_deathmatch");
+		}
+
+		pSpot = gEntList.FindEntityByClassname(NULL, "info_player_allies");
+		while (pSpot && count < SpawnPosition)
+		{
+			potentials.push_back(pSpot);
+			count++;
+
+			pSpot = gEntList.FindEntityByClassname(pSpot, "info_player_allies");
+		}
+
+		pSpot = gEntList.FindEntityByClassname(NULL, "info_player_axis");
+		while (pSpot && count < SpawnPosition)
+		{
+			potentials.push_back(pSpot);
+			count++;
+
+			pSpot = gEntList.FindEntityByClassname(pSpot, "info_player_axis");
+		}
+
+		pSpot = gEntList.FindEntityByClassname(NULL, "info_player_fof");
+		while (pSpot && count < SpawnPosition)
+		{
+			potentials.push_back(pSpot);
+			count++;
+
+			pSpot = gEntList.FindEntityByClassname(pSpot, "info_player_fof");
+		}
+
+		pSpot = gEntList.FindEntityByClassname(NULL, "info_player_coop");
+		while (pSpot && count < SpawnPosition)
+		{
+			potentials.push_back(pSpot);
+			count++;
+
+			pSpot = gEntList.FindEntityByClassname(pSpot, "info_player_coop");
+		}
+
+		pSpot = gEntList.FindEntityByClassname(NULL, "info_player_teamspawn");
+		while (pSpot && count < SpawnPosition)
+		{
+			potentials.push_back(pSpot);
+			count++;
+
+			pSpot = gEntList.FindEntityByClassname(pSpot, "info_player_teamspawn");
+		}
+
+		pSpot = gEntList.FindEntityByClassname(NULL, "info_player_rebel");
+		while (pSpot && count < SpawnPosition)
+		{
+			potentials.push_back(pSpot);
+			count++;
+
+			pSpot = gEntList.FindEntityByClassname(pSpot, "info_player_rebel");
+		}
+
+		pSpot = gEntList.FindEntityByClassname(NULL, "info_player_combine");
+		while (pSpot && count < SpawnPosition)
+		{
+			potentials.push_back(pSpot);
+			count++;
+
+			pSpot = gEntList.FindEntityByClassname(pSpot, "info_player_combine");
+		}
+
+		pSpot = gEntList.FindEntityByClassname(NULL, "info_player_nmrih");
+		while (pSpot && count < SpawnPosition)
+		{
+			potentials.push_back(pSpot);
+			count++;
+
+			pSpot = gEntList.FindEntityByClassname(pSpot, "info_player_nmrih");
+		}
+
+		pSpot = gEntList.FindEntityByClassname(NULL, "info_player_american");
+		while (pSpot && count < SpawnPosition)
+		{
+			potentials.push_back(pSpot);
+			count++;
+
+			pSpot = gEntList.FindEntityByClassname(pSpot, "info_player_american");
+		}
+
+		pSpot = gEntList.FindEntityByClassname(NULL, "info_player_british");
+		while (pSpot && count < SpawnPosition)
+		{
+			potentials.push_back(pSpot);
+			count++;
+
+			pSpot = gEntList.FindEntityByClassname(pSpot, "info_player_british");
+		}
+
+		pSpot = gEntList.FindEntityByClassname(NULL, "emp_imp_commander");
+		while (pSpot && count < SpawnPosition)
+		{
+			potentials.push_back(pSpot);
+			count++;
+
+			pSpot = gEntList.FindEntityByClassname(pSpot, "emp_imp_commander");
+		}
+
+		pSpot = gEntList.FindEntityByClassname(NULL, "emp_nf_commander");
+		while (pSpot && count < SpawnPosition)
+		{
+			potentials.push_back(pSpot);
+			count++;
+
+			pSpot = gEntList.FindEntityByClassname(pSpot, "emp_nf_commander");
+		}
+
+		pSpot = gEntList.FindEntityByClassname(NULL, "info_es_spawn");
+		while (pSpot && count < SpawnPosition)
+		{
+			potentials.push_back(pSpot);
+			count++;
+
+			pSpot = gEntList.FindEntityByClassname(pSpot, "info_es_spawn");
+		}
+
+		pSpot = gEntList.FindEntityByClassname(NULL, "info_hidden_spawn");
+		while (pSpot && count < SpawnPosition)
+		{
+			potentials.push_back(pSpot);
+			count++;
+
+			pSpot = gEntList.FindEntityByClassname(pSpot, "info_hidden_spawn");
+		}
+
+		pSpot = gEntList.FindEntityByClassname(NULL, "info_marine_spawn");
+		while (pSpot && count < SpawnPosition)
+		{
+			potentials.push_back(pSpot);
+			count++;
+
+			pSpot = gEntList.FindEntityByClassname(pSpot, "info_marine_spawn");
+		}
+
+		pSpot = gEntList.FindEntityByClassname(NULL, "info_player_mi6");
+		while (pSpot && count < SpawnPosition)
+		{
+			potentials.push_back(pSpot);
+			count++;
+
+			pSpot = gEntList.FindEntityByClassname(pSpot, "info_player_mi6");
+		}
+
+		pSpot = gEntList.FindEntityByClassname(NULL, "info_player_janus");
+		while (pSpot && count < SpawnPosition)
+		{
+			potentials.push_back(pSpot);
+			count++;
+
+			pSpot = gEntList.FindEntityByClassname(pSpot, "info_player_janus");
+		}
+
+		pSpot = gEntList.FindEntityByClassname(NULL, "ins_spawnpoint");
+		while (pSpot && count < SpawnPosition)
+		{
+			potentials.push_back(pSpot);
+			count++;
+
+			pSpot = gEntList.FindEntityByClassname(pSpot, "ins_spawnpoint");
+		}
+
+		if (count > 0)
+			pSpot = potentials[potentials.size() - 1];
+		else
+		{
+			if (!pSpot)
+			{
+				Msg("ERROR: NO SPAWN POINTS COULD BE FOUND!\n");
+				return NULL;
+			}
+
+			/*
+			pSpot = gEntList.FindEntityByClassname(pSpot, "prop_physics");
+
+			if ( !pSpot )
+			pSpot = gEntList.FindEntityByClassname(pSpot, "prop_dynamioc");
+
+			if (!pSpot)
+			pSpot = gEntList.FindEntityByClassname(pSpot, "prop_static");
+
+			if (!pSpot)
+			{
+			Msg("ERROR: NO SPAWN POINTS COULD BE FOUND!\n");
+			return NULL;
+			}
+			*/
+		}
+	}
+
+	g_pLastSpawn = pSpot;
+	m_flSlamProtectTime = gpGlobals->curtime + 0.5;
+
+	return pSpot;
+	// Added for Anarchy Arcade END
+
+	// Added for Anarchy Arcade
+	/*
 	CBaseEntity *pSpot = NULL;
 	CBaseEntity *pLastSpawnPoint = g_pLastSpawn;
 	edict_t		*player = edict();
@@ -1407,6 +1680,7 @@ ReturnSpot:
 	m_flSlamProtectTime = gpGlobals->curtime + 0.5;
 
 	return pSpot;
+	*/
 } 
 
 

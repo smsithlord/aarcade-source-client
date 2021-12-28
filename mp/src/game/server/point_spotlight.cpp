@@ -7,6 +7,7 @@
 #include "cbase.h"
 #include "beam_shared.h"
 #include "spotlightend.h"
+#include "../aarcade/server/prop_shortcut_entity.h"	// Added for Anarchy Arcade
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -31,7 +32,16 @@ public:
 	void	Spawn(void);
 	virtual void Activate();
 
-	virtual void OnEntityEvent( EntityEvent_t event, void *pEventData );
+	virtual void OnEntityEvent(EntityEvent_t event, void *pEventData);
+
+	// Added for Anarchy Arcade
+	void UpdateOnRemove(void);
+	//bool KeyValue(const char *szKeyName, const char *szValue);
+	void SetRainbowMode();
+	void ShortcutThink(void);
+	void SetShortcut(CPropShortcutEntity* pShortcut, bool bAudioSensitive);
+	void VRSpazzFixPulse();
+	// End added for Anarchy Arcade
 
 private:
 	int 	UpdateTransmitState();
@@ -54,6 +64,12 @@ private:
 	void ComputeRenderInfo();
 
 private:
+	bool m_bIsVRSpazzFix;	// Added for Anarchy Arcade
+	float m_flOldScale;	// Added for Anarchy Arcade
+	bool m_bIsRainbow;	// Added for Anarchy Arcade
+	ConVar* m_pPeakConVar;	// Added for Anarchy Arcade
+	ConVar* m_pHueShiftConVar;	// Added for Anarchy Arcade
+	CPropShortcutEntity* m_pShortcut;	// Added for Anarchy Arcade
 	bool	m_bSpotlightOn;
 	bool	m_bEfficientSpotlight;
 	bool	m_bIgnoreSolid;
@@ -118,10 +134,202 @@ CPointSpotlight::CPointSpotlight()
 	m_vSpotlightCurrentPos.Init();
 	m_vSpotlightDir.Init();
 #endif
+	m_pShortcut = NULL;	// Added for Anarhcy Arcade
+	m_bIsVRSpazzFix = false;	// Added for Anarchy Arcade
 	m_flHDRColorScale = 1.0f;
 	m_nMinDXLevel = 0;
 	m_bIgnoreSolid = false;
 }
+
+// Added for Anarchy Arcade
+
+// originally from https://stackoverflow.com/questions/8507885/shift-hue-of-an-rgb-color
+Color TransformH2(
+	const Color &in,  // color to transform
+	float H
+	)
+{
+	float U = cos(H*M_PI / 180);
+	float W = sin(H*M_PI / 180);
+
+	int r, g, b, a;
+	in.GetColor(r, g, b, a);
+
+	Color ret;
+	ret.SetColor((.299 + .701*U + .168*W)*r
+		+ (.587 - .587*U + .330*W)*g
+		+ (.114 - .114*U - .497*W)*b,
+		(.299 - .299*U - .328*W)*r
+		+ (.587 + .413*U + .035*W)*g
+		+ (.114 - .114*U + .292*W)*b,
+		(.299 - .3*U + 1.25*W)*r
+		+ (.587 - .588*U - 1.05*W)*g
+		+ (.114 + .886*U - .203*W)*b);
+	return ret;
+}
+
+void CPointSpotlight::VRSpazzFixPulse()
+{
+	//inputdata_t inputdata;
+	//inputdata_t myInputData;
+	//inputdata.value.SetString(MAKE_STRING(sequenceName));
+	//pThisAsDynamic->InputSetAnimation(myInputData);
+	//this->InputLightOff(inputdata);
+	//this->InputLightOn(inputdata);
+
+	m_bIsVRSpazzFix = true;
+
+	m_vSpotlightTargetPos = this->GetAbsOrigin();
+	m_vSpotlightCurrentPos = this->GetAbsOrigin();
+	m_vSpotlightDir.Init();
+
+	if (m_bSpotlightOn)
+	{
+		m_bSpotlightOn = false;
+		if (m_bEfficientSpotlight)
+		{
+			SpotlightDestroy();
+		}
+	}
+	else if (!m_bSpotlightOn)
+	{
+		m_bSpotlightOn = true;
+		if (m_bEfficientSpotlight)
+		{
+			CreateEfficientSpotlight();
+		}
+	}
+}
+
+void CPointSpotlight::SetShortcut(CPropShortcutEntity* pShortcut, bool bAudioSensitive)
+{
+	//m_pShortcut = dynamic_cast<CPropShortcutEntity*>(this->GetMoveParent());
+	m_pShortcut = pShortcut;
+	//m_vSpotlightCurrentPos = m_pShortcut->GetAbsOrigin();
+
+	m_flOldScale = m_pShortcut->GetModelScale();
+	//DevMsg("Starting Scale: %f\n", m_flOldScale);
+	m_flSpotlightGoalWidth *= m_flOldScale;
+	m_flSpotlightMaxLength *= m_flOldScale;
+
+	if (bAudioSensitive)
+	{
+		m_pPeakConVar = cvar->FindVar("peak");
+		m_pHueShiftConVar = cvar->FindVar("hueshift");
+		m_bIsRainbow = true;
+	}
+}
+
+void CPointSpotlight::ShortcutThink(void)
+{
+	if (m_bIsRainbow)
+	{
+		float flAmp = 1.0;
+		float audioPeakValue = m_pPeakConVar->GetFloat();
+		float flHueShift = m_pHueShiftConVar->GetFloat();
+		float peak = audioPeakValue * flAmp;
+		if (peak > 1.0f)
+			peak = 1.0f;
+		else if (peak < 0.2f)
+			peak = 0.2f;
+
+		Color hueColor;
+		hueColor.SetColor(255, 0, 0);
+		hueColor = TransformH2(hueColor, flHueShift);
+
+		//color32 tmp;
+		float flMin = 40;
+		color32 tmp;
+		tmp.r = flMin + (hueColor.r() * peak) / 1;
+		tmp.g = flMin + (hueColor.g() * peak) / 1;
+		tmp.b = flMin + (hueColor.b() * peak) / 1;
+
+		if (tmp.r > 255)
+			tmp.r = 255;
+		if (tmp.g > 255)
+			tmp.g = 255;
+		if (tmp.b > 255)
+			tmp.b = 255;
+
+		//const color32 oldColor = GetRenderColor();
+		//m_hSpotlight->GetColor
+		//DevMsg("Old color: %i, %i, %i\n", oldColor.r, oldColor.g, oldColor.b);
+		//DevMsg("New color: %i, %i, %i\n", tmp.r, tmp.g, tmp.b);
+		//SetRenderColor(tmp.r, tmp.g, tmp.b);
+		//m_hSpotlight->SetColor(tmp.r, tmp.g, tmp.b);
+
+		//DevMsg("Old color: %i, %i, %i\n", oldColor.r, oldColor.g, oldColor.b);
+		//DevMsg("New color: %i, %i, %i\n", tmp.r, tmp.g, tmp.b);
+		//SetRenderColor(tmp.r, tmp.g, tmp.b);
+		if (m_hSpotlight)
+			m_hSpotlight->SetColor(tmp.r, tmp.g, tmp.b);
+	}
+
+	if (m_flOldScale != m_pShortcut->GetModelScale())
+	{
+		//m_Radius
+		//m_vSpotlightCurrentPos = m_pShortcut->GetAbsOrigin();
+		m_flSpotlightGoalWidth = (m_flSpotlightGoalWidth / m_flOldScale) * m_pShortcut->GetModelScale();
+		m_flSpotlightMaxLength = (m_flSpotlightMaxLength / m_flOldScale) * m_pShortcut->GetModelScale();
+		if (m_hSpotlight)
+			m_hSpotlight->SetWidth(m_flSpotlightGoalWidth);
+
+		//DevMsg("Scale: %f\n", m_flOldScale);
+		m_flOldScale = m_pShortcut->GetModelScale();
+	}
+
+	//SetNextThink(gpGlobals->curtime + 0.1);
+}
+
+/*bool CPointSpotlight::KeyValue(const char *szKeyName, const char *szValue)
+{
+	if (FStrEq(szKeyName, "spawnflags"))
+	{*/
+		/*
+		int iActualFlags = atoi(szValue);
+		if (iActualFlags & 0x4)
+		{
+			iActualFlags &= ~0x4;
+			//m_pShortcut = dynamic_cast<CPropShortcutEntity*>(this->GetMoveParent());
+			if (m_pShortcut)
+			{
+				m_flOldScale = m_pShortcut->GetModelScale();
+				DevMsg("Starting Scale: %f\n", m_flOldScale);
+				m_flSpotlightGoalWidth *= m_flOldScale;
+				m_flSpotlightMaxLength *= m_flOldScale;
+				//m_vSpotlightCurrentPos = m_pShortcut->GetAbsOrigin();
+			}
+
+			m_pPeakConVar = cvar->FindVar("peak");
+			m_pHueShiftConVar = cvar->FindVar("hueshift");
+			m_bIsRainbow = true;
+		}
+		else*/
+			/*m_bIsRainbow = false;
+		return BaseClass::KeyValue(szKeyName, szValue);
+	}
+	else
+	{
+		return BaseClass::KeyValue(szKeyName, szValue);
+	}
+
+	return true;
+}*/
+
+void CPointSpotlight::UpdateOnRemove(void)
+{
+	//inputdata_t emptyDummy;
+	//InputLightOff(emptyDummy);
+
+	if (m_bSpotlightOn)
+	{
+		m_bSpotlightOn = false;
+		SpotlightDestroy();
+	}
+
+	BaseClass::UpdateOnRemove();
+}
+// End added for Anarchy Arcade
 
 
 //-----------------------------------------------------------------------------
@@ -300,6 +508,9 @@ void CPointSpotlight::OnEntityEvent( EntityEvent_t event, void *pEventData )
 //-------------------------------------------------------------------------------------
 int CPointSpotlight::UpdateTransmitState()
 {
+	//if (m_bIsVRSpazzFix)	// Added for Anarchy Arcade
+	//	return SetTransmitState(FL_EDICT_ALWAYS);	// Added for Anarchy Arcade
+
 	if ( m_bEfficientSpotlight )
 		return SetTransmitState( FL_EDICT_DONTSEND );
 
@@ -311,6 +522,9 @@ int CPointSpotlight::UpdateTransmitState()
 //-----------------------------------------------------------------------------
 void CPointSpotlight::SpotlightThink( void )
 {
+	if (m_pShortcut)	// Added for Anarchy Arcade
+		ShortcutThink();	// Added for Anarchy Arcade
+
 	if ( GetMoveParent() )
 	{
 		SetNextThink( gpGlobals->curtime + TICK_INTERVAL );

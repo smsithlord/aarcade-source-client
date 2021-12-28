@@ -170,11 +170,17 @@ CStudioHdr *C_HL2MP_Player::OnNewModel( void )
 /**
  * Orient head and eyes towards m_lookAt.
  */
+#include "../aarcade/client/c_anarchymanager.h"
 void C_HL2MP_Player::UpdateLookAt( void )
 {
 	// head yaw
 	if (m_headYawPoseParam < 0 || m_headPitchPoseParam < 0)
 		return;
+
+	// Added for Anarchy Arcade
+	if (g_pAnarchyManager->IsVRActive())
+		m_vLookAtTarget = g_pAnarchyManager->GetSelectorTraceVector();
+	// End Added for Anarchy Arcade
 
 	// orient eyes
 	m_viewtarget = m_vLookAtTarget;
@@ -189,7 +195,24 @@ void C_HL2MP_Player::UpdateLookAt( void )
 	// Figure out where we want to look in world space.
 	QAngle desiredAngles;
 	Vector to = m_vLookAtTarget - EyePosition();
-	VectorAngles( to, desiredAngles );
+	VectorAngles(to, desiredAngles);
+
+	// Added for Anarchy Arcade
+	if (g_pAnarchyManager->IsVRActive())
+	{
+		//m_vLookAtTarget = g_pAnarchyManager->GetSelectorTraceVector();
+		VMatrix headmatrix = g_pAnarchyManager->GetVRHeadMatrix();
+		MatrixAngles(headmatrix.As3x4(), desiredAngles);
+
+		/*float min, max;
+		CStudioHdr *hdr = GetModelPtr();
+		for (int i = 0; i < hdr->GetNumPoseParameters(); i++)
+		{
+			GetPoseParameterRange(i, min, max);
+			SetPoseParameter(hdr, i, max);
+		}*/
+	}
+	// End Added for Anarchy Arcade
 
 	// Figure out where our body is facing in world space.
 	QAngle bodyAngles( 0, 0, 0 );
@@ -201,7 +224,14 @@ void C_HL2MP_Player::UpdateLookAt( void )
 	
 
 	// Set the head's yaw.
-	float desired = AngleNormalize( desiredAngles[YAW] - bodyAngles[YAW] );
+	float desired;
+	// Added for Anarchy Arcade
+	if (g_pAnarchyManager->IsVRActive())
+		desired = desiredAngles[YAW];
+	else
+		desired = AngleNormalize(desiredAngles[YAW] - bodyAngles[YAW]);
+	// End Added for Anarchy Arcade
+
 	desired = clamp( desired, m_headYawMin, m_headYawMax );
 	m_flCurrentHeadYaw = ApproachAngle( desired, m_flCurrentHeadYaw, 130 * gpGlobals->frametime );
 

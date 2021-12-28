@@ -54,3 +54,5 @@ config.cfg
 # shader files
 *.tmp
 
+# temp dia files
+*.dia~

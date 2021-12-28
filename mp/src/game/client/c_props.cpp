@@ -68,6 +68,12 @@ bool C_DynamicProp::TestCollision( const Ray_t &ray, unsigned int fContentsMask,
 	return BaseClass::TestCollision( ray, fContentsMask, tr );
 }
 
+
+int C_DynamicProp::DrawModel(int flags)	// Added for Anarchy Arcade
+{
+	return BaseClass::DrawModel(flags);
+}
+
 //-----------------------------------------------------------------------------
 // implements these so ragdolls can handle frustum culling & leaf visibility
 //-----------------------------------------------------------------------------

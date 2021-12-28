@@ -421,7 +421,8 @@ void CBaseViewModel::CalcViewModelView( CBasePlayer *owner, const Vector& eyePos
 	}
 #endif
 
-	if( UseVR() )
+	if (UseVR())
+	//if( UseVR() && false) // Added for Anarchy Arcade
 	{
 		g_ClientVirtualReality.OverrideViewModelTransform( vmorigin, vmangles, pWeapon && pWeapon->ShouldUseLargeViewModelVROverride() );
 	}

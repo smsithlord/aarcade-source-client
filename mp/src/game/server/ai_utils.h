@@ -23,17 +23,20 @@
 
 inline CBasePlayer *AI_GetSinglePlayer()
 {
+	/* Added for Anarchy Arcade
 	if ( gpGlobals->maxClients > 1 )
 	{
 		return NULL;
 	}
+	*/
 	
 	return UTIL_GetLocalPlayer();
 }
 
 inline bool AI_IsSinglePlayer()
 {
-	return ( gpGlobals->maxClients == 1 );
+	//return ( gpGlobals->maxClients == 1 );
+	return true;	// Added for Anarchy Arcade
 }
 
 

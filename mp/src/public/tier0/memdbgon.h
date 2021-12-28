@@ -105,7 +105,7 @@ inline void *MemAlloc_InlineCallocMemset( void *pMem, size_t nCount, size_t nEle
 #define realloc(p, s)			g_pMemAlloc->Realloc( p, s, __FILE__, __LINE__ )
 #define _aligned_malloc( s, a )	MemAlloc_AllocAligned( s, a, __FILE__, __LINE__ )
 
-#define _malloc_dbg(s, t, f, l)	WHYCALLINGTHISDIRECTLY(s)
+//#define _malloc_dbg(s, t, f, l)	WHYCALLINGTHISDIRECTLY(s)	// Added for Anarchy Arcade
 
 #if !defined( LINUX )
 #if defined(__AFX_H__) && defined(DEBUG_NEW)

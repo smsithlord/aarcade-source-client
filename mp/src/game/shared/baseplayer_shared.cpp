@@ -91,6 +91,8 @@
 ConVar mp_usehwmmodels( "mp_usehwmmodels", "0", NULL, "Enable the use of the hw morph models. (-1 = never, 1 = always, 0 = based upon GPU)" ); // -1 = never, 0 = if hasfastvertextextures, 1 = always
 #endif
 
+ConVar hlvr_worldscale("hlvr_worldscale", "38", FCVAR_REPLICATED, "This scales everything. Everything. You want to be a mouse? Sure. A giant? Go ahead.");	// Added for Anarchy Arcade
+
 bool UseHWMorphModels()
 {
 // #ifdef CLIENT_DLL 
@@ -841,9 +843,12 @@ void CBasePlayer::Weapon_SetLast( CBaseCombatWeapon *pWeapon )
 //-----------------------------------------------------------------------------
 bool CBasePlayer::Weapon_Switch( CBaseCombatWeapon *pWeapon, int viewmodelindex /*=0*/ ) 
 {
+	if (!cvar->FindVar("allow_weapons")->GetBool() && (!pWeapon || Q_strcmp(pWeapon->GetLastWeapon()->GetName(), "weapon_physcannon")))	// Added for Anarchy Arcade
+		return false;
+
 	CBaseCombatWeapon *pLastWeapon = GetActiveWeapon();
 
-	if ( BaseClass::Weapon_Switch( pWeapon, viewmodelindex ))
+	if (BaseClass::Weapon_Switch(pWeapon, viewmodelindex))
 	{
 		if ( pLastWeapon && Weapon_ShouldSetLast( pLastWeapon, GetActiveWeapon() ) )
 		{
@@ -1543,7 +1548,8 @@ void CBasePlayer::CalcView( Vector &eyeOrigin, QAngle &eyeAngles, float &zNear, 
 	if ( !pVehicle )
 	{
 #if defined( CLIENT_DLL )
-		if( UseVR() )
+		//if( UseVR() )
+		if (UseVR() && false)	// Added for Anarchy Arcade
 			g_ClientVirtualReality.CancelTorsoTransformOverride();
 #endif
 

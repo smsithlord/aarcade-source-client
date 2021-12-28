@@ -2347,6 +2347,10 @@ void CGameMovement::PlaySwimSound()
 	MoveHelper()->StartSound( mv->GetAbsOrigin(), "Player.Swim" );
 }
 
+// Added for Anarchy Arcade (hl2vr)
+//ConVar vrUpwardMultiplyer("vrUpwardMultiplyer", "1.0", FCVAR_NONE, "Automatically adjusted for Climby jumping.");
+//ConVar vrForwardMultiplyer("vrForwardMultiplyer", "1.0", FCVAR_NONE, "Automatically adjusted for Climby jumping.");
+// End added for Anarchy Arcade (hl2vr)
 
 //-----------------------------------------------------------------------------
 // Purpose: 
@@ -2446,6 +2450,11 @@ bool CGameMovement::CheckJumpButton( void )
 		flMul = sqrt(2 * GetCurrentGravity() * GAMEMOVEMENT_JUMP_HEIGHT);
 	}
 
+	// Added for Anarchy Arcade (hl2vr)
+	//float vrUpwardMultiplyer = cvar->FindVar("vrUpwardMultiplyer")->GetFloat();
+	//flMul *= vrUpwardMultiplyer;
+	// End added for Anarchy Arcade (hl2vr)
+
 	// Acclerate upward
 	// If we are ducking...
 	float startz = mv->m_vecVelocity[2];
@@ -2473,11 +2482,22 @@ bool CGameMovement::CheckJumpButton( void )
 		AngleVectors( mv->m_vecViewAngles, &vecForward );
 		vecForward.z = 0;
 		VectorNormalize( vecForward );
+
+		// Added for Anarchy Arcade (hl2vr)
+		//float vrForwardMultiplyer = cvar->FindVar("vrForwardMultiplyer")->GetFloat();
+		//vecForward *= vrForwardMultiplyer;
+		// End added for Anarchy Arcade (hl2vr)
 		
 		// We give a certain percentage of the current forward movement as a bonus to the jump speed.  That bonus is clipped
 		// to not accumulate over time.
 		float flSpeedBoostPerc = ( !pMoveData->m_bIsSprinting && !player->m_Local.m_bDucked ) ? 0.5f : 0.1f;
 		float flSpeedAddition = fabs( mv->m_flForwardMove * flSpeedBoostPerc );
+
+		// Added for Anarchy Arcade (hl2vr)
+		//if (flSpeedAddition == 0)
+		//	flSpeedAddition = (450.0f * 0.5f) * vrForwardMultiplyer;
+		// End added for Anarchy Arcade (hl2vr)
+
 		float flMaxSpeed = mv->m_flMaxSpeed + ( mv->m_flMaxSpeed * flSpeedBoostPerc );
 		float flNewSpeed = ( flSpeedAddition + mv->m_vecVelocity.Length2D() );
 
@@ -3398,9 +3418,11 @@ int CGameMovement::CheckStuck( void )
 	if ( developer.GetBool() )
 	{
 		bool isServer = player->IsServer();
+		// Added for Anarchy Arcade
 		engine->Con_NPrintf( isServer, "%s stuck on object %i/%s", 
 			isServer ? "server" : "client",
 			hitent.GetEntryIndex(), MoveHelper()->GetName(hitent) );
+		// End Added for Anarchy Arcade
 	}
 #endif
 

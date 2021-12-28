@@ -634,6 +634,9 @@ void CHudMessage::Paint()
 		{
 			brightness = FadeBlend( m_pGameTitle->fadein, m_pGameTitle->fadeout, m_pGameTitle->holdtime, localTime );
 
+			if (!m_iconTitleHalf)	// Added for Anarchy Arcade to fix Beefy's map
+				return;
+
 			int halfWidth = m_iconTitleHalf->Width();
 			int fullWidth = halfWidth + m_iconTitleLife->Width();
 			int fullHeight = m_iconTitleHalf->Height();

@@ -237,7 +237,7 @@ void CBaseViewport::CreateDefaultPanels( void )
 {
 #ifndef _XBOX
 	AddNewPanel( CreatePanelByName( PANEL_SCOREBOARD ), "PANEL_SCOREBOARD" );
-	AddNewPanel( CreatePanelByName( PANEL_INFO ), "PANEL_INFO" );
+	//AddNewPanel( CreatePanelByName( PANEL_INFO ), "PANEL_INFO" );	// Added for Anarchy Arcade
 	AddNewPanel( CreatePanelByName( PANEL_SPECGUI ), "PANEL_SPECGUI" );
 #if !defined( TF_CLIENT_DLL )
 	AddNewPanel( CreatePanelByName( PANEL_SPECMENU ), "PANEL_SPECMENU" );

@@ -2624,7 +2624,16 @@ void CClientShadowMgr::BuildFlashlight( ClientShadowHandle_t handle )
 		return;
 	}
 
-	VPROF_BUDGET( "CClientShadowMgr::BuildFlashlight", VPROF_BUDGETGROUP_SHADOW_DEPTH_TEXTURING );
+	VPROF_BUDGET("CClientShadowMgr::BuildFlashlight", VPROF_BUDGETGROUP_SHADOW_DEPTH_TEXTURING);
+
+	// Added for Anarchy Arcade
+	// Don't project the flashlight if the frustum AABB is not in our view
+	Vector mins, maxs;
+	CalculateAABBFromProjectionMatrix(shadow.m_WorldToShadow, &mins, &maxs);
+
+	if (engine->CullBox(mins, maxs))
+		return;
+	// End added for Anarchy Arcade
 
 	bool bLightModels = r_flashlightmodels.GetBool();
 	bool bLightSpecificEntity = shadow.m_hTargetEntity.Get() != NULL;
@@ -3018,7 +3027,7 @@ void CClientShadowMgr::AddToDirtyShadowList( IClientRenderable *pRenderable, boo
 	// Don't add to the dirty shadow list while we're iterating over it
 	// The only way this can happen is if a child is being rendered into a parent
 	// shadow, and we don't need it to be added to the dirty list in that case.
-	if ( m_bUpdatingDirtyShadows )
+	if (m_bUpdatingDirtyShadows || !pRenderable )	// Added for Anarchy Arcade
 		return;
 
 	// Are we already in the dirty list?
@@ -3852,6 +3861,8 @@ int CClientShadowMgr::BuildActiveShadowDepthList( const CViewSetup &viewSetup, i
 			continue;
 
 		// Calculate an AABB around the shadow frustum
+		// Added for Anarchy Arcade
+		/*
 		Vector vecAbsMins, vecAbsMaxs;
 		CalculateAABBFromProjectionMatrix( shadow.m_WorldToShadow, &vecAbsMins, &vecAbsMaxs );
 
@@ -3865,6 +3876,8 @@ int CClientShadowMgr::BuildActiveShadowDepthList( const CViewSetup &viewSetup, i
 			shadowmgr->SetFlashlightDepthTexture( shadow.m_ShadowHandle, NULL, 0 );
 			continue;
 		}
+		*/
+		// End Added for Anarchy Arcade
 
 		if ( nActiveDepthShadowCount >= nMaxDepthShadows )
 		{

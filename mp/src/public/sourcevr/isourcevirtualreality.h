@@ -18,12 +18,13 @@
 #include "appframework/IAppSystem.h"
 #include "mathlib/vmatrix.h"
 
+
 //-----------------------------------------------------------------------------
 // forward declarations
 //-----------------------------------------------------------------------------
 class ITexture;
 class IMaterialSystem;
-
+class C_MountManager;
 //-----------------------------------------------------------------------------
 // important enumeration
 //-----------------------------------------------------------------------------
@@ -159,17 +160,111 @@ public:
 
 
 //-----------------------------------------------------------------------------
+#ifndef VRMANAGER_H
+#define VRMANAGER_H
+
+class HLVirtualReality : public CAutoGameSystemPerFrame {
+public:
+	int screenWidth = 1280;
+	int screenHeight = 720;
+	int sdk = 1;
+
+	bool menuPress;
+	bool isPauseMenuUp;
+	bool isTwoHandWeaponActive;
+	bool isTeleportArcOn;
+
+	Vector handOffset;
+
+	C_MountManager *m_pMountManager;
+
+	bool DllLoaded();
+
+	bool ShouldRunInVR();
+	bool ShouldRunInSBS();	// Added for Anarchy Arcade
+
+	bool Activate();
+
+	void Deactivate();
+
+	void GetViewportBounds(ISourceVirtualReality::VREye eEye, int *pnX, int *pnY, int *pnWidth, int *pnHeight);
+
+	ITexture *GetRenderTarget(ISourceVirtualReality::VREye eEye, ISourceVirtualReality::EWhichRenderTarget eWhich);
+
+	VMatrix GetMideyePose();
+
+	VMatrix GetMidEyeFromEye(ISourceVirtualReality::VREye eEye);
+
+	bool GetEyeProjectionMatrix(VMatrix *pResult, ISourceVirtualReality::VREye eEye, float zNear, float zFar, float fovScale);
+
+	//The returned bool isn't actually used, but SourceVR may use the fov 
+	bool SampleTrackingState(float PlayerGameFov, float fPredictionSeconds) { return false; };
+	//Up the call stack is code to reset the head position. 
+	bool WillDriftInYaw() {return false;};
+
+	//This return value is also not used. 
+	bool DoDistortionProcessing(ISourceVirtualReality::VREye eEye) { return false; };
+
+	//This code relys on sourcevr, and rendering the hud on a plane is already working so....
+	bool CompositeHud(ISourceVirtualReality::VREye eEye, float ndcHudBounds[4], bool bDoUndistort, bool bBlackout, bool bTranslucent) { return false; };
+
+	VMatrix SMMatrixToVMatrix(float matrix[16], bool isHand = false, bool isLeftSpace = false);
+
+	void OverrideWeaponMatrix(VMatrix& weaponMatrix);
+
+	void UpdateViewmodelOffset(Vector& vmorigin, QAngle& vmangles);
+
+	void GetEyeToRightHandOffset(Vector& offset);
+
+	QAngle GetRightHandRotation();
+
+	void GetEyeToLeftHandOffset(Vector& offset);
+
+	QAngle GetLeftHandRotation();
+
+	void UpdatePoses();
+
+	void RecalibrateControllerSides();
+
+	void OverrideJoystickInputs(float& jx, float& jy, float& lx, float& ly);
+
+	float GetHudPanelAlpha(const Vector& hudPanelForward, const Vector& eyesForward, float fadePow);
+
+	void ProcessInput();
+
+	void ProcessVehicleYawOffset(float toyaw);
+
+	float rotationOffset;
+
+	void LevelShutdownPreEntity();
+
+	void LevelInitPostEntity();
+
+	void Update(float frametime);
+
+	void LateUpdate();
+
+	void Shutdown();
+
+	void HandOffset(const CCommand &args);
+
+	void PauseMenu(const CCommand &args);
+};
+
+extern HLVirtualReality *g_pHLVR;
+
+#endif
 
 extern ISourceVirtualReality *g_pSourceVR;
 
 inline bool UseVR()
 {
-	return g_pSourceVR != NULL && g_pSourceVR->ShouldRunInVR();
+	return g_pHLVR->ShouldRunInVR();
 }
 
 inline bool ShouldForceVRActive()
 {
-	return g_pSourceVR != NULL && g_pSourceVR->ShouldForceVRMode();
+	return false;
 }
 
 #endif // ISOURCEVIRTUALREALITY_H

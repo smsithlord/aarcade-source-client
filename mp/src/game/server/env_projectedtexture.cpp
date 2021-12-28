@@ -73,7 +73,8 @@ BEGIN_DATADESC( CEnvProjectedTexture )
 	DEFINE_KEYFIELD( m_bLightWorld, FIELD_BOOLEAN, "lightworld" ),
 	DEFINE_KEYFIELD( m_bCameraSpace, FIELD_BOOLEAN, "cameraspace" ),
 	DEFINE_KEYFIELD( m_flAmbient, FIELD_FLOAT, "ambient" ),
-	DEFINE_AUTO_ARRAY_KEYFIELD( m_SpotlightTextureName, FIELD_CHARACTER, "texturename" ),
+	//DEFINE_AUTO_ARRAY_KEYFIELD( m_SpotlightTextureName, FIELD_CHARACTER, "texturename" ),	// Added for Anarchy Arcade
+	DEFINE_AUTO_ARRAY(m_SpotlightTextureName, FIELD_CHARACTER),	// Added for Anarchy Arcade
 	DEFINE_KEYFIELD( m_nSpotlightTextureFrame, FIELD_INTEGER, "textureframe" ),
 	DEFINE_KEYFIELD( m_flNearZ, FIELD_FLOAT, "nearz" ),
 	DEFINE_KEYFIELD( m_flFarZ, FIELD_FLOAT, "farz" ),
@@ -155,7 +156,24 @@ void UTIL_ColorStringToLinearFloatColor( Vector &color, const char *pString )
 
 bool CEnvProjectedTexture::KeyValue( const char *szKeyName, const char *szValue )
 {
-	if ( FStrEq( szKeyName, "lightcolor" ) )
+	// Added for Anarchy Arcade
+	if (FStrEq(szKeyName, "lightcolor"))
+	{
+		Vector tmp;
+		UTIL_ColorStringToLinearFloatColor(tmp, szValue);
+		m_LinearFloatLightColor = tmp;
+	}
+	else if (FStrEq(szKeyName, "texturename"))
+	{
+		Q_strcpy(m_SpotlightTextureName.GetForModify(), szValue);
+	}
+	else
+	{
+		return BaseClass::KeyValue(szKeyName, szValue);
+	}
+
+	return true;
+	/*if ( FStrEq( szKeyName, "lightcolor" ) )
 	{
 		Vector tmp;
 		UTIL_ColorStringToLinearFloatColor( tmp, szValue );
@@ -166,7 +184,8 @@ bool CEnvProjectedTexture::KeyValue( const char *szKeyName, const char *szValue 
 		return BaseClass::KeyValue( szKeyName, szValue );
 	}
 
-	return true;
+	return true;*/
+	// End added for Anarchy Arcade
 }
 
 void CEnvProjectedTexture::InputTurnOn( inputdata_t &inputdata )

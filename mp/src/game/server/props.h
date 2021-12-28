@@ -253,6 +253,12 @@ private:
 #define SF_DYNAMICPROP_NO_VPHYSICS					128
 #define SF_DYNAMICPROP_DISABLE_COLLISION			256
 
+// Added for Anarchy Arcade
+#ifndef CLIENT_DLL
+#include <string>
+#endif
+// End added for Anarchy Arcade
+
 //-----------------------------------------------------------------------------
 // Purpose: 
 //-----------------------------------------------------------------------------
@@ -313,7 +319,85 @@ public:
 	bool				m_bStartDisabled;
 	bool				m_bDisableBoneFollowers;
 
-	CNetworkVar( bool, m_bUseHitboxesForRenderBox );
+	CNetworkVar(bool, m_bUseHitboxesForRenderBox);
+
+
+
+	// Added for Anarchy Arcade
+	void LerpMove(void);
+	void SelfLerpMove(void);
+	void NameShowTick(void);
+
+#ifndef CLIENT_DLL
+	void InitAsHotlink();
+	void SetLerpSync(Vector lerpDestination, QAngle lerpAngles, float flSpeed = 100.0f);
+	//void SetSelfLerp();
+
+	//void SetPhantomName(const char* name) { m_phantomName = name; }
+	//std::string GetPhantomName() { return m_phantomName; }
+	//bool GetPhantomFollowed() { return m_bPhantomFollowed; }
+	//void SetPhantomFollowed(bool val) { m_bPhantomFollowed = val; }
+
+	//void DisplayPhantomName();
+
+	//	Vector m_vStartPos, m_vEndPos;
+	//	float m_flInterpStartTime;
+
+	//	const static float kflPosInterpTime;
+	//	bool  m_bInterpolatePosition;
+
+private:
+	//bool m_bPhantomFollowed;
+	//float m_fLastPhantomNameDisplayed;
+	//std::string m_phantomName;
+	float m_flPosInterpTime;
+	float m_flInterpStartTime;
+	Vector m_lerpStartingPos;
+	QAngle m_lerpStartingAngles;
+	Vector m_lerpDestination;
+	QAngle m_lerpAngles;
+	bool m_bCanLerp;
+#endif
+	// End Added for Anarchy Arcade
+
+	/*
+	// Added for Anarchy Arcade
+	void LerpMove(void);
+
+#ifndef CLIENT_DLL
+	//bool IsHotlink() { return m_bIsHotlink; }
+	//void InitAsHotlink();
+	void SetLerpSync(Vector lerpDestination, QAngle lerpAngles);
+	//void SetSelfLerp();
+
+	//void SetAvatarName(const char* name) { m_avatarName = name; }
+	//std::string GetAvatarName() { return m_avatarName; }
+	//bool GetPhantomFollowed() { return m_bPhantomFollowed; }
+	//void SetPhantomFollowed(bool val) { m_bPhantomFollowed = val; }
+
+	//void DisplayPhantomName();
+
+	//	Vector m_vStartPos, m_vEndPos;
+	//	float m_flInterpStartTime;
+
+	//	const static float kflPosInterpTime;
+	//	bool  m_bInterpolatePosition;
+
+private:
+	//bool m_bPhantomFollowed;
+	//float m_fLastPhantomNameDisplayed;
+	//std::string m_avatarName;
+	//bool m_bIsHotlink;
+	float m_flPosInterpTime;
+	float m_flInterpStartTime;
+	Vector m_lerpStartingPos;
+	QAngle m_lerpStartingAngles;
+	Vector m_lerpDestination;
+	QAngle m_lerpAngles;
+	bool m_bCanLerp;
+#endif
+	// End Added for Anarchy Arcade
+	*/
 
 protected:
 	void FinishSetSequence( int nSequence );

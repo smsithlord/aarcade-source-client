@@ -9,6 +9,8 @@
 #include "iclientrenderable.h"
 #include "toolframework_client.h"
 
+#include "aarcade/client/c_anarchymanager.h"
+
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
 
@@ -25,6 +27,9 @@ void CEntityMaterialProxy::Release( void )
 //-----------------------------------------------------------------------------
 void CEntityMaterialProxy::OnBind( void *pRenderable )
 {
+	if (g_pAnarchyManager->IsPaused() || g_pAnarchyManager->IsInSourceGame())	// Added for Anarchy Arcade
+		return;
+
 	if( !pRenderable )
 		return;
 

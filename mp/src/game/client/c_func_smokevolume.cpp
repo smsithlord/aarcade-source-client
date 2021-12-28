@@ -8,6 +8,7 @@
 #include "c_smoke_trail.h"
 #include "smoke_fog_overlay.h"
 #include "engine/IEngineTrace.h"
+#include "../aarcade/client/c_prop_shortcut.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -44,6 +45,8 @@ public:
 	int IsEmissive( void ) { return ( m_spawnflags & SF_EMISSIVE ); }
 
 private:
+	C_PropShortcutEntity* m_pShortcut;	// Added for Anarchy Arcade
+	float m_flOldScale;	// Added for Anarchy Arcade
 	class SmokeGrenadeParticle : public Particle
 	{
 	public:
@@ -112,6 +115,25 @@ private:
 
 	inline Vector GetSmokeParticlePos(int x, int y, int z )	
 	{
+		// Added for Anarchy Arcade
+		if (m_bIsModelless)
+		{
+			C_BaseEntity* pParentEntity = this->GetMoveParent();// C_BasePlayer::GetLocalPlayer();	// Added for Anarchy Arcade
+			if (!pParentEntity)
+				pParentEntity = this;
+
+			Vector mins = Vector(-256, -256, 0);
+			if (m_pShortcut)
+				mins *= m_pShortcut->GetModelScale();
+
+			Vector vWorldMins = pParentEntity->GetAbsOrigin() + mins;
+			return vWorldMins +
+				Vector(x * m_SpacingRadius * 2 + m_SpacingRadius,
+				y * m_SpacingRadius * 2 + m_SpacingRadius,
+				z * m_SpacingRadius * 2 + m_SpacingRadius);
+		}
+		// End added for Anarchy Arcade
+
 		return WorldAlignMins() + 
 			Vector( x * m_SpacingRadius * 2 + m_SpacingRadius,
 				    y * m_SpacingRadius * 2 + m_SpacingRadius,
@@ -147,6 +169,7 @@ private:
 	float				m_CurrentDensity;
 	float				m_ParticleRadius;
 	bool				m_bStarted;
+	bool				m_bIsModelless;	// Added for Anarchy Arcade
 
 	PMaterialHandle		m_MaterialHandle;
 
@@ -258,6 +281,7 @@ C_FuncSmokeVolume::C_FuncSmokeVolume()
 	m_ParticleRadius = 0.0f;
 	m_MinColor.Init( 1.0, 1.0, 1.0 );
 	m_MaxColor.Init( 1.0, 1.0, 1.0 );
+	m_bIsModelless = false;	// Added for Anarchy Arcade
 }
 
 C_FuncSmokeVolume::~C_FuncSmokeVolume()
@@ -294,6 +318,44 @@ void C_FuncSmokeVolume::OnDataChanged( DataUpdateType_t updateType )
 	if( updateType == DATA_UPDATE_CREATED )
 	{
 		Vector size = WorldAlignMaxs() - WorldAlignMins();
+		// Added for Anarchy Arcade
+		m_flOldScale = 1.0;
+		if (size.Length() == 0)
+		{
+			size.x = 512.0f;
+			size.y = 512.0f;
+			size.z = 128.0f;
+
+			m_pShortcut = null;
+			C_BaseEntity* pMoveParent = this->GetMoveParent();
+			if (pMoveParent && pMoveParent != this)
+			{
+				this->SetAbsOrigin(pMoveParent->GetAbsOrigin());
+				this->SetAbsAngles(pMoveParent->GetAbsAngles());
+
+				m_pShortcut = dynamic_cast<C_PropShortcutEntity*>(pMoveParent);
+				if (m_pShortcut)
+				{
+					m_flOldScale = m_pShortcut->GetModelScale();
+					size *= m_pShortcut->GetModelScale();
+
+					m_ParticleSpacingDistance *= m_pShortcut->GetModelScale();
+					m_ParticleDrawWidth = round(m_ParticleDrawWidth * m_pShortcut->GetModelScale());
+					m_ParticleRadius = m_ParticleDrawWidth * 0.5f;
+					m_SpacingRadius = m_ParticleSpacingDistance * 0.5f;
+					m_ParticleEffect.SetParticleCullRadius(m_ParticleRadius);
+				}
+			}
+			else
+			{
+				this->SetAbsOrigin(C_BasePlayer::GetLocalPlayer()->GetAbsOrigin());
+				this->SetAbsAngles(C_BasePlayer::GetLocalPlayer()->GetAbsAngles());
+			}
+
+			m_bIsModelless = true;	// Added for Anarchy Arcade
+		}
+		// End added for Anarchy Arcade
+
 		m_xCount = 0.5f + ( size.x / ( m_SpacingRadius * 2.0f ) );
 		m_yCount = 0.5f + ( size.y / ( m_SpacingRadius * 2.0f ) );
 		m_zCount = 0.5f + ( size.z / ( m_SpacingRadius * 2.0f ) );
@@ -323,8 +385,20 @@ void C_FuncSmokeVolume::Update( float fTimeDelta )
 	// Update our world space bbox if we've moved at all.
 	// We do this manually because sometimes people make HUGE bboxes, and if they're constantly changing because their
 	// particles wander outside the current bounds sometimes, it'll be linking them into all the leaves repeatedly.
-	const Vector &curOrigin = GetAbsOrigin();
-	const QAngle &curAngles = GetAbsAngles();
+
+	// Added for Anarchy Arcade
+	C_BaseEntity* pParentEntity = this;// = this;// C_BasePlayer::GetLocalPlayer();
+	if (m_bIsModelless)
+	{
+		pParentEntity = this->GetMoveParent();
+		if (!pParentEntity)
+			pParentEntity = this;
+	}
+
+	const Vector &curOrigin = (m_bIsModelless) ? pParentEntity->GetAbsOrigin() : GetAbsOrigin();
+	const QAngle &curAngles = (m_bIsModelless) ? pParentEntity->GetAbsAngles() : GetAbsAngles();
+	// End added for Anarchy Arcade
+
 	if ( !VectorsAreEqual( curOrigin, m_vLastOrigin, 0.1 ) || 
 		fabs( curAngles.x - m_vLastAngles.x ) > 0.1 || 
 		fabs( curAngles.y - m_vLastAngles.y ) > 0.1 || 
@@ -336,7 +410,159 @@ void C_FuncSmokeVolume::Update( float fTimeDelta )
 		m_vLastOrigin = curOrigin;
 
 		Vector vWorldMins, vWorldMaxs;
-		CollisionProp()->WorldSpaceAABB( &vWorldMins, &vWorldMaxs );
+		// Added for Anarchy Arcade
+		if (m_bIsModelless)
+		{
+			Vector mins = Vector(-256, -256, 0);
+			Vector maxs = Vector(256, 256, 128);
+			if (m_pShortcut)
+			{
+				mins *= m_pShortcut->GetModelScale();
+				maxs *= m_pShortcut->GetModelScale();
+				//DevMsg("Dist: %f\n", m_ParticleEffect.GetRenderOrigin().DistTo(m_pShortcut->GetAbsOrigin()));
+				//m_ParticleEffect.
+
+				if (m_flOldScale != m_pShortcut->GetModelScale())
+				{
+					Vector size;
+					size.x = 512.0f;
+					size.y = 512.0f;
+					size.z = 128.0f; 
+
+					size *= m_pShortcut->GetModelScale();
+
+					//unsigned int iOldCount = m_xCount * m_yCount * m_zCount;
+
+					m_ParticleSpacingDistance = (m_ParticleSpacingDistance / m_flOldScale) * m_pShortcut->GetModelScale();
+					m_ParticleDrawWidth = round((m_ParticleDrawWidth / m_flOldScale) * m_pShortcut->GetModelScale());
+					m_ParticleRadius = m_ParticleDrawWidth * 0.5f;
+					m_SpacingRadius = m_ParticleSpacingDistance * 0.5f;
+					m_ParticleEffect.SetParticleCullRadius(m_ParticleRadius);
+
+					//m_xCount = 0.5f + (size.x / (m_SpacingRadius * 2.0f));
+					//m_yCount = 0.5f + (size.y / (m_SpacingRadius * 2.0f));
+					//m_zCount = 0.5f + (size.z / (m_SpacingRadius * 2.0f));
+					m_CurrentDensity = m_Density;
+
+					//m_xCount * m_yCount * m_zCount
+					Vector vPos;
+					for (int x = 0; x < m_xCount; x++)
+					{
+						for (int y = 0; y < m_yCount; y++)
+						{
+							for (int z = 0; z < m_zCount; z++)
+							{
+								vPos = GetSmokeParticlePos(x, y, z);
+								if (SmokeParticleInfo *pInfo = GetSmokeParticleInfo(x, y, z))
+								{
+									if (!pInfo->m_pParticle)
+									{
+										SmokeGrenadeParticle *pParticle =
+											(SmokeGrenadeParticle*)m_ParticleEffect.AddParticle(sizeof(SmokeGrenadeParticle), m_MaterialHandle);
+
+										if (pParticle)
+										{
+											pParticle->m_Pos = vPos;
+											pParticle->m_ColorInterp = (unsigned char)((rand() * 255) / VALVE_RAND_MAX);
+											pParticle->m_RotationFactor = FRand(-1.0f, 1.0f); // Rotation factor.
+											pParticle->m_CurRotation = FRand(-m_RotationSpeed, m_RotationSpeed);
+										}
+
+#ifdef _DEBUG
+										int testX, testY, testZ;
+										int index = GetSmokeParticleIndex(x, y, z);
+										GetParticleInfoXYZ(index, testX, testY, testZ);
+										assert(testX == x && testY == y && testZ == z);
+#endif
+
+										Vector vColor = EngineGetLightForPoint(vPos);
+										pInfo->m_Color[0] = LinearToTexture(vColor.x);
+										pInfo->m_Color[1] = LinearToTexture(vColor.y);
+										pInfo->m_Color[2] = LinearToTexture(vColor.z);
+
+										// Cast some rays and if it's too close to anything, fade its alpha down.
+										pInfo->m_FadeAlpha = 1;
+
+										for (int i = 0; i < NUM_FADE_PLANES; i++)
+										{
+											trace_t trace;
+											WorldTraceLine(vPos, vPos + s_FadePlaneDirections[i] * 100, MASK_SOLID_BRUSHONLY, &trace);
+											if (trace.fraction < 1.0f)
+											{
+												float dist = DotProduct(trace.plane.normal, vPos) - trace.plane.dist;
+												if (dist < 0)
+												{
+													pInfo->m_FadeAlpha = 0;
+												}
+												else if (dist < m_ParticleRadius)
+												{
+													float alphaScale = dist / m_ParticleRadius;
+													alphaScale *= alphaScale * alphaScale;
+													pInfo->m_FadeAlpha *= alphaScale;
+												}
+											}
+										}
+
+										pInfo->m_pParticle = pParticle;
+										pInfo->m_TradeIndex = -1;
+										//m_pSmokeParticleInfos[x*y*z].m_pParticle = 
+									}
+									else
+										pInfo->m_pParticle->m_Pos = vPos;
+								}
+							}
+						}
+					}
+
+					//for (unsigned int i = 0; i < iOldCount; i++)
+					//{
+						//m_pSmokeParticleInfos[i].m_pParticle->SetRemoveFlag();
+						//m_ParticleEffect.RemoveParticle((Particle*)m_pSmokeParticleInfos[i].m_pParticle);
+						//m_pSmokeParticleInfos[i].m_pParticle->
+						//ParticleMgr()->RemoveParticle(m_pSmokeParticleInfos[i].m_pParticle);
+
+					//}
+					/*
+					Vector vPos;
+					for (int x = 0; x < m_xCount; x++)
+					{
+						for (int y = 0; y < m_yCount; y++)
+						{
+							for (int z = 0; z < m_zCount; z++)
+							{
+								
+								vPos = GetSmokeParticlePos(x, y, z);
+								if (SmokeParticleInfo *pInfo = GetSmokeParticleInfo(x, y, z))
+								{
+									int contents = GetWorldPointContents(vPos);
+									if (contents & CONTENTS_SOLID)
+									{
+										pInfo->m_pParticle = NULL;
+									}
+								}
+							}
+						}
+					}
+					*/
+					
+					////m_ParticleEffect.SetRemoveFlag();
+					//ParticleMgr()->RemoveEffect(&m_ParticleEffect);
+					////m_ParticleEffect = CParticleEffectBinding();
+
+					//delete[] m_pSmokeParticleInfos;
+					//m_pSmokeParticleInfos = new SmokeParticleInfo[m_xCount * m_yCount * m_zCount];
+					m_flOldScale = m_pShortcut->GetModelScale();
+					//Start(ParticleMgr(), NULL);
+					//FillVolume();
+				}
+			}
+
+			vWorldMins += pParentEntity->GetAbsOrigin() + mins;
+			vWorldMaxs += pParentEntity->GetAbsOrigin() + maxs;
+		}
+		else // End added for Anarchy Arcade
+			CollisionProp()->WorldSpaceAABB(&vWorldMins, &vWorldMaxs);
+
 		vWorldMins -= Vector( m_ParticleRadius, m_ParticleRadius, m_ParticleRadius );
 		vWorldMaxs += Vector( m_ParticleRadius, m_ParticleRadius, m_ParticleRadius );
 
@@ -522,8 +748,37 @@ void C_FuncSmokeVolume::RenderParticles( CParticleRenderIterator *pIterator )
 		}
 		
 		Vector tRenderPos;
-		TransformParticle( ParticleMgr()->GetModelView(), renderPos, tRenderPos );
+		// Added for Anarchy Arcade
+		if (m_bIsModelless)
+			TransformParticle(ParticleMgr()->GetModelView(), renderPos, tRenderPos);
+		else
+			tRenderPos = renderPos;
+		// End added for Anarchy Arcade
+
 		float sortKey = 1;//tRenderPos.z;
+
+		// Added for Anarchy Arcade
+		if (m_bIsModelless)
+		{
+			float alphaFactor = 1.0f;
+			float colorFactor = 3.0f;
+			alpha *= alphaFactor;
+			color.x *= colorFactor;// = 1.0f;
+			color.y *= colorFactor;// = 1.0f;
+			color.z *= colorFactor;// = 1.0f;
+
+			if (alpha > 1.0f)
+				alpha = 1.0f;
+			if (color.x > 1.0f)
+				color.x = 1.0f;
+			if (color.y > 1.0f)
+				color.y = 1.0f;
+			if (color.z > 1.0f)
+				color.z = 1.0f;
+			//if (alpha > 1.0f)
+			//	alpha = 1.0f;
+		}
+		// End added for Anarchy Arcade
 
 		// If we're reducing particle cost, only render sufficiently opaque particles 
 		if ( ( alpha > 0.05f ) || !mat_reduceparticles.GetBool() )

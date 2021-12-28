@@ -362,6 +362,15 @@ private:
 	float				m_flTimeNextLadderHint;	// Next time we're eligible to display a HUD hint about a ladder.
 	
 	friend class CHL2GameMovement;
+
+	// Added for Anarchy Arcade
+//public:
+	//float GetUseHoldTimer() { return m_flUseHoldTimer; }
+	//void SetUseHoldTimer(float flValue) { m_flUseHoldTimer = flValue; }
+private:
+
+	float					m_flUseHoldTimer;
+	// End Added for Anarchy Arcade
 };
 
 

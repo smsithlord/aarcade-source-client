@@ -633,6 +633,7 @@ CON_COMMAND_F( r_screenoverlay, "Draw specified material as an overlay", FCVAR_C
 	{
 		if ( !Q_stricmp( "off", args[1] ) )
 		{
+			engine->ClientCmd("view_overlay \"\"");	// Added for Anarchy Arcade
 			view->SetScreenOverlayMaterial( NULL );
 		}
 		else
@@ -640,10 +641,12 @@ CON_COMMAND_F( r_screenoverlay, "Draw specified material as an overlay", FCVAR_C
 			IMaterial *pMaterial = materials->FindMaterial( args[1], TEXTURE_GROUP_OTHER, false );
 			if ( !IsErrorMaterial( pMaterial ) )
 			{
+				engine->ClientCmd(VarArgs("view_overlay \"%s\"", args[1]));	// Added for Anarchy Arcade
 				view->SetScreenOverlayMaterial( pMaterial );
 			}
 			else
 			{
+				engine->ClientCmd("view_overlay \"\"");	// Added for Anarchy Arcade
 				view->SetScreenOverlayMaterial( NULL );
 			}
 		}

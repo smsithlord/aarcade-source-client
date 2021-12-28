@@ -216,6 +216,8 @@ void CAI_BaseNPC::RemoveFromSquad()
 //-----------------------------------------------------------------------------
 void CAI_BaseNPC::CheckSquad()
 {
+	return;	// Added for Anarchy Arcade
+
 	if( !IsInSquad() )
 		return;
 

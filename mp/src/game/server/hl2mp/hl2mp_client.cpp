@@ -114,7 +114,8 @@ const char *GetGameDescription()
 	if ( g_pGameRules ) // this function may be called before the world has spawned, and the game rules initialized
 		return g_pGameRules->GetGameDescription();
 	else
-		return "Half-Life 2 Deathmatch";
+		return "Anarchy Arcade";	// Added for Anarchy Arcade
+		//return "Half-Life 2 Deathmatch";	// Added for Anarchy Arcade
 }
 
 //-----------------------------------------------------------------------------
@@ -133,6 +134,9 @@ CBaseEntity* FindEntity( edict_t *pEdict, char *classname)
 	}
 	return NULL;
 }
+
+#include "filesystem.h"	// Added for Anarchy Arcade
+#include <string>	// Added for Anarchy Arcade
 
 //-----------------------------------------------------------------------------
 // Purpose: Precache game-specific models & sounds
@@ -154,6 +158,29 @@ void ClientGamePrecache( void )
 	
 	CBaseEntity::PrecacheScriptSound( "Geiger.BeepHigh" );
 	CBaseEntity::PrecacheScriptSound( "Geiger.BeepLow" );
+
+	// Added for Anarchy Arcade
+	if (cvar->FindVar("precache_instances")->GetBool())
+	{
+		std::string model;
+		KeyValues* pPrecacheModelsKV = new KeyValues("models");
+		if (pPrecacheModelsKV->LoadFromFile(g_pFullFileSystem, "precache_models.txt", "DEFAULT_WRITE_PATH"))
+		{
+			for (KeyValues *sub = pPrecacheModelsKV->GetFirstSubKey(); sub; sub = sub->GetNextKey())
+			{
+				model = sub->GetString();
+
+				//DevMsg("Precaching %s\n", model.c_str());
+
+				//if (model.find("models\\cabinets") == 0 || model.find("models/cabinets") == 0 || model.find("models\\icons") == 0 || model.find("models/icons") == 0 || model.find("models\\frames") == 0 || model.find("models/frames") == 0 || model.find("models\\banners") == 0 || model.find("models/banners") == 0)
+				//continue;
+
+				CBaseEntity::PrecacheModel(sub->GetString(), true);
+			}
+		}
+		pPrecacheModelsKV->deleteThis();
+	}
+	// End Added for Anarchy Arcade
 }
 
 

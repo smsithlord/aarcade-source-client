@@ -466,6 +466,8 @@ void CNavMesh::AllocateGrid( float minX, float maxX, float minY, float maxY )
  */
 void CNavMesh::AddNavArea( CNavArea *area )
 {
+	return;	// Added for Anarchy Arcade
+
 	if ( !m_grid.Count() )
 	{
 		// If we somehow have no grid (manually creating a nav area without loading or generating a mesh), don't crash

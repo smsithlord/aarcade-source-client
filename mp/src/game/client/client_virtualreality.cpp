@@ -345,7 +345,7 @@ void CClientVirtualReality::DrawMainMenu()
 	CMatRenderContextPtr pRenderContext( materials );
 	int viewActualWidth = pTexture->GetActualWidth();
 	int viewActualHeight = pTexture->GetActualHeight();
-
+	
 	int viewWidth, viewHeight;
 	vgui::surface()->GetScreenSize( viewWidth, viewHeight );
 
@@ -597,20 +597,55 @@ bool CClientVirtualReality::OverrideWeaponHudAimVectors ( Vector *pAimOrigin, Ve
 //		Set up the left and right eyes from the middle eye if stereo is on.
 //		Advise calling soonish after OverrideView().
 // --------------------------------------------------------------------
+// Added for Anarchy Arcade this whole method is modified.
 bool CClientVirtualReality::OverrideStereoView( CViewSetup *pViewMiddle, CViewSetup *pViewLeft, CViewSetup *pViewRight  )
 {
 	// Everything in here is in Source coordinate space.
-	if( !UseVR() )
+	if( false && !UseVR() )	// Added for Anarchy Arcade
 	{
 		return false;
 	}
 
-	VMatrix matOffsetLeft = g_pSourceVR->GetMidEyeFromEye( ISourceVirtualReality::VREye_Left );
-	VMatrix matOffsetRight = g_pSourceVR->GetMidEyeFromEye( ISourceVirtualReality::VREye_Right );
+	//VMatrix matOffsetLeft;// = g_pSourceVR->GetMidEyeFromEye(ISourceVirtualReality::VREye_Left);
+	//matOffsetLeft.Identity();
+	//VMatrix matOffsetRight;// = g_pSourceVR->GetMidEyeFromEye(ISourceVirtualReality::VREye_Right);
+	//matOffsetRight.Identity();
+
+
+	pViewLeft->origin = pViewMiddle->origin;
+	pViewRight->origin = pViewMiddle->origin;
+	pViewLeft->angles = pViewMiddle->angles;
+	pViewRight->angles = pViewMiddle->angles;
+	return true;
+
+	VMatrix worldFromTorso;
+	worldFromTorso.SetupMatrixOrgAngles(pViewMiddle->origin, pViewMiddle->angles);
+
+	CalcFovFromProjection(&(pViewLeft->fov), pViewLeft->m_ViewToProjection);
+	CalcFovFromProjection(&(pViewRight->fov), pViewRight->m_ViewToProjection);
+	CalcFovFromProjection(&(pViewMiddle->fov), pViewMiddle->m_ViewToProjection);
+	/*
+	pViewLeft->m_ViewToProjection = worldFromTorso;
+	pViewRight->m_ViewToProjection = worldFromTorso;
+	pViewMiddle->m_ViewToProjection = worldFromTorso;
+
+	pViewLeft->m_bViewToProjectionOverride = true;
+	pViewRight->m_bViewToProjectionOverride = true;
+	pViewMiddle->m_bViewToProjectionOverride = true;
+	*/
+
+	//pViewLeft->origin.x -= 1.0;
+	//pViewRight->origin.x += 1.0;
+
+	QAngle originalMiddleAngles = pViewMiddle->angles;
+	Vector originalMiddleOrigin = pViewMiddle->origin;
+
+
+
 
 	// Move eyes to IPD positions.
-	VMatrix worldFromLeftEye  = m_WorldFromMidEye * matOffsetLeft;
-	VMatrix worldFromRightEye = m_WorldFromMidEye * matOffsetRight;
+	VMatrix worldFromLeftEye = worldFromTorso;// *matOffsetLeft;
+	VMatrix worldFromRightEye = worldFromTorso;// *matOffsetRight;
 
 	Assert ( IsOrthonormal ( worldFromLeftEye, 0.001f ) );
 	Assert ( IsOrthonormal ( worldFromRightEye, 0.001f ) );
@@ -622,11 +657,14 @@ bool CClientVirtualReality::OverrideStereoView( CViewSetup *pViewMiddle, CViewSe
 	// Find the projection matrices.
 
 	// TODO: this isn't the fastest thing in the world. Cache them?
-	float headtrackFovScale = m_WorldZoomScale;
+	float headtrackFovScale = 1.0;// m_WorldZoomScale;
 	pViewLeft->m_bViewToProjectionOverride = true;
 	pViewRight->m_bViewToProjectionOverride = true;
 	g_pSourceVR->GetEyeProjectionMatrix (  &pViewLeft->m_ViewToProjection, ISourceVirtualReality::VREye_Left,  pViewMiddle->zNear, pViewMiddle->zFar, 1.0f/headtrackFovScale );
 	g_pSourceVR->GetEyeProjectionMatrix ( &pViewRight->m_ViewToProjection, ISourceVirtualReality::VREye_Right, pViewMiddle->zNear, pViewMiddle->zFar, 1.0f/headtrackFovScale );
+
+	pViewLeft->m_ViewToProjection = worldFromTorso;
+	pViewRight->m_ViewToProjection = worldFromTorso;
 
 	// And bodge together some sort of average for our cyclops friends.
 	pViewMiddle->m_bViewToProjectionOverride = true;
@@ -741,9 +779,9 @@ bool CClientVirtualReality::OverrideStereoView( CViewSetup *pViewMiddle, CViewSe
 	// Remember in source X forwards, Y left, Z up.
 	// We need to transform to a more conventional X right, Y up, Z backwards before doing the projection.
 	VMatrix WorldFromHudView;
-	WorldFromHudView./*X vector*/SetForward ( -m_WorldFromHud.GetLeft() );
-	WorldFromHudView./*Y vector*/SetLeft    ( m_WorldFromHud.GetUp() );
-	WorldFromHudView./*Z vector*/SetUp      ( -m_WorldFromHud.GetForward() );
+	WorldFromHudView.SetForward ( -m_WorldFromHud.GetLeft() );//X vector
+	WorldFromHudView.SetLeft    ( m_WorldFromHud.GetUp() );//Y vector
+	WorldFromHudView.SetUp      ( -m_WorldFromHud.GetForward() );//Z vector
 	WorldFromHudView.SetTranslation         ( m_PlayerViewOrigin );
 
 	VMatrix HudProjection;
@@ -756,7 +794,6 @@ bool CClientVirtualReality::OverrideStereoView( CViewSetup *pViewMiddle, CViewSe
 	// This will transform a world point into a homogeneous vector that
 	//  when projected (i.e. divide by w) maps to HUD space [-1,1]
 	m_HudProjectionFromWorld = HudProjection * WorldFromHudView.InverseTR();
-
 	return true;
 }
 
@@ -1362,6 +1399,8 @@ void CClientVirtualReality::OverlayHUDQuadWithUndistort( const CViewSetup &eyeVi
 // --------------------------------------------------------------------
 void CClientVirtualReality::Activate()
 {
+	return;	// Added for Anarchy Arcade
+
 	// we can only do this if a headtrack DLL is loaded
 	if( !g_pSourceVR )
 		return;

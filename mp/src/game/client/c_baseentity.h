@@ -36,6 +36,12 @@
 #include "toolframework/itoolentity.h"
 #include "tier0/threadtools.h"
 
+// Added for Anarchy Arcade
+#ifdef GLOWS_ENABLE
+#include "glow_outline_effect.h"
+#endif // GLOWS_ENABLE
+// End added for Anarchy Arcade
+
 class C_Team;
 class IPhysicsObject;
 class IClientVehicle;
@@ -1704,6 +1710,35 @@ protected:
 	RenderMode_t m_PreviousRenderMode;
 	color32 m_PreviousRenderColor;
 #endif
+
+	// Added for Anarchy Arcade
+public:
+	void				SetHotlink(bool bValue = true) { m_bIsHotlink = bValue; }
+	bool				IsHotlink() { return m_bIsHotlink; }
+#ifdef GLOWS_ENABLE
+	CGlowObject			*GetGlowObject(void){ return m_pGlowEffect; }
+	virtual void		GetGlowEffectColor(float *r, float *g, float *b);
+	//	void				EnableGlowEffect( float r, float g, float b );
+
+	void				SetClientSideGlowEnabled(bool bEnabled){ m_bClientSideGlowEnabled = bEnabled; UpdateGlowEffect(); }
+	bool				IsClientSideGlowEnabled(void){ return m_bClientSideGlowEnabled; }
+#endif // GLOWS_ENABLE
+
+protected:
+#ifdef GLOWS_ENABLE	
+	virtual void		UpdateGlowEffect(void);
+	virtual void		DestroyGlowEffect(void);
+#endif // GLOWS_ENABLE
+
+private:
+	bool				m_bIsHotlink;
+#ifdef GLOWS_ENABLE
+	bool				m_bClientSideGlowEnabled;	// client-side only value used for spectator
+	bool				m_bGlowEnabled;				// networked value
+	bool				m_bOldGlowEnabled;
+	CGlowObject			*m_pGlowEffect;
+#endif // GLOWS_ENABLE
+	// End added for Anarchy Arcade
 };
 
 EXTERN_RECV_TABLE(DT_BaseEntity);

@@ -98,6 +98,17 @@ struct sky3dparams_t
 	// 3d skybox camera data
 	CNetworkVar( int, scale );
 	CNetworkVector( origin );
+
+	// Added for Anarchy Arcade
+//#ifdef MAPBASE
+	// Skybox angle support
+	CNetworkQAngle(angles);
+
+	// Sky clearcolor
+	CNetworkColor32(skycolor);
+//#endif
+	// End Added for Anarchy Arcade
+
 	CNetworkVar( int, area );
 
 	// 3d skybox fog data

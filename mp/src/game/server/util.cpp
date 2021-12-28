@@ -1285,7 +1285,9 @@ static void SetMinMaxSize (CBaseEntity *pEnt, const Vector& mins, const Vector& 
 	{
 		if ( mins[i] > maxs[i] )
 		{
-			Error( "%s: backwards mins/maxs", ( pEnt ) ? pEnt->GetDebugName() : "<NULL>" );
+			Error("%s: backwards mins/maxs - %s", (pEnt) ? pEnt->GetDebugName() : "<NULL>", pEnt->GetModelName().ToCStr());// Added for Anarchy Arcade
+			UTIL_Remove(pEnt);	// NOTE: This will likely cause a crash because code might very well call this method and never espect the object will be deleted.  Also, it might be too late at this point to delete the object to avoid the crash.
+			return;	// Added for Anarchy Arcade
 		}
 	}
 
@@ -1891,6 +1893,15 @@ int DispatchSpawn( CBaseEntity *pEntity )
 {
 	if ( pEntity )
 	{
+		// Added for Anarchy Arcade
+		// Just don't spawn certain entity types because they cause issues.
+		if (!Q_strcmp(pEntity->GetClassname(), "team_control_point") || !Q_strcmp(pEntity->GetClassname(), "team_round_timer") || !Q_strcmp(pEntity->GetClassname(), "team_control_point_master"))
+		{
+			pEntity->Remove();
+			return-1;
+		}
+		// End added for Anarchy Arcade.
+
 		MDLCACHE_CRITICAL_SECTION();
 
 		// keep a smart pointer that will now if the object gets deleted

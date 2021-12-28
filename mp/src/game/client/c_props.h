@@ -26,7 +26,9 @@ public:
 
 	// constructor, destructor
 	C_DynamicProp( void );
-	~C_DynamicProp( void );
+	~C_DynamicProp(void);
+
+	virtual int DrawModel(int flags);	// Added for Anarchy Arcade
 
 	void GetRenderBounds( Vector& theMins, Vector& theMaxs );
 	unsigned int ComputeClientSideAnimationFlags();

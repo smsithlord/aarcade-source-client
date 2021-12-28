@@ -62,6 +62,7 @@
 #include "env_debughistory.h"
 #include "tier1/utlstring.h"
 #include "utlhashtable.h"
+//#include "../aarcade/server/prop_shortcut_entity.h"	// Added for Anarchy Arcade
 
 #if defined( TF_DLL )
 #include "tf_gamerules.h"
@@ -307,6 +308,12 @@ IMPLEMENT_SERVERCLASS_ST_NOBASE( CBaseEntity, DT_BaseEntity )
 	SendPropArray3( SENDINFO_ARRAY3(m_nModelIndexOverrides), SendPropInt( SENDINFO_ARRAY(m_nModelIndexOverrides), SP_MODEL_INDEX_BITS, 0 ) ),
 #endif
 
+	// Added for Anarchy Arcade
+#ifdef GLOWS_ENABLE
+	SendPropBool(SENDINFO(m_bGlowEnabled)),
+#endif // GLOWS_ENABLE
+	// End added for Anarchy Arcade
+
 END_SEND_TABLE()
 
 
@@ -415,6 +422,18 @@ CBaseEntity::CBaseEntity( bool bServerOnly )
 #ifndef _XBOX
 	AddEFlags( EFL_USE_PARTITION_WHEN_NOT_SOLID );
 #endif
+
+	// Added for Anarchy Arcade
+#ifdef GLOWS_ENABLE
+	m_bGlowEnabled.Set(false);
+	m_iOldTransmitState = -1;
+#endif // GLOWS_ENABLE
+
+#ifndef CLIENT_DLL
+	m_bIsHotlink = false;
+	m_pDamagePhysicsConVar = NULL;
+#endif
+	// End added for Anarchy Arcade
 }
 
 //-----------------------------------------------------------------------------
@@ -1123,7 +1142,7 @@ void CBaseEntity::TransformStepData_WorldToParent( CBaseEntity *pParent )
 //			from the parent entity and will then follow the parent entity.
 // Input  : pParentEntity - This entity's new parent in the movement hierarchy.
 //-----------------------------------------------------------------------------
-void CBaseEntity::SetParent( CBaseEntity *pParentEntity, int iAttachment )
+void CBaseEntity::SetParent(CBaseEntity *pParentEntity, int iAttachment, bool useLocalSpace)	// Added for Anarchy Arcade
 {
 	// If they didn't specify an attachment, use our current
 	if ( iAttachment == -1 )
@@ -1185,7 +1204,7 @@ void CBaseEntity::SetParent( CBaseEntity *pParentEntity, int iAttachment )
 		EntityMatrix matrix, childMatrix;
 		matrix.InitFromEntity( const_cast<CBaseEntity *>(pParentEntity), m_iParentAttachment ); // parent->world
 		childMatrix.InitFromEntityLocal( this ); // child->world
-		Vector localOrigin = matrix.WorldToLocal( GetLocalOrigin() );
+		Vector localOrigin = (useLocalSpace) ? matrix.WorldToLocal(GetLocalOrigin()) : GetLocalOrigin();
 		
 		// I have the axes of local space in world space. (childMatrix)
 		// I want to compute those world space axes in the parent's local space
@@ -1194,8 +1213,11 @@ void CBaseEntity::SetParent( CBaseEntity *pParentEntity, int iAttachment )
 		VMatrix tmp = matrix.Transpose(); // world->parent
 		tmp.MatrixMul( childMatrix, matrix ); // child->parent
 		QAngle angles;
-		MatrixToAngles( matrix, angles );
-		SetLocalAngles( angles );
+		if (useLocalSpace)
+		{
+			MatrixToAngles(matrix, angles);
+			SetLocalAngles(angles);
+		}
 		UTIL_SetOrigin( this, localOrigin );
 
 		// Move our step data into the correct space
@@ -1373,11 +1395,14 @@ int CBaseEntity::TakeHealth( float flHealth, int bitsDamageType )
 
 // inflict damage on this entity.  bitsDamageType indicates type of damage inflicted, ie: DMG_CRUSH
 
+ConVar no_entity_dmg("no_entity_dmg", "0", FCVAR_ARCHIVE, "Set to 1 to disable entity dmg, for debug purposes.");
 int CBaseEntity::OnTakeDamage( const CTakeDamageInfo &info )
 {
 	Vector			vecTemp;
-
-	if ( !edict() || !m_takedamage )
+	
+	//if ( !edict() || !m_takedamage )	// Added for Anarchy Arcade
+	//DevMsg("Server time: %f\n", engine->GetServerTime());	// Added for Anarchy Arcade
+	if (no_entity_dmg.GetBool() || !edict() || !m_takedamage)	// Added for Anarchy Arcade
 		return 0;
 
 	if ( info.GetInflictor() )
@@ -1472,6 +1497,19 @@ int CBaseEntity::TakeDamage( const CTakeDamageInfo &inputInfo )
 			}
 		}
 	}
+
+	// Added for Anarchy Arcade
+#ifndef CLIENT_DLL
+	if (this->IsHotlink() && this->GetMoveType() == MOVETYPE_NONE )
+	{
+		if (!m_pDamagePhysicsConVar)
+			m_pDamagePhysicsConVar = cvar->FindVar("damage_physics");
+
+		if (m_pDamagePhysicsConVar->GetBool())
+			engine->ServerCommand(UTIL_VarArgs("togglephysics %i\n", this->entindex()));
+	}
+#endif
+	// End Added for Anarchy Arcade
 
 	// Make sure our damage filter allows the damage.
 	if ( !PassesDamageFilter( inputInfo ))
@@ -1611,6 +1649,15 @@ int CBaseEntity::VPhysicsTakeDamage( const CTakeDamageInfo &info )
 	// Character killed (only fired once)
 void CBaseEntity::Event_Killed( const CTakeDamageInfo &info )
 {
+	// Added for Anarchy Arcade
+	//CPropShortcutEntity* pShortcut = dynamic_cast<CPropShortcutEntity*>(this);
+	//if (pShortcut)
+	//	return;
+	
+	if(!info.GetInflictor() && !info.GetAttacker())
+		return;
+	// End added for Anarchy Arcade
+
 	if( info.GetAttacker() )
 	{
 		info.GetAttacker()->Event_KilledOther(this, info);
@@ -4923,7 +4970,7 @@ int CBaseEntity::PrecacheModel( const char *name, bool bPreload )
 	{
 		if ( !engine->IsModelPrecached( name ) )
 		{
-			DevMsg( "Late precache of %s -- not necessarily a bug now that we allow ~everything to be dynamically loaded.\n", name );
+			//DevMsg( "Late precache of %s -- not necessarily a bug now that we allow ~everything to be dynamically loaded.\n", name );	// Added for Anarchy Arcade
 		}
 	}
 #if defined( WATCHACCESS )
@@ -7298,6 +7345,41 @@ void CBaseEntity::SetCollisionBoundsFromModel()
 	}
 }
 
+// Added for Anarchy Arcade
+#ifdef GLOWS_ENABLE
+//-----------------------------------------------------------------------------
+// Purpose: 
+//-----------------------------------------------------------------------------
+void CBaseEntity::AddGlowEffect(void)
+{
+	m_iOldTransmitState = GetTransmitState();
+	SetTransmitState(FL_EDICT_ALWAYS);
+	m_bGlowEnabled.Set(true);
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: 
+//-----------------------------------------------------------------------------
+void CBaseEntity::RemoveGlowEffect(void)
+{
+	if (m_iOldTransmitState != -1)
+	{
+		SetTransmitState(m_iOldTransmitState);
+		m_iOldTransmitState = -1;
+	}
+
+	m_bGlowEnabled.Set(false);
+}
+
+//-----------------------------------------------------------------------------
+// Purpose: 
+//-----------------------------------------------------------------------------
+bool CBaseEntity::IsGlowEffectActive(void)
+{
+	return m_bGlowEnabled;
+}
+#endif // GLOWS_ENABLE
+// End added for Anarchy Arcade
 
 //------------------------------------------------------------------------------
 // Purpose: Create an NPC of the given type

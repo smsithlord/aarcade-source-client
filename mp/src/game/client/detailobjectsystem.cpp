@@ -2436,6 +2436,7 @@ void CDetailObjectSystem::RenderTranslucentDetailObjects( const Vector &viewOrig
 			int nQuadsInModel = model.QuadsToDraw();
 
 			// Prevent the batches from getting too large
+			/* Added for Anarchy Arcade
 			if ( nQuadsDrawn + nQuadsInModel > nQuadsToDraw )
 			{
 				meshBuilder.End();
@@ -2451,6 +2452,7 @@ void CDetailObjectSystem::RenderTranslucentDetailObjects( const Vector &viewOrig
 				meshBuilder.Begin( pMesh, MATERIAL_QUADS, nQuadsToDraw );
 				nQuadsDrawn = 0;
 			}
+			*/
 
 			model.DrawSprite( meshBuilder );
 

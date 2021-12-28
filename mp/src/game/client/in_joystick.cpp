@@ -38,6 +38,7 @@
 #ifdef HL2_CLIENT_DLL
 // FIXME: Autoaim support needs to be moved from HL2_DLL to the client dll, so this include should be c_baseplayer.h
 #include "c_basehlplayer.h"
+#include "aarcade/client/c_anarchymanager.h"// Added for Anarchy Arcade
 #endif
 
 // memdbgon must be the last include file in a .cpp file!!!
@@ -688,7 +689,7 @@ void CInput::JoyStickMove( float frametime, CUserCmd *cmd )
 	}
 
 	// Verify that a joystick is available
-	if ( !haveJoysticks )
+	if ((!g_pAnarchyManager->IsVRActive() || !g_pAnarchyManager->IsHandTrackingActive()) && !haveJoysticks)
 		return; 
 
 	if ( m_flRemainingJoystickSampleTime <= 0 )
@@ -761,6 +762,15 @@ void CInput::JoyStickMove( float frametime, CUserCmd *cmd )
 	m_flPreviousJoystickSide	= ScaleAxisValue( gameAxes[GAME_AXIS_SIDE].value, MAX_BUTTONSAMPLE * joy_sidethreshold.GetFloat()  );
 	m_flPreviousJoystickPitch	= ScaleAxisValue( gameAxes[GAME_AXIS_PITCH].value, MAX_BUTTONSAMPLE * joy_pitchthreshold.GetFloat()  );
 	m_flPreviousJoystickYaw		= ScaleAxisValue( gameAxes[GAME_AXIS_YAW].value, MAX_BUTTONSAMPLE * joy_yawthreshold.GetFloat()  );
+
+	// Added for Anarchy Arcade
+#ifdef HL2_CLIENT_DLL
+	if (g_pAnarchyManager->IsVRActive() && g_pAnarchyManager->IsHandTrackingActive())
+		g_pAnarchyManager->VRMutateGamepadInput(&m_flPreviousJoystickForward, &m_flPreviousJoystickSide, &m_flPreviousJoystickPitch, &m_flPreviousJoystickYaw);
+	else
+		g_pAnarchyManager->UpdateGamepadAxisInput(m_flPreviousJoystickForward, m_flPreviousJoystickSide, m_flPreviousJoystickPitch, m_flPreviousJoystickYaw);
+#endif
+	// End added for Anarchy Arcade
 
 	// Skip out if vgui is active
 	if ( vgui::surface()->IsCursorVisible() )
@@ -911,4 +921,11 @@ void CInput::JoyStickMove( float frametime, CUserCmd *cmd )
 	viewangles[PITCH] = clamp( viewangles[ PITCH ], -cl_pitchup.GetFloat(), cl_pitchdown.GetFloat() );
 
 	engine->SetViewAngles( viewangles );
+
+	// Added for Anarchy Arcade
+#ifdef HL2_CLIENT_DLL
+	if (g_pAnarchyManager->IsVRActive() && g_pAnarchyManager->IsHandTrackingActive())
+		g_pAnarchyManager->VRGamepadInputPostProcess();
+#endif
+	// End Added for Anarchy Arcade
 }

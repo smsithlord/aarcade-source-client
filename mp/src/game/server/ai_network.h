@@ -33,7 +33,7 @@ class CAI_NetworkManager;
 //-----------------------------------------------------------------------------
 
 #define	AI_MAX_NODE_LINKS 30
-#define MAX_NODES 1500
+#define MAX_NODES 2000	// Added for Anarchy Arcade
 
 //-----------------------------------------------------------------------------
 // 

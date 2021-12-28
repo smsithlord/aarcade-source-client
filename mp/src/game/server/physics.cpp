@@ -779,7 +779,7 @@ static void ReportPenetration( CBaseEntity *pEntity, float duration )
 			pEntity->m_debugOverlays |= OVERLAY_ABSBOX_BIT;
 		}
 
-		pEntity->AddTimedOverlay( UTIL_VarArgs("VPhysics Penetration Error (%s)!", pEntity->GetDebugName()), duration );
+		//pEntity->AddTimedOverlay( UTIL_VarArgs("VPhysics Penetration Error (%s)!", pEntity->GetDebugName()), duration );	// Added for Anarchy Arcade
 	}
 }
 

@@ -356,6 +356,9 @@ void MatrixInitialize( matrix3x4_t &mat, const Vector &vecOrigin, const Vector &
 
 void MatrixCopy( const matrix3x4_t& in, matrix3x4_t& out )
 {
+	if (&out == NULL)	// Added for Anarchy Arcade
+		return;
+
 	Assert( s_bMathlibInitialized );
 	memcpy( out.Base(), in.Base(), sizeof( float ) * 3 * 4 );
 }
