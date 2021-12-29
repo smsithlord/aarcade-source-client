@@ -290,6 +290,16 @@ void DumpItem(const CCommand &args)
 }
 ConCommand dump_item("dump_item", DumpItem, "Usage: dump the item for the given item ID to the console");
 
+
+void MyFirstConsoleCommand(const CCommand &args)
+{
+	// Uncomment the DevMsg line below & change its text to make sure your compile worked & is the one being used.
+	// (Don't forget to turn on developer 1 first, if needed.)
+
+	//DevMsg("Hello world!  This is my first console command!\n");
+}
+ConCommand myFirstConsoleCommand("my_first_console_command", MyFirstConsoleCommand, "Usage: used as an example for making sure the C++ solution compiled correctly.  Don't forget to turn on developer 1 first!");
+
 #include <vgui/IInput.h>
 void MouseIdle(const CCommand &args)
 {
