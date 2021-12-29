@@ -1,8 +1,3 @@
-# Credits & Contributions
-
-
-
-
 # Early Access
 AArcade: Source is still in Early Access & actively being developed.  Thank you for considering contributingg to this project!  Please join the AArcade community in the Discord w/ the invite in the ```Join AArcade Community Discord``` section!
 
