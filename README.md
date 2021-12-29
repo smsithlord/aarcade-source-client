@@ -118,9 +118,23 @@ exit 1
 
 ## Run In Visual Studio Debugger
 
-1. Clone the ```aarcade-source-release``` repo to your computer.
-1. Copy the ```windows_content``` folder out of the repo & into the ```mp``` folder of your project, so that the following file exists: ```mp/windows_content/AArcade.exe```
-1. You are now finished with the original ```aarcade-source-release``` repo.
+1. Get Anarchy Arcade on Steam & let it completely download.
+1. Find your ```[...]/steamapps/common/Anarchy Arcade``` folder & copy the following 15 files out of it & into ```mp/windows_content``` in your project folder.
+  - bin
+  - config
+  - frontend
+  - hl2
+  - hl2mp
+  - platform
+  - sdktools
+  - sourcetest
+  - AArcade.exe
+  - arcade_launcher.pak
+  - ingamedialogconfig.vdf
+  - serverbrowser.vdf
+  - stats.txt
+  - steam_appid.txt
+  - thirdpartylegalnotices.txt
 1. Open up the ```games.sln``` solution.
 1. Access the ```Client (HL2MP)``` Configuration Properties: Right-click on ```Client (HL2MP)``` project & go to Properties, then Configuration Properties.
 1. Set the ```Debugging > Command``` value to be **your** absolute path to the AArcade.exe file you just copied into the ```mp/windows_content``` folder.  For example, ```C:\GitHub\aarcade-source-client\mp\windows_content\AArcade.exe```
