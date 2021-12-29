@@ -133,6 +133,13 @@ exit 1
 ## Join AArcade Community Discord
 ### Use this invite to join the AArcade Discord server: https://discord.gg/9FSCDuJ
 
+# License
+Original code & art assets created for AArcade are licensed with the [Mozilla Public License 2.0](https://github.com/mozilla/hubs/blob/master/LICENSE)
+
+Non-original code & art assset used in AArcade are subject to their own licenses.
+
+The Source Engine itself is licensed with the license in the ```Original Source Engine License``` section.
+
 # Original Source Engine License
 ```
                 SOURCE 1 SDK LICENSE
