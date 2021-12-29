@@ -1,3 +1,11 @@
+# Credits & Contributions
+
+
+
+
+# Early Access
+AArcade: Source is still in Early Access & actively being developed.  Thank you for considering contributingg to this project!  Please join the AArcade community in the Discord w/ the invite in the ```Join AArcade Community Discord``` section!
+
 # Getting Started
 
 ## Install Microsoft Visual Studio Community 2013
@@ -186,3 +194,35 @@ copyright notice and the following:
 If you would like to use the SDK for a commercial purpose, please contact Valve at 
 sourceengine@valvesoftware.com.
 ```
+
+# Credits & Contributions
+Thank you to everybody who has contributed to AArcade over the years!  Below is a list of contributions that are part of the repo itself. 
+
+**NOTE** A list of community contributors (people who create tutorials, addons, etc.) will be listed in a different repo.
+
+| Contributor  | Contribution |
+| ------------- |:-------------:|
+| Valve/Steam      | Source SDK Base 2013 (SP) Singleplayer
+||Source SDK Base 2013 (MP) Multiplayer|
+||Steamworks SDK (Workshop, stats, achievements, web browser.)|
+||OpenVR|
+|Awesomium| HTML Rendering |
+|Libretro|Libretro frontend functionality. (ie. ability to load cores.)|
+|PortAudio|Plays audio from Libretro.|
+|HLVR|Modified d3d9.dll that supports VR.
+|GoldenEye: Source|Logic for doors to better support GE: Source maps.|
+|CJ Collard|Created the stock maps sm_primo, sm_acreage, dralloc_gallery.|
+|Zoey Robertson|Provided original tutorial voice acting.|
+|Drew Peterson|Created the original Main Menu music.|
+||Created original real-time pixel resizing logic for render-to-texture of videos.|
+|Chris Sullivan|Beta tested nightly builds of the game leading up to initial release.|
+|Bucky|Created the sm_apartmentsuite map.
+||Contributed various Source engine tweaks to improve performance & compatibility.|
+|Black_Stormy|Created an arcade cabinet bashkit to create derivative cabinet models with.|
+||Created about a dozen cabinets from the bashkit.|
+||Created hub_highrise & contributed various other Double Action assets.|
+|Carlos Andrade|Created the original Anarchy Arcade logo.|
+|OkeDoke|Contributed arcade cabinet models.|
+|Invict|Contributed arcade cabinet models.|
+|TurboSquid|Change Machine 02 (Dive Bar) - PBR Game Ready|
+|Elijah Newman-Gomez|All other coding & design.|
