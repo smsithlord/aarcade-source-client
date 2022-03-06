@@ -211,3 +211,4 @@ mp/src/lib/public/mathlib.lib
 mp/src/lib/public/raytrace.lib
 mp/src/lib/public/tier1.lib
 mp/src/lib/public/vgui_controls.lib
+mp/src/aarcade/client/aa_apikeys.h
