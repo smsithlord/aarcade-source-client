@@ -86,6 +86,14 @@ yadda yadda break text.
 | col 2 is      | centered      |   $12 |
 | zebra stripes | are neat      |    $1 |
 
+break text 2
+
+| Filter        | Existing Items                             |
+| ------------- |:------------------------------------------:|
+| aarcade       | `src/aarcade/client/*`                     |
+| ges           | `src/game/client/ges/c_ge_door_interp.cpp` |
+| hlvr          | `src/game/client/hlvr/vrmanager.cpp`       |
+
 There must be at least 3 dashes separating each header cell.
 The outer pipes (|) are optional, and you don't need to make the 
 raw Markdown line up prettily. You can also use inline Markdown.
