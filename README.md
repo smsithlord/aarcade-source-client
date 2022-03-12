@@ -72,10 +72,8 @@ exit 1
 22) Click ```OK``` to save your changes.
 23) Add the following filters into the hierarchy of the ```Client (HL2MP)``` project:
 
-break text
-
 | Filter        | Existing Items                             |
-| ------------- |:------------------------------------------:|
+| :------------ |:-------------------------------------------|
 | aarcade       | `src/aarcade/client/*`                     |
 | ges           | `src/game/client/ges/c_ge_door_interp.cpp` |
 | hlvr          | `src/game/client/hlvr/vrmanager.cpp`       |
