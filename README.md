@@ -64,18 +64,19 @@ exit 1
 ```
 18) Set ```Build Events > Post-Build Events > Description``` to:
 ```Publishing to ..\..\..\windows_content\frontend\bin\.```
-19) Set ```Debugging > Command``` to the ABSOLUTE PATH to your AArcade.exe, so you must adjust this line:
-```C:\Users\Owner\Documents\GitHub\aarcade-source-client\mp\windows_content\AArcade.exe```
-20) Set ```Command Arguments``` to the following so you can debug w/o mounts nor workshop content:
+19) Copy the contents of a vanilla version of the "Anarchy Arcade" folder from Steam into the ```mp/windows_content``` folder of your project, for debugging purposes.
+20) Set ```Debugging > Command``` to your AArcade.exe in your windows_content folder:
+```$(ProjectDir)../../../windows_content/AArcade.exe```
+21) Set ```Command Arguments``` to the following so you can debug w/o mounts nor workshop content:
 ```-dev -game frontend -w 1920 -h 1080 -sw -noborder +mounts 0 +workshop 0```
-21) Click ```OK``` to save your changes.
-22) Add the following filters into the hierarchy of the ```Client (HL2MP)``` project:
+22) Click ```OK``` to save your changes.
+23) Add the following filters into the hierarchy of the ```Client (HL2MP)``` project:
 | Filter  | Existing Items |
-| --- | ---|
+| --- | ---: |
 | aarcade      | src/aarcade/client/*     |
 | ges      | src/game/client/ges/c_ge_door_interp.cpp     |
 | hlvr      | src/game/client/hlvr/vrmanager.cpp     |
-1. Add the following Existing Item to the root of the Client (HL2MP) hierarchy as well: ```src/openvr/openvr.h```
+24) Add the following Existing Item to the root of the Client (HL2MP) hierarchy as well: ```src/openvr/openvr.h```
 1. Access the ```Server (HL2MP)``` Configuration Properties: Right-click on ```Server (HL2MP)``` project & go to Properties, then Configuration Properties.
 1. Change ```C/C++ > Treat Warnings As Errors``` to ```No (/WX-)```.
 1. Add the following to ```C/C++ > Preprocessor > Preprocessor Definitions```:
