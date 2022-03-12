@@ -8,10 +8,10 @@ AArcade: Source is still in Early Access & actively being developed.  Thank you 
 
 1. Have Steam installed & be logged in.
 1. Download ```Visual Studio Community 2013 with Update 5``` [following the instructions on the wiki](https://developer.valvesoftware.com/wiki/Source_SDK_2013#Step_One:_Installing_Visual_Studio) (requires a Microsoft account). 
-1. Extract the ISO into a folder & run the installer.
-1. Have ```MFC``` checked - all other optional features can be unchecked.
-1. Launch Visual Studio to make sure it works. (You will have to login.)  Then close it after you are sure it works.
-1. Install the ```Multibyte MFC Library``` [from the wiki](https://download.microsoft.com/download/0/2/3/02389126-40A7-46FD-9D83-802454852703/vc_mbcsmfc.exe).
+1) Extract the ISO into a folder & run the installer.
+2) Have ```MFC``` checked - all other optional features can be unchecked.
+3) Launch Visual Studio to make sure it works. (You will have to login.)  Then close it after you are sure it works.
+4) Install the ```Multibyte MFC Library``` [from the wiki](https://download.microsoft.com/download/0/2/3/02389126-40A7-46FD-9D83-802454852703/vc_mbcsmfc.exe).
 
 ## Build AArcade Source Code
 
