@@ -1,18 +1,3 @@
-| Tables        | Are           | Cool  |
-| ------------- |:-------------:| -----:|
-| col 3 is      | right-aligned | $1600 |
-| col 2 is      | centered      |   $12 |
-| zebra stripes | are neat      |    $1 |
-
-There must be at least 3 dashes separating each header cell.
-The outer pipes (|) are optional, and you don't need to make the 
-raw Markdown line up prettily. You can also use inline Markdown.
-
-Markdown | Less | Pretty
---- | --- | ---
-*Still* | `renders` | **nicely**
-1 | 2 | 3
-
 # Early Access
 AArcade: Source is still in Early Access & actively being developed.  Thank you for considering contributingg to this project!  Please join the AArcade community in the Discord w/ the invite in the ```Join AArcade Community Discord``` section!
 
@@ -86,11 +71,12 @@ exit 1
 ```-dev -game frontend -w 1920 -h 1080 -sw -noborder +mounts 0 +workshop 0```
 22) Click ```OK``` to save your changes.
 23) Add the following filters into the hierarchy of the ```Client (HL2MP)``` project:
-| Filter  | Existing Items |
-| --- | ---: |
-| aarcade      | src/aarcade/client/*     |
-| ges      | src/game/client/ges/c_ge_door_interp.cpp     |
-| hlvr      | src/game/client/hlvr/vrmanager.cpp     |
+| Filter        | Existing Items |
+| ------------- |:-------------:|
+| aarcade       | `src/aarcade/client/*`                     |
+| ges           | `src/game/client/ges/c_ge_door_interp.cpp` |
+| hlvr          | `src/game/client/hlvr/vrmanager.cpp`       |
+
 24) Add the following Existing Item to the root of the Client (HL2MP) hierarchy as well: ```src/openvr/openvr.h```
 1. Access the ```Server (HL2MP)``` Configuration Properties: Right-click on ```Server (HL2MP)``` project & go to Properties, then Configuration Properties.
 1. Change ```C/C++ > Treat Warnings As Errors``` to ```No (/WX-)```.
