@@ -77,6 +77,24 @@ exit 1
 | ges           | `src/game/client/ges/c_ge_door_interp.cpp` |
 | hlvr          | `src/game/client/hlvr/vrmanager.cpp`       |
 
+yadda yadda break text.
+
+
+| Tables        | Are           | Cool  |
+| ------------- |:-------------:| -----:|
+| col 3 is      | right-aligned | $1600 |
+| col 2 is      | centered      |   $12 |
+| zebra stripes | are neat      |    $1 |
+
+There must be at least 3 dashes separating each header cell.
+The outer pipes (|) are optional, and you don't need to make the 
+raw Markdown line up prettily. You can also use inline Markdown.
+
+Markdown | Less | Pretty
+--- | --- | ---
+*Still* | `renders` | **nicely**
+1 | 2 | 3
+
 24) Add the following Existing Item to the root of the Client (HL2MP) hierarchy as well: ```src/openvr/openvr.h```
 1. Access the ```Server (HL2MP)``` Configuration Properties: Right-click on ```Server (HL2MP)``` project & go to Properties, then Configuration Properties.
 1. Change ```C/C++ > Treat Warnings As Errors``` to ```No (/WX-)```.
