@@ -6,32 +6,32 @@ AArcade: Source is still in Early Access & actively being developed.  Thank you 
 ## Install Microsoft Visual Studio Community 2013
 **NOTE:** For additional resources on the Source engine, visit the [Valve Developer Wiki](https://developer.valvesoftware.com/wiki/Source_SDK_2013)
 
-1. Have Steam installed & be logged in.
-1. Download ```Visual Studio Community 2013 with Update 5``` [following the instructions on the wiki](https://developer.valvesoftware.com/wiki/Source_SDK_2013#Step_One:_Installing_Visual_Studio) (requires a Microsoft account). 
-1) Extract the ISO into a folder & run the installer.
-2) Have ```MFC``` checked - all other optional features can be unchecked.
-3) Launch Visual Studio to make sure it works. (You will have to login.)  Then close it after you are sure it works.
-4) Install the ```Multibyte MFC Library``` [from the wiki](https://download.microsoft.com/download/0/2/3/02389126-40A7-46FD-9D83-802454852703/vc_mbcsmfc.exe).
+1) Have Steam installed & be logged in.
+2) Download ```Visual Studio Community 2013 with Update 5``` [following the instructions on the wiki](https://developer.valvesoftware.com/wiki/Source_SDK_2013#Step_One:_Installing_Visual_Studio) (requires a Microsoft account). 
+3) Extract the ISO into a folder & run the installer.
+4) Have ```MFC``` checked - all other optional features can be unchecked.
+5) Launch Visual Studio to make sure it works. (You will have to login.)  Then close it after you are sure it works.
+6) Install the ```Multibyte MFC Library``` [from the wiki](https://download.microsoft.com/download/0/2/3/02389126-40A7-46FD-9D83-802454852703/vc_mbcsmfc.exe).
 
 ## Build AArcade Source Code
 
-1. Clone the ```aarcade-source-client``` repo.
-1. Run ```creategameprojects.bat```.
-1. Open ```games.sln```.
-1. Right-click on Solution (the top of the hierarchy) go to Properties, then Configuration Manager button and change the Active solution configuration from ```Debug``` to ```Release```.
-1. Access the ```Client (HL2MP)``` Configuration Properties: Right-click on ```Client (HL2MP)``` project & go to Properties, then Configuration Properties.
-1. Add the following to ```C/C++ > Additional Include Directories``` one at a time:
+7) Clone the ```aarcade-source-client``` repo.
+8) Run ```creategameprojects.bat```.
+9) Open ```games.sln```.
+10) Right-click on Solution (the top of the hierarchy) go to Properties, then Configuration Manager button and change the Active solution configuration from ```Debug``` to ```Release```.
+11) Access the ```Client (HL2MP)``` Configuration Properties: Right-click on ```Client (HL2MP)``` project & go to Properties, then Configuration Properties.
+12) Add the following to ```C/C++ > Additional Include Directories``` one at a time:
 ```
 ..\..\Awesomium\include
 ..\..\portaudio\include
 ..\..
 ```
-1. Change ```C/C++ > Treat Warnings As Errors``` to ```No (/WX-)```.
-1. Add the following to ```C/C++ > Preprocessor > Preprocessor Definitions```:
+13) Change ```C/C++ > Treat Warnings As Errors``` to ```No (/WX-)```.
+14) Add the following to ```C/C++ > Preprocessor > Preprocessor Definitions```:
 ```
 GLOWS_ENABLE=1
 ```
-1. Add the following to ```Linker > Input > Additional Dependencies```:
+15) Add the following to ```Linker > Input > Additional Dependencies```:
 ```
 ..\..\Awesomium\lib\awesomium.lib
 ..\..\portaudio\lib\portaudio_x86.lib
