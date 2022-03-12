@@ -16,8 +16,8 @@ AArcade: Source is still in Early Access & actively being developed.  Thank you 
 ## Build AArcade Source Code
 
 7) Clone the ```aarcade-source-client``` repo.
-1. Run ```creategameprojects.bat```.
-1. Open ```games.sln```.
+- Run ```creategameprojects.bat```.
+- Open ```games.sln```.
 1. Right-click on Solution (the top of the hierarchy) go to Properties, then Configuration Manager button and change the Active solution configuration from ```Debug``` to ```Release```.
 1. Access the ```Client (HL2MP)``` Configuration Properties: Right-click on ```Client (HL2MP)``` project & go to Properties, then Configuration Properties.
 1. Add the following to ```C/C++ > Additional Include Directories``` one at a time:
