@@ -79,13 +79,13 @@ exit 1
 | hlvr          | `src/game/client/hlvr/vrmanager.cpp`       |
 
 24) Add the following Existing Item to the root of the Client (HL2MP) hierarchy as well: ```src/openvr/openvr.h```
-1. Access the ```Server (HL2MP)``` Configuration Properties: Right-click on ```Server (HL2MP)``` project & go to Properties, then Configuration Properties.
-1. Change ```C/C++ > Treat Warnings As Errors``` to ```No (/WX-)```.
-1. Add the following to ```C/C++ > Preprocessor > Preprocessor Definitions```:
+25) Access the ```Server (HL2MP)``` Configuration Properties: Right-click on ```Server (HL2MP)``` project & go to Properties, then Configuration Properties.
+26) Change ```C/C++ > Treat Warnings As Errors``` to ```No (/WX-)```.
+27) Add the following to ```C/C++ > Preprocessor > Preprocessor Definitions```:
 ```
 GLOWS_ENABLE=1
 ```
-1. Set ```Build Events > Pre-Build Events > Command Line``` to:
+28) Set ```Build Events > Pre-Build Events > Command Line``` to:
 ```
 if EXIST ..\..\..\windows_content\frontend\bin\.\$(TargetFileName) for /f "delims=" %%A in ('attrib "..\..\..\windows_content\frontend\bin\.\$(TargetFileName)"') do set valveTmpIsReadOnly="%%A"
 set valveTmpIsReadOnlyLetter=%valveTmpIsReadOnly:~6,1%
@@ -93,7 +93,7 @@ if "%valveTmpIsReadOnlyLetter%"=="R" del /q "$(TargetDir)"$(TargetFileName)
 if exist "..\..\devtools\bin\vpc.exe" "..\..\devtools\bin\vpc.exe" -crc2 "server_hl2mp.vcxproj"
 if ERRORLEVEL 1 exit /b 1
 ```
-1. Set ```Build Events > Post-Build Events > Command Line``` to:
+29) Set ```Build Events > Post-Build Events > Command Line``` to:
 ```
 if not exist "..\..\..\windows_content\frontend\bin\." mkdir "..\..\..\windows_content\frontend\bin\."
 copy "$(TargetDir)$(TargetFileName)" "..\..\..\windows_content\frontend\bin\.\$(TargetFileName)"
@@ -108,21 +108,22 @@ del /q "$(TargetDir)$(TargetFileName)"
 exit 1
 :BuildEventOK
 ```
-1. Set ```Build Events > Post-Build Events > Description``` to: ```Publishing to ..\..\..\windows_content\frontend\bin\.```
-1. Click ```OK``` to save your changes.
-1. Add the following filters into the hierarchy of the ```Server (HL2MP)```
+30) Set ```Build Events > Post-Build Events > Description``` to: ```Publishing to ..\..\..\windows_content\frontend\bin\.```
+31) Click ```OK``` to save your changes.
+32) Add the following filters into the hierarchy of the ```Server (HL2MP)```
+
 | Filter  | Existing Items |
-| ------------- |:-------------:|
+| :------------- |:-------------|
 | aarcade      | src/aarcade/server/*     |
 | ges      | src/game/server/ges/ent/*     |
-1. Compile ```games.sln```.
-1. Success! You win! Next, try ```Run In Visual Studio Debugger```.
-1. **ADVANCED USERS NOTE**: You only need to run ```games.sln```.  Advanced developers may choose to use ```everything.sln``` instead - but you'd have to configure the PREBUILD & POSTBUILD output directories for those projects as well to use ```windows_content/frontend``` instead of their default ```game/mod_hl2mp```.
+33) Compile ```games.sln```.
+34) Success! You win! Next, try ```Run In Visual Studio Debugger```.
+36) **ADVANCED USERS NOTE**: You only need to run ```games.sln```.  Advanced developers may choose to use ```everything.sln``` instead - but you'd have to configure the PREBUILD & POSTBUILD output directories for those projects as well to use ```windows_content/frontend``` instead of their default ```game/mod_hl2mp```.
 
 ## Run In Visual Studio Debugger
 
-1. Get Anarchy Arcade on Steam & let it completely download.
-1. Find your ```[...]/steamapps/common/Anarchy Arcade``` folder & copy the following 15 files out of it & into ```mp/windows_content``` in your project folder.
+37) Get Anarchy Arcade on Steam & let it completely download.
+38) Find your ```[...]/steamapps/common/Anarchy Arcade``` folder & copy the following 15 files out of it & into ```mp/windows_content``` in your project folder.
   - bin
   - config
   - frontend
@@ -138,22 +139,22 @@ exit 1
   - stats.txt
   - steam_appid.txt
   - thirdpartylegalnotices.txt
-1. Open up the ```games.sln``` solution.
-1. Access the ```Client (HL2MP)``` Configuration Properties: Right-click on ```Client (HL2MP)``` project & go to Properties, then Configuration Properties.
-1. Set the ```Debugging > Command``` value to be **your** absolute path to the AArcade.exe file you just copied into the ```mp/windows_content``` folder.  For example, ```C:\GitHub\aarcade-source-client\mp\windows_content\AArcade.exe```
-1. Set the ```Debugging > Command Arguments``` value to the following:```-dev -game frontend -w 1920 -h 1080 -noborder -sw +mounts 0 +workshop 0```
-1. You are now ready to try compiling & testing AArcade in the Visual Studio Debugger by pressing the F5 button.  But it is suggested you follow the ```Create Your First Console Command``` steps below to be sure that everything is working properly.
+39) Open up the ```games.sln``` solution.
+40). Access the ```Client (HL2MP)``` Configuration Properties: Right-click on ```Client (HL2MP)``` project & go to Properties, then Configuration Properties.
+41) Set the ```Debugging > Command``` value to be **your** absolute path to the AArcade.exe file you just copied into the ```mp/windows_content``` folder.  For example, ```C:\GitHub\aarcade-source-client\mp\windows_content\AArcade.exe```
+42) Set the ```Debugging > Command Arguments``` value to the following:```-dev -game frontend -w 1920 -h 1080 -noborder -sw +mounts 0 +workshop 0```
+43) You are now ready to try compiling & testing AArcade in the Visual Studio Debugger by pressing the F5 button.  But it is suggested you follow the ```Create Your First Console Command``` steps below to be sure that everything is working properly.
 
 ## Create Your First Console Command
 
-1. Open the ```games.sln``` solution.
-1. Open ```console.cpp``` in the ```Client (HL2MP)``` project.
-1. Search the document for ```my_first_console_command```.
-1. Read the comments in the function body.  Uncomment the ```DevMsg``` line, and customize the text with your own.
-1. Save your changes.
-1. Press F5 to build & launch AArcade in the debugger.
-1. When you reach the ```Main Menu```, bring up the console with the ```~``` key, and type in the command ```developer 1``` followed by ```my_first_console_command```.
-1. Success!  You will see the your custom text printed into the console.
+44) Open the ```games.sln``` solution.
+45) Open ```console.cpp``` in the ```Client (HL2MP)``` project.
+46) Search the document for ```my_first_console_command```.
+47) Read the comments in the function body.  Uncomment the ```DevMsg``` line, and customize the text with your own.
+48) Save your changes.
+49) Press F5 to build & launch AArcade in the debugger.
+50) When you reach the ```Main Menu```, bring up the console with the ```~``` key, and type in the command ```developer 1``` followed by ```my_first_console_command```.
+51) Success!  You will see the your custom text printed into the console.
 
 ## Join AArcade Community Discord
 ### Use this invite to join the AArcade Discord server: https://discord.gg/9FSCDuJ
