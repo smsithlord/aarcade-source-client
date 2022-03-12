@@ -16,22 +16,22 @@ AArcade: Source is still in Early Access & actively being developed.  Thank you 
 ## Build AArcade Source Code
 
 7) Clone the ```aarcade-source-client``` repo.
-- Run ```creategameprojects.bat```.
-- Open ```games.sln```.
-1. Right-click on Solution (the top of the hierarchy) go to Properties, then Configuration Manager button and change the Active solution configuration from ```Debug``` to ```Release```.
-1. Access the ```Client (HL2MP)``` Configuration Properties: Right-click on ```Client (HL2MP)``` project & go to Properties, then Configuration Properties.
-1. Add the following to ```C/C++ > Additional Include Directories``` one at a time:
+8) Run ```creategameprojects.bat```.
+9) Open ```games.sln```.
+10) Right-click on Solution (the top of the hierarchy) go to Properties, then Configuration Manager button and change the Active solution configuration from ```Debug``` to ```Release```.
+11) Access the ```Client (HL2MP)``` Configuration Properties: Right-click on ```Client (HL2MP)``` project & go to Properties, then Configuration Properties.
+12) Add the following to ```C/C++ > Additional Include Directories``` one at a time:
 ```
 ..\..\Awesomium\include
 ..\..\portaudio\include
 ..\..
 ```
-1. Change ```C/C++ > Treat Warnings As Errors``` to ```No (/WX-)```.
-1. Add the following to ```C/C++ > Preprocessor > Preprocessor Definitions```:
+13) Change ```C/C++ > Treat Warnings As Errors``` to ```No (/WX-)```.
+14) Add the following to ```C/C++ > Preprocessor > Preprocessor Definitions```:
 ```
 GLOWS_ENABLE=1
 ```
-1. Add the following to ```Linker > Input > Additional Dependencies```:
+15) Add the following to ```Linker > Input > Additional Dependencies```:
 ```
 ..\..\Awesomium\lib\awesomium.lib
 ..\..\portaudio\lib\portaudio_x86.lib
@@ -39,7 +39,7 @@ GLOWS_ENABLE=1
 ..\..\openvr\lib\openvr_api.lib
 ..\..\game\client\hlvr\d3d9.lib
 ```
-1. Set ```Build Events > Pre-Build Events > Command Line``` to:
+16) Set ```Build Events > Pre-Build Events > Command Line``` to:
 ```
 if EXIST ..\..\..\windows_content\frontend\bin\.\$(TargetFileName) for /f "delims=" %%A in ('attrib "..\..\..\windows_content\frontend\bin\.\$(TargetFileName)"') do set valveTmpIsReadOnly="%%A"
 set valveTmpIsReadOnlyLetter=%valveTmpIsReadOnly:~6,1%
@@ -47,7 +47,7 @@ if "%valveTmpIsReadOnlyLetter%"=="R" del /q "$(TargetDir)"$(TargetFileName)
 if exist "..\..\devtools\bin\vpc.exe" "..\..\devtools\bin\vpc.exe" -crc2 "client_hl2mp.vcxproj"
 if ERRORLEVEL 1 exit /b 1
 ```
-1. Set ```Build Events > Post-Build Events > Command Line``` to:
+17) Set ```Build Events > Post-Build Events > Command Line``` to:
 ```
 if not exist "..\..\..\windows_content\frontend\bin\." mkdir "..\..\..\windows_content\frontend\bin\."
 copy "$(TargetDir)$(TargetFileName)" "..\..\..\windows_content\frontend\bin\.\$(TargetFileName)"
@@ -62,11 +62,16 @@ del /q "$(TargetDir)$(TargetFileName)"
 exit 1
 :BuildEventOK
 ```
-1. Set ```Build Events > Post-Build Events > Description``` to: ```Publishing to ..\..\..\windows_content\frontend\bin\.```
-1. Click ```OK``` to save your changes.
-1. Add the following filters into the hierarchy of the ```Client (HL2MP)``` project:
+18) Set ```Build Events > Post-Build Events > Description``` to:
+```Publishing to ..\..\..\windows_content\frontend\bin\.```
+19) Set ```Debugging > Command``` to the ABSOLUTE PATH to your AArcade.exe, so you must adjust this line:
+```C:\Users\Owner\Documents\GitHub\aarcade-source-client\mp\windows_content\AArcade.exe```
+20) Set ```Command Arguments``` to the following so you can debug w/o mounts nor workshop content:
+```-dev -game frontend -w 1920 -h 1080 -sw -noborder +mounts 0 +workshop 0```
+21) Click ```OK``` to save your changes.
+22) Add the following filters into the hierarchy of the ```Client (HL2MP)``` project:
 | Filter  | Existing Items |
-| ------------- |:-------------:|
+| --- | ---|
 | aarcade      | src/aarcade/client/*     |
 | ges      | src/game/client/ges/c_ge_door_interp.cpp     |
 | hlvr      | src/game/client/hlvr/vrmanager.cpp     |
