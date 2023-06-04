@@ -28,6 +28,7 @@ public:
 	bool Deselect() { return false; }
 	C_EmbeddedInstance* GetParentSelectedEmbeddedInstance() { return null; }
 	void Update() {};
+	void TakeScreenshot();
 	void Close();
 	std::string GetURL() { return ""; }
 

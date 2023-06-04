@@ -352,7 +352,7 @@ public:
 
 	void SyncToUser(std::string objectId, std::string oldObjectId, user_t* pUser);
 
-	void UserSessionUpdated(int iUpdateMask, std::string userId, std::string sessionId, std::string displayName, std::string itemId, std::string objectId, std::string say, std::string bodyOrigin, std::string bodyAngles, std::string headOrigin, std::string headAngles, std::string mouseX, std::string mouseY, std::string webUrl, std::string avatarUrl, std::string state, std::string launched, std::string twitchChannel, std::string twitchLive);
+	void UserSessionUpdated(int iUpdateMask, std::string userId, std::string sessionId, std::string displayName, std::string itemId, std::string objectId, std::string say, std::string bodyOrigin, std::string bodyAngles, std::string headOrigin, std::string headAngles, std::string mouseX, std::string mouseY, std::string webUrl, std::string avatarUrl_in, std::string state, std::string launched, std::string twitchChannel, std::string twitchLive);
 	object_update_t* FindPendingObjectUpdate(std::string objectId);
 	user_update_t* FindPendingUserUpdate(std::string userId);
 	bool ProcessObjectUpdate(object_update_t* pObjectUpdate);

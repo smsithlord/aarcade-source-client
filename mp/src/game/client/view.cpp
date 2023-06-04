@@ -1431,6 +1431,40 @@ void CViewRender::Render( vrect_t *rect )
 			////m_View.m_ViewToProjection = originalProjectionMatrix;
 			m_View.m_bViewToProjectionOverride = false;
 		}
+		else if (pPlayer && eEye == STEREO_EYE_MONO && !g_pAnarchyManager->IsVRActive() && g_pAnarchyManager->GetFixedCameraSpectateMode() )
+		{
+			KeyValues* pScreenshotKV = g_pAnarchyManager->GetBestNonVRSpectatorCameraObject();//C_PropShortcutEntity
+			if (pScreenshotKV)
+			{
+				//Vector playerOrigin = C_BasePlayer::GetLocalPlayer()->GetAbsOrigin();
+				Vector testOrigin;
+				QAngle testAngle;
+				UTIL_StringToVector(testOrigin.Base(), pScreenshotKV->GetString("camera/position", "0 0 0"));
+				UTIL_StringToVector(testAngle.Base(), pScreenshotKV->GetString("camera/rotation", "0 0 0"));
+
+				//pShortcut->GetVectors(&shortcutForward, &shortcutRight, &shortcutUp);
+				//playerOrigin.z = shortcutOrigin.z;
+				Vector playerPos = pPlayer->GetAbsOrigin();
+				float fPlayerHeight = 60.0f;
+				playerPos.z += fPlayerHeight;
+				Vector vView = playerPos - testOrigin;
+				VectorAngles(vView, Vector(0, 0, 1), testAngle);
+
+				m_View.origin = testOrigin;
+				m_View.angles = testAngle;
+				m_View.m_bViewToProjectionOverride = false;
+			}
+		}
+		/*else if (pPlayer && eEye == STEREO_EYE_MONO && !g_pAnarchyManager->IsVRActive() && g_pAnarchyManager->SpectatorMode() == 1)
+		{
+			Vector spectatorOrigin;
+			QAngle spectatorAngles;
+			if (g_pAnarchyManager->GetBestSpectatorCameraScreenshot(spectatorOrigin, spectatorAngles)) {
+			{
+				m_View.origin = spectatorOrigin;
+				m_View.angles = spectatorAngles;
+			}
+		}*/
 
 
 		/*
@@ -1579,7 +1613,7 @@ void CViewRender::Render( vrect_t *rect )
 			}
 			else
 			{
-				view.m_flAspectRatio = view.width / view.height;// 1.777778 * 0.5;
+				view.m_flAspectRatio = (view.height != 0 ) ? view.width / view.height : 1.777778 * 0.5;//1.777778 * 0.5
 				view.m_nUnscaledWidth = view.width;
 				view.m_nUnscaledHeight = view.height;
 				view.m_nUnscaledX = view.x;

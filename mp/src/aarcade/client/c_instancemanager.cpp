@@ -627,6 +627,36 @@ std::string C_InstanceManager::GetObjectWithFile(std::string file)
 	return objectId;
 }
 
+std::string C_InstanceManager::GetObjectWithModelId(std::string modelId, bool bOnlySpawned)
+{
+	auto it = m_objects.begin();
+	while (it != m_objects.end())
+	{
+		if ((!bOnlySpawned || it->second->spawned) && it->second->modelId == modelId)
+		{
+			return it->second->objectId;
+		}
+		it++;
+	}
+
+	return "";
+}
+
+std::string C_InstanceManager::GetObjectWithItemId(std::string itemId, bool bOnlySpawned)
+{
+	auto it = m_objects.begin();
+	while (it != m_objects.end())
+	{
+		if ((!bOnlySpawned || it->second->spawned) && it->second->itemId == itemId)
+		{
+			return it->second->objectId;
+		}
+		it++;
+	}
+
+	return "";
+}
+
 std::string C_InstanceManager::CreateBlankInstance(int iLegacy, KeyValues* pInstanceKV, std::string instanceId, std::string mapId, std::string title, std::string file, std::string workshopIds, std::string mountIds, std::string style, C_Backpack* pBackpack)
 {
 	// DO WORK
@@ -2353,7 +2383,7 @@ void C_InstanceManager::RemoveInstance(instance_t* pInstance)
 void C_InstanceManager::SelectNext(C_PropShortcutEntity* pSelectedEntity, C_PropShortcutEntity* pOriginalEntity)
 {
 	//g_pAnarchyManager->ClearAttractMode();
-	if (cvar->FindVar("attract_mode_active")->GetBool())
+	if (cvar->FindVar("attract_mode_active")->GetBool() || cvar->FindVar("camcut_attract_mode_active")->GetBool())
 		return;
 
 	//* pOriginalObject = m_pInstanceManager->GetObjectEntity(pOriginalEntity->GetObjectId());
@@ -2436,7 +2466,7 @@ void C_InstanceManager::SelectNext(C_PropShortcutEntity* pSelectedEntity, C_Prop
 void C_InstanceManager::SelectPrev(C_PropShortcutEntity* pSelectedEntity, C_PropShortcutEntity* pOriginalEntity)
 {
 	//g_pAnarchyManager->ClearAttractMode();
-	if (cvar->FindVar("attract_mode_active")->GetBool())
+	if (cvar->FindVar("attract_mode_active")->GetBool() || cvar->FindVar("camcut_attract_mode_active")->GetBool())
 		return;
 
 	//* pOriginalObject = m_pInstanceManager->GetObjectEntity(pOriginalEntity->GetObjectId());

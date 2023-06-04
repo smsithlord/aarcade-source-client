@@ -3468,6 +3468,11 @@ void JSHandler::OnMethodCall(WebView* caller, unsigned int remote_object_id, con
 
 		g_pAnarchyManager->SteamTalker(text, voice, flPitch, flRate, flVolume);
 	}
+	//else if (methodName == "convertAndPaint")
+	//{
+	//	std::string fileLocation = (args.size() - iArgOffset > 0) ? Awesomium::ToString(args[iArgOffset + 0].ToString()) : "";
+	//	g_pAnarchyManager->ConvertAndPaint(fileLocation);
+	//}
 	//else if (methodName == "playNearestGIF")
 	//{
 	//	g_pAnarchyManager->GetInstanceManager()->PlayNearestGIF();
@@ -10052,6 +10057,20 @@ JSValue JSHandler::OnMethodCallWithReturnValue(WebView* caller, unsigned int rem
 
 		return response;
 
+	}
+	else if (methodName == "getObjectWithModelId")
+	{
+		std::string modelId = Awesomium::ToString(args[iArgOffset + 0].ToString());
+		bool bOnlySpawned = args[iArgOffset + 1].ToBoolean();
+		std::string objectId = g_pAnarchyManager->GetInstanceManager()->GetObjectWithModelId(modelId, bOnlySpawned);
+		return WSLit(objectId.c_str());
+	}
+	else if (methodName == "getObjectWithItemId")
+	{
+		std::string itemId = Awesomium::ToString(args[iArgOffset + 0].ToString());
+		bool bOnlySpawned = args[iArgOffset + 1].ToBoolean();
+		std::string objectId = g_pAnarchyManager->GetInstanceManager()->GetObjectWithItemId(itemId, bOnlySpawned);
+		return WSLit(objectId.c_str());
 	}
 	/*else if (methodName == "setSpawningObjectModelBodyGroupState")
 	{

@@ -6,10 +6,15 @@
 #include "c_anarchymanager.h"
 
 #include "../../../game/client/cdll_client_int.h"
+#include "cliententitylist.h"
 
 #include "c_openglmanager.h"
 #include "filesystem.h"
+#include "c_aitests.h"
 #include <algorithm>
+
+#include "view.h"
+//#include "../../public/view_shared.h"
 
 #include "../client/hlvr/proxydll.h"
 #include "client_virtualreality.h"//"iclientvirtualreality.h"
@@ -39,9 +44,14 @@ ConVar vrspectator("vrspectator", "0", FCVAR_ARCHIVE);
 ConVar vrspectatormirror("vrspectatormirror", "1", FCVAR_ARCHIVE);
 ConVar vrhmdrender("vrhmdrender", "1", FCVAR_NONE);
 
+ConVar spectator("spectator", "0", FCVAR_NONE);
+ConVar fixed_camera_min_dist("fixed_camera_min_dist", "32.0", FCVAR_NONE, "Minimum distance the player can be standing next to the fixed camera position before it's considered an invalid position.");
+ConVar fixed_camera_max_dist("fixed_camera_max_dist", "500.0", FCVAR_NONE, "Maximum distance the player can be from a screenshot for it to be considered as a fixed camera position.");
+
 ConVar screenshot_multiverse("screenshot_multiverse", "0", FCVAR_ARCHIVE);
 
 ConVar nodraw_shortcuts("nodraw_shortcuts", "0", FCVAR_NONE, "When enabled, shortcuts will not be rendered.  Useful for taking screenshots.");
+ConVar fixed_camera_spectate_mode("fixed_camera_spectate_mode", "0", FCVAR_NONE, "Set to 1 to use screenshots in the map as 3rd person fixed camera positions.");
 
 ConVar allowmultipleactive("allow_multiple_active", "0", FCVAR_ARCHIVE, "When enabled, multiple objects will be allowed to be considered ACTIVE at the same time - playing their animation & dynanmic effects.");
 
@@ -53,7 +63,8 @@ ConVar video_chroma_a2("video_chroma_a2", "0.7", FCVAR_NONE, "A2 float value. Ra
 ConVar autobuildsoundcache("autobuildsoundcache", "1", FCVAR_ARCHIVE, "Disable this to decrease startup times.  The only side-effect is that maps with custom sounds might not play their audio.");
 ConVar alwaysrefreshsnapshots("always_refresh_snapshots", "0", FCVAR_ARCHIVE, "When you deselect an item that has no explicit screen image, a snapshot of the last rendered frame is saved for the screen. This only happens once, unless you set this convar to 1 - then it'll always happen.");
 
-ConVar always_animating_images("always_animating_images", "1", FCVAR_ARCHIVE, "Enable this to allow images marked as Animated Always to work.");
+ConVar always_animating_images("always_animating_images", "1", FCVAR_ARCHIVE, "Enable this to allow images marked as Always Anaimated to work.");
+ConVar always_animate_mp4s("always_animate_mp4s", "1", FCVAR_ARCHIVE, "Enable this to allow MP4s to be animated along with GIFs as Always Animated Images.");
 
 // Action Bar Slots
 ConVar abslot0("abslot0", "", FCVAR_ARCHIVE);
@@ -67,6 +78,22 @@ ConVar abslot7("abslot7", "", FCVAR_ARCHIVE);
 ConVar abslot8("abslot8", "", FCVAR_ARCHIVE);
 ConVar abslot9("abslot9", "", FCVAR_ARCHIVE);
 
+// Camera Cut Slots
+ConVar camslot0("camslot0", "", FCVAR_ARCHIVE);
+ConVar camslot1("camslot1", "", FCVAR_ARCHIVE);
+ConVar camslot2("camslot2", "", FCVAR_ARCHIVE);
+ConVar camslot3("camslot3", "", FCVAR_ARCHIVE);
+ConVar camslot4("camslot4", "", FCVAR_ARCHIVE);
+ConVar camslot5("camslot5", "", FCVAR_ARCHIVE);
+ConVar camslot6("camslot6", "", FCVAR_ARCHIVE);
+ConVar camslot7("camslot7", "", FCVAR_ARCHIVE);
+ConVar camslot8("camslot8", "", FCVAR_ARCHIVE);
+ConVar camslot9("camslot9", "", FCVAR_ARCHIVE);
+ConVar camcuttype("camcuttype", "0", FCVAR_ARCHIVE);
+
+ConVar atlas_width("atlas_width", "1280", FCVAR_NONE, "The resolution to use on the always animating texture atlas. Must re-fresh the atlas web tab to take effect.");
+ConVar atlas_height("atlas_height", "720", FCVAR_NONE, "The resolution to use on the always animating texture atlas. Must re-fresh the atlas web tab to take effect.");
+
 ConVar view_overlay("view_overlay", "", FCVAR_NONE, "Internal.  Keeps track of what material is being used on the screen overlay.");
 
 ConVar useglobalrotation("use_global_rotation", "0", FCVAR_ARCHIVE, "When set to 1, the orientation of objects you are placing will take the transform menu's values literally.");
@@ -79,6 +106,8 @@ ConVar skip_objects("skip_objects", "", FCVAR_ARCHIVE, "Comma-separated list of 
 ConVar node_model("node_model", "", FCVAR_ARCHIVE, "Override the default model used for nodes origin points.  Leave blank for default.");
 
 ConVar painted_skyname("painted_skyname", "", FCVAR_HIDDEN, "Internal.  Used to remember the name of a painted sky.");
+
+ConVar temppinnedcamindex("temppinnedcamindex", "-1", FCVAR_HIDDEN, "Internal. Used to keep track of when the 3rd person camera pin command is active.");
 
 ConVar default_engine_no_focus_sleep("default_engine_no_focus_sleep", "0", FCVAR_ARCHIVE);
 ConVar auto_load_map("auto_load_map", "1", FCVAR_ARCHIVE);
@@ -143,6 +172,7 @@ ConVar pause_mode("pause_mode", "0", FCVAR_ARCHIVE, "When enabled, AArcade will 
 ConVar old_auto_save("old_auto_save", "1", FCVAR_HIDDEN);
 
 ConVar attract_mode_active("attract_mode_active", "0", FCVAR_HIDDEN);
+ConVar camcut_attract_mode_active("camcut_attract_mode_active", "0", FCVAR_HIDDEN);
 ConVar attract_mode_wipe("attract_mode_wipe", "0", FCVAR_ARCHIVE, "Do a before/after wipe when cutting between screenshots in attract mode.");
 
 ConVar modelThumbs("model_thumbs_enabled", "1", FCVAR_ARCHIVE);
@@ -433,6 +463,80 @@ void SetActiveSpawnedShadows(const CCommand &args)
 }
 ConCommand setactivespawnedshadows("set_active_spawned_shadows", SetActiveSpawnedShadows, "Usage: Bool.  Enable/disable shadows on spawned objects that are already loaded.", FCVAR_NONE);
 */
+
+
+void DestroyAllPets(const CCommand &args)
+{
+	g_pAnarchyManager->DestroyAllPets();
+}
+ConCommand destroy_all_pets("destroy_all_pets", DestroyAllPets, "Usage: Destroy all pets that are live in the current world.");
+
+void PetTarget(const CCommand &args)
+{
+	g_pAnarchyManager->TogglePetTargetPos(g_pAnarchyManager->GetSelectorTraceVector());
+}
+ConCommand pet_target("pet_target", PetTarget, "Usage: Tell pets to go somewhere. Use a 2nd time to return to follow-me mode.");
+
+void PetCreated(const CCommand &args)
+{
+	int iEntIndex = Q_atoi(args[1]);
+	g_pAnarchyManager->PetCreated(iEntIndex);
+}
+ConCommand pet_created("pet_created", PetCreated, "Usage: Internal use only.", FCVAR_HIDDEN);
+
+
+void SpawnPet(const CCommand &args)
+{
+	std::string model = (args.ArgC() > 1) ? args.Arg(1) : "";
+
+	if (model == "")
+	{
+		C_PropShortcutEntity* pShortcut = dynamic_cast<C_PropShortcutEntity*>(g_pAnarchyManager->GetSelectedEntity());
+		if (!pShortcut)
+		{
+			pShortcut = dynamic_cast<C_PropShortcutEntity*>(C_BaseEntity::Instance(g_pAnarchyManager->GetSelectorTraceEntityIndex()));
+		}
+
+		if (pShortcut)
+		{
+			KeyValues* pModelKV = g_pAnarchyManager->GetMetaverseManager()->GetLibraryModel(pShortcut->GetModelId());
+			if (pModelKV) {
+				model = pModelKV->GetString("platforms/-KJvcne3IKMZQTaG7lPo/file");
+			}
+		}
+		if (model == "")
+		{
+			// grab the next nearest object then
+			float flMaxRange = 1000.0f;
+			object_t* pObject = g_pAnarchyManager->GetInstanceManager()->GetNearestObjectToPlayerLook(NULL, flMaxRange);
+			while (pObject)
+			{
+				KeyValues* pModelKV = g_pAnarchyManager->GetMetaverseManager()->GetLibraryModel(pObject->modelId);
+				if (pModelKV) {
+					model = pModelKV->GetString("platforms/-KJvcne3IKMZQTaG7lPo/file");
+					break;
+				}
+			}
+		}
+	}
+	if (model == "")
+	{
+		DevMsg("No model found to use as a pet.\n");
+		return;
+	}
+
+	std::string forward = (args.ArgC() > 2) ? args.Arg(2) : "";
+	std::string idle = (args.ArgC() > 3) ? args.Arg(3) : "";
+	float flScale = (args.ArgC() > 4) ? Q_atof(args.Arg(4)) : 1.0f;
+	std::string rot = (args.ArgC() > 5) ? args.Arg(5) : "";
+	std::string pos = (args.ArgC() > 6) ? args.Arg(6) : "";
+	float flNear = (args.ArgC() > 7) ? Q_atof(args.Arg(7)) : 100.0f;
+	float flFar = (args.ArgC() > 8) ? Q_atof(args.Arg(8)) : 200.0f;
+	float flSpeed = (args.ArgC() > 9) ? Q_atof(args.Arg(9)) : 100.0f;
+
+	g_pAnarchyManager->SpawnPet(model, forward, idle, flScale, rot, pos, flNear, flFar, flSpeed);
+}
+ConCommand spawn_pet("spawn_pet", SpawnPet, "For internal use only, for now.");
 
 void ArcadeHud(const CCommand &args)
 {
@@ -1891,6 +1995,48 @@ void TesterJoint(const CCommand &args)
 	pPathsKV->deleteThis();
 	DevMsg("Saved to gameinfo_paths.txt!\n");
 	*/
+
+/*
+	DevMsg("Hello world.\n");
+	DevMsg("Downloading image...\n");
+	//https://images.igdb.com/igdb/image/upload/t_cover_big/co2kyg.png
+	g_pAnarchyManager->DownloadSingleFile("https://images.igdb.com/igdb/image/upload/t_cover_big/co2kyg.png");
+	//g_pAnarchyManager->DownloadSingleFile("https://m3org.com/");
+	*/
+
+	//g_pAnarchyManager->TestVRStuff();
+
+
+/*
+
+	std::string toolsFolder = g_pAnarchyManager->GetAArcadeToolsFolder();
+	std::string userFolder = g_pAnarchyManager->GetAArcadeUserFolder();
+
+	FileHandle_t launch_file = filesystem->Open("Arcade_Launcher.bat", "w", "EXECUTABLE_PATH");
+	if (launch_file)
+	{
+		std::string executable = VarArgs("%s\\vtf2tga.exe", toolsFolder.c_str());
+		std::string goodExecutable = "\"" + executable + "\"";
+		filesystem->FPrintf(launch_file, "%s:\n", goodExecutable.substr(1, 1).c_str());
+		filesystem->FPrintf(launch_file, "cd \"%s\"\n", goodExecutable.substr(1, goodExecutable.find_last_of("/\\", goodExecutable.find("\"", 1)) - 1).c_str());
+		filesystem->FPrintf(launch_file, "START \"Launching VTEX...\" %s -i \"%s\\cache\\textures\\temp.vtf\" -o \"%s\\cache\\textures\\%s.tga\"", goodExecutable.c_str(), userFolder.c_str(), userFolder.c_str(), textureId.c_str());
+		filesystem->Close(launch_file);
+		system("Arcade_Launcher.bat");
+		return textureId;
+	}
+*/
+
+	std::string matName = args[1];
+	std::string varName = args[2];
+	std::string mdlName = args[3];
+	std::string vtfName = args[4];
+	C_AITests* pAITests = new C_AITests();
+	//pAITests->CloneModelMaterialAndApplyTexture(matName.c_str(), varName.c_str(), mdlName.c_str(), vtfName.c_str());
+	//std::string cloneddynvtfscreen = "models/automats/cloneddynvtfscreen";
+	std::string cloneddynvtfscreen = "models/automats/cloneddynvtfscreen.mdl";
+	//pAITests->CloneModelAndApplyMaterial(mdlName.c_str(), cloneddynvtfscreen.c_str());
+	pAITests->ChangeModelInternalNameAndSave(mdlName.c_str(), cloneddynvtfscreen.c_str(), "automats/cloneddynvtfscreen");
+	delete pAITests;
 }
 ConCommand testerjoint("testerjoint", TesterJoint, "Usage: ");
 
@@ -1899,6 +2045,81 @@ void VROff(const CCommand &args)
 	g_pAnarchyManager->VROff();
 }
 ConCommand vroff("vroff", VROff, "Usage: Forces VR off.  Warning: You can't re-enable VR after this until next time you launch AArcade.");
+
+void TaskScreenshot(const CCommand &args)
+{
+	C_EmbeddedInstance* pInstance = g_pAnarchyManager->GetCanvasManager()->GetDisplayInstance();
+	if (!pInstance) {
+		pInstance = g_pAnarchyManager->GetCanvasManager()->GetFirstInstanceToDisplay();
+	}
+
+	if (!pInstance) {
+		DevMsg("ERROR: You must have a task selected to take a screenshot of it.\n");
+		return;
+	}
+
+	// all systems go
+	pInstance->TakeScreenshot();
+}
+ConCommand taskscreenshot("task_screenshot", TaskScreenshot, "Usage: Saves the last rendered frame of the active embedded task to the aarcade_user/taskshots folder.");	// TODO: Let users choose the folder where task screenshots save to?
+
+void GotTempPinnedCam(const CCommand &args)
+{
+	temppinnedcamindex.SetValue(Q_atoi(args[1]));
+}
+ConCommand gottemppinnedcam("gottemppinnedcam", GotTempPinnedCam, "Usage: Forces VR off.  Warning: You can't re-enable VR after this until next time you launch AArcade.", FCVAR_HIDDEN);
+
+void CameraPinToggle(const CCommand &args)
+{
+	//engine->ClientCmd("gettemppinnedcam");
+	bool bAlreadyExists = (temppinnedcamindex.GetInt() >= 0);
+
+	/*
+	char* val;
+	for (C_BaseEntity *pEnt = ClientEntityList().FirstBaseEntity(); pEnt; pEnt = ClientEntityList().NextBaseEntity(pEnt))
+	{
+		if (pEnt->GetKeyValue("targetname", val, 16)) {
+			if (!Q_strcmp(val, "aatmpcamdrop")) {
+				bAlreadyExists = true;
+				break;
+			}
+		}
+	}*/
+
+	/*
+	C_BaseEntityIterator iterator;
+	C_BaseEntity *pEnt;
+	char* val;
+	while ((pEnt = iterator.Next()) != NULL)
+	{
+		if (pEnt->GetKeyValue("targetname", val, 16)) {
+			if (!Q_strcmp(val, "aatmpcamdrop")) {
+				bAlreadyExists = true;
+				break;
+			}
+		}
+	}
+	*/
+
+	if (bAlreadyExists) {
+		engine->ClientCmd("ent_fire aatmpcamdrop Disable; thirdperson_mayamode; ent_fire aatmpcamdrop KillHierarchy;");
+	}
+	else {
+
+		if (cvar->FindVar("cam_is_thirdperson_mode")->GetBool())
+		{
+			if (cvar->FindVar("cam_is_maya_mode")->GetBool())
+				engine->ClientCmd("ent_create point_viewcontrol targetname aatmpcamdrop spawnflags 9; ent_fire aatmpcamdrop Enable;");//thirdperson; thirdperson_mayamode;
+			else
+				engine->ClientCmd("ent_create point_viewcontrol targetname aatmpcamdrop spawnflags 9; thirdperson_mayamode; ent_fire aatmpcamdrop Enable;");//thirdperson;
+		}
+		else
+		{
+			engine->ClientCmd("thirdperson");
+		}
+	}
+}
+ConCommand camerapintoggle("camera_pin_toggle", CameraPinToggle, "Usage: Toggle the 3rd person camera being pinned in space.");
 
 void VRToggle(const CCommand &args)
 {
@@ -3091,6 +3312,53 @@ void BuildContextDown(const CCommand &args)
 }
 ConCommand buildcontextdown("+remote_control", BuildContextDown, "Open up the library, or shows the edit object menu.", FCVAR_NONE);
 
+/*
+void ReparentShortcutsReady(const CCommand &args)
+{
+	// get a vector of the trigger entities
+	std::string triggerEntityIndexes = args[1];
+	std::vector<C_BaseEntity*> triggerEntities;
+	std::vector<std::string> tokens;
+	g_pAnarchyManager->Tokenize(triggerEntityIndexes, tokens, " ");
+	for (unsigned int i = 0; i < tokens.size(); i++)
+	{
+		triggerEntities.push_back(C_BaseEntity::Instance(Q_atoi(tokens[i].c_str())));
+	}
+
+	// get the parent entity
+	C_BaseEntity* pParentEntity = C_BaseEntity::Instance(Q_atoi(args[2]));
+
+	if (pParentEntity && triggerEntities.size() > 0) {
+		std::vector<C_PropShortcutEntity*> victims;
+		std::map<std::string, object_t*> objects = g_pAnarchyManager->GetInstanceManager()->GetObjectsMap();
+		object_t* pObject;
+		auto it = objects.begin();
+		while (it != objects.end())
+		{
+			pObject = it->second;
+			if (pObject->entityIndex) {
+				for (unsigned int i = 0; i < triggerEntities.size(); i++) {
+					// if it's in ANY of the trigger zones, add it to victims...
+					
+				}
+			}
+
+			it++;
+		}
+
+
+			// loop through every object that is spawned & test if it's current position is inside of the volume. Add to victims list if so (if it's not already on there.)
+
+
+			//g_pAnarchyManager->GetInstanceManager()->GetObjectsMap();
+			//std::find(v.begin(), v.end(), "abc") != v.end()
+		}
+	}
+	// yadda
+}
+ConCommand reparentshortcutsready("reparent_shortcuts_ready", ReparentShortcutsReady, "Interal use only.", FCVAR_HIDDEN);
+*/
+
 void Join(const CCommand &args)
 {
 	std::string lobby;
@@ -3915,3 +4183,403 @@ void NextSequenceReady(const CCommand &args)
 	}
 }
 ConCommand nextsequenceready("nextsequenceready", NextSequenceReady, "Usage: Internal.");
+
+void cam_cut(const CCommand &args)
+{
+	if (args.ArgC() > 1)
+	{
+		int camSlot = Q_atoi(args.Arg(1));
+		std::string position = "0 0 0";
+		std::string rotation = "0 0 0";
+		if (vgui::input()->IsKeyDown(KEY_LALT) || vgui::input()->IsKeyDown(KEY_LCONTROL)) {
+			DevMsg("SET camera %i \n", camSlot);
+			if (args.ArgC() >= 8)
+			{
+				position = std::string(args.Arg(2)) + " " + std::string(args.Arg(3)) + " " + std::string(args.Arg(4));
+				rotation = std::string(args.Arg(5)) + " " + std::string(args.Arg(6)) + " " + std::string(args.Arg(7));
+			}
+			else
+			{
+				Vector origin = C_BasePlayer::GetLocalPlayer()->EyePosition();
+				position = VarArgs("%.10f %.10f %.10f", origin.x, origin.y, origin.z);
+
+				QAngle angles = C_BasePlayer::GetLocalPlayer()->EyeAngles();
+				rotation = VarArgs("%.10f %.10f %.10f", angles.x, angles.y, angles.z);
+			}
+
+			if (position != "" && rotation != "")
+			{
+				// save the info into the slot
+				std::string cmd = VarArgs("camslot%i %s %s", camSlot, position.c_str(), rotation.c_str());
+				engine->ClientCmd(cmd.c_str());
+			}
+		}
+		else {
+			DevMsg("USE camera %i \n", camSlot);
+
+			std::string cvarName = VarArgs("camslot%i", camSlot);
+			std::string inputStr = cvar->FindVar(cvarName.c_str())->GetString();
+
+			// Find the first space
+			size_t firstSpace = inputStr.find(' ');
+
+			if (firstSpace != std::string::npos) {
+				// Find the second space, starting the search from the position of the first space
+				size_t secondSpace = inputStr.find(' ', firstSpace + 1);
+
+				if (secondSpace != std::string::npos) {
+					position = inputStr.substr(0, secondSpace);
+					rotation = inputStr.substr(secondSpace + 1, std::string::npos);
+					//cvar->FindVar("cabinet_attract_mode_active");
+
+					int iTransitionType = cvar->FindVar("camcuttype")->GetInt();
+					if (iTransitionType == 0)
+					{
+						//Vector origin = C_BasePlayer::GetLocalPlayer()->EyePosition();
+						Vector goodPosition;
+						UTIL_StringToVector(goodPosition.Base(), position.c_str());
+
+						trace_t tr;
+						UTIL_TraceLine(MainViewOrigin(), goodPosition, CONTENTS_SOLID, NULL, COLLISION_GROUP_NONE, &tr);//MASK_SOLID
+						if (tr.fraction >= 0.9)
+							iTransitionType = 1;
+						else
+							iTransitionType = 2;
+					}
+
+					std::string cmd = VarArgs("set_attract_mode_transform %s %s %i;", position.c_str(), rotation.c_str(), iTransitionType);
+					engine->ClientCmd(cmd.c_str());
+					cvar->FindVar("camcut_attract_mode_active")->SetValue(1);
+					cvar->FindVar("attract_mode_active")->SetValue(1);
+				}
+			}
+		}
+	}
+}
+ConCommand camCut("camcut", cam_cut, "Usage: Parameters are position then rotation.");
+
+void cmd_vgui_toggle(const CCommand &args)
+{
+	engine->ClientCmd("toggle r_drawvgui 0 1");
+}
+ConCommand cmdVGUIToggle("cmd_vgui_toggle", cmd_vgui_toggle, "Usage: Turns on/off the UI layer of the engine. This is most useful for people that have ReShade Depth Effects active - as this is a way to temporarily re-enable the UI for things like hover titles.");
+
+void cmd_task_shot(const CCommand &args)
+{
+	engine->ClientCmd("task_screenshot");
+}
+ConCommand cmdTaskShot("cmd_taskshot", cmd_task_shot, "Usage: Saves the last rendered frame of the active embedded task to the aarcade_user/taskshots folder.");
+
+void cmd_camera_pin_toggle(const CCommand &args)
+{
+	engine->ClientCmd("camera_pin_toggle");
+}
+ConCommand cmdCameraPin("cmd_camerapin", cmd_camera_pin_toggle, "Usage: Toggle the 3rd person camera being pinned in space.");
+
+void cmd_adopt_asset_menu(const CCommand &args)
+{
+	engine->ClientCmd("adopt_asset_menu");
+}
+ConCommand cmdAdoptAssetMenu("cmd_adopt_asset_menu", cmd_adopt_asset_menu, "Usage: Make an extra COPY of the asset files for a model or material into an adopted content folder.");
+
+void cmd_always_animated_image_toggle(const CCommand &args)
+{
+	engine->ClientCmd("always_animated_image_toggle");
+}
+ConCommand cmdAlwaysAnimatedImageToggle("cmd_always_animated_image_toggle", cmd_always_animated_image_toggle, "Usage: Flys your camera to the previous nearest attact mode object.");
+
+void cmd_manual_pause(const CCommand &args)
+{
+	engine->ClientCmd("manual_pause");
+}
+ConCommand cmdManualPause("cmd_manual_pause", cmd_manual_pause, "Usage: When AArcade is paused & in the background, it becomes optimized so that it doesn't lag your PC down.");
+
+void cmd_reset_image_loader(const CCommand &args)
+{
+	engine->ClientCmd("reset_image_loader");
+}
+ConCommand cmdResetImageLoader("cmd_reset_image_loader", cmd_reset_image_loader, "Usage: If images start failing to load, you can reset the image loader here to fix it. (Or reload the map - either way works.)");
+
+void cmd_input_mode_toggle(const CCommand &args)
+{
+	engine->ClientCmd("input_mode_toggle");
+}
+ConCommand cmdInputModeToggle("cmd_input_mode_toggle", cmd_input_mode_toggle, "Usage: Toggles you into input mode on the selected cabinet so that you can send input to it as if it were fullscreened.");
+
+void cmd_fog_test(const CCommand &args)
+{
+	engine->ClientCmd("fog_test");
+}
+ConCommand cmdFogTest("cmd_fog_test", cmd_fog_test, "Usage: Test some fog.");
+
+void cmd_restart_quest_system(const CCommand &args)
+{
+	engine->ClientCmd("restart_quest_system");
+}
+ConCommand cmdRestartQuestSystem("cmd_restart_quest_system", cmd_restart_quest_system, "Usage: Reset & restart the available quests in this world.");
+
+void cmd_shadows_toggle(const CCommand &args)
+{
+	engine->ClientCmd("toggle object_shadows 0 1; set_active_spawned_shadows;");
+}
+ConCommand cmdShadowsToggle("cmd_shadows_toggle", cmd_shadows_toggle, "Usage: Shadows of spawned objected can cause visual glitches or decrease performance, depending on the arcade.");
+
+void cmd_legs(const CCommand &args)
+{
+	engine->ClientCmd("toggle cl_first_person_uses_world_model 0 1;");
+}
+ConCommand cmdLegs("cmd_legs", cmd_legs, "Usage: Give yourself legs even while in first person mode! However, having 1st person legs will cause your flashlight to act a little weird.");
+
+void cmd_double_rainbow_mode(const CCommand &args)
+{
+	engine->ClientCmd("toggle avr 0 2");
+}
+ConCommand cmdDoubleRainbowMode("cmd_double_rainbow_mode", cmd_double_rainbow_mode, "Usage: Toggle sound-sensitive colored reflections on all cabinet screens.");
+
+void cmd_morphmodel(const CCommand &args)
+{
+	engine->ClientCmd("morphmodel");
+}
+ConCommand cmdMorphmodel("cmd_morphmodel", cmd_morphmodel, "Usage: Morph yourself into what ever 3D model you are looking at.");
+
+void cmd_resetmodel(const CCommand &args)
+{
+	engine->ClientCmd("resetmodel");
+}
+ConCommand cmdResetmodel("cmd_resetmodel", cmd_resetmodel, "Usage: Reset yourself back to the default player model.");
+
+void cmd_toggle_perspective(const CCommand &args)
+{
+	engine->ClientCmd("toggle_perspective");
+}
+ConCommand cmdTogglePerspective("cmd_toggle_perspective", cmd_toggle_perspective, "Usage: Cycle between 1st and 3rd person camera modes.");
+
+void cmd_cam_maya_toggle(const CCommand &args)
+{
+	engine->ClientCmd("cam_maya_toggle");
+}
+ConCommand cmdCamMayaToggle("cmd_cam_maya_toggle", cmd_cam_maya_toggle, "Usage: Toggles the camera's rotation in 3rd person mode. This allows you to look back at your camera with your avatar while in 3rd person mode.");
+
+void cmd_sound_mute_toggle(const CCommand &args)
+{
+	engine->ClientCmd("toggle volume 0 1");
+}
+ConCommand cmdSoundMuteToggle("cmd_sound_mute_toggle", cmd_sound_mute_toggle, "Usage: Toggle the Source engine volume on/off.");
+
+void cmd_camera_auto_director_toggle(const CCommand &args)
+{
+	engine->ClientCmd("thirdperson; toggle fixed_camera_spectate_mode 0 1;");
+}
+ConCommand cmdCameraAutoDirectorToggle("cmd_camera_auto_director_toggle", cmd_camera_auto_director_toggle, "Usage: Use F5 screenshots as 3rd person spectator cameras that track your movement.");
+
+void cmd_fly_toggle(const CCommand &args)
+{
+	engine->ClientCmd("noclip");
+}
+ConCommand cmdFlyToggle("cmd_fly_toggle", cmd_fly_toggle, "Usage: Fly through solid objects instead of walking.");
+
+void cmd_overlay_bandw(const CCommand &args)
+{
+	engine->ClientCmd("toggle mat_yuv");
+}
+ConCommand cmdOverlayBandw("cmd_overlay_bandw", cmd_overlay_bandw, "Usage: Toggle black & white mode.  Very noire of you.");
+
+void cmd_overlay_combine(const CCommand &args)
+{
+	engine->ClientCmd("toggle_overlay \"effects/combine_binocoverlay.vmt\"");
+}
+ConCommand cmdOverlayCombine("cmd_overlay_combine", cmd_overlay_combine, "Usage: Toggle combine camera overlay mode.");
+
+void cmd_tiny_mode(const CCommand &args)
+{
+	engine->ClientCmd("tiny_mode_toggle;");
+}
+ConCommand cmdTinyMode("cmd_tiny_mode", cmd_tiny_mode, "Usage: Make yourself tiny.");
+
+void cmd_avatar_menu(const CCommand &args)
+{
+	engine->ClientCmd("avatar_menu;");
+}
+ConCommand cmdAvatarMenu("cmd_avatar_menu", cmd_avatar_menu, "Usage: Change your avatar to one from a custom favorites list you've prepared.");
+
+void cmd_wheel_menu(const CCommand &args)
+{
+	engine->ClientCmd("wheel_menu;");
+}
+ConCommand cmdWheelMenu("cmd_wheel_menu", cmd_wheel_menu, "Usage: Randomly choose one of the objects in front of you.");
+
+void cmd_reflections_toggle(const CCommand &args)
+{
+	engine->ClientCmd("toggle mat_fastspecular");
+}
+ConCommand cmdReflectionsToggle("cmd_reflections_toggle", cmd_reflections_toggle, "Usage: Toggles reflections.  This can fix over-bright props or hard-to-see screens.");
+
+void cmd_hdr_lighting_toggle(const CCommand &args)
+{
+	engine->ClientCmd("toggle mat_hdr_level 0 2; mat_autoexposure_max 1; toggle  mat_autoexposure_min 1 0.5;");
+}
+ConCommand cmdHdrLightingToggle("cmd_hdr_lighting_toggle", cmd_hdr_lighting_toggle, "Usage: Toggles HDR. HDR simulates your pupils adjusting to lighting conditions.  Turning it off can fix how some maps look.");
+
+void cmd_movement_speed_toggle(const CCommand &args)
+{
+	engine->ClientCmd("toggle cl_forwardspeed 450 100; cl_sidespeed 450 50; cl_backspeed 450 50;");
+}
+ConCommand cmdMovementSpeedToggle("cmd_movement_speed_toggle", cmd_movement_speed_toggle, "Usage: Slow your default movement speed.");
+
+void cmd_mirror_everything_toggle(const CCommand &args)
+{
+	engine->ClientCmd("toggle play_everywhere 0 1;");
+}
+ConCommand cmdMirrorEverythingToggle("cmd_mirror_everything_toggle", cmd_mirror_everything_toggle, "Usage: Temporarily make all screens behave as if they were video mirrors.");
+
+void cmd_physics_toggle(const CCommand &args)
+{
+	engine->ClientCmd("togglephysics");
+}
+ConCommand cmdPhysicsToggle("cmd_physics_toggle", cmd_physics_toggle, "Usage: Temporarily toggles physics on the AArcade object under your crosshair.");
+
+void cmd_look_at_me(const CCommand &args)
+{
+	engine->ClientCmd("look_at_me");
+}
+ConCommand cmdLookAtMe("cmd_look_at_me", cmd_look_at_me, "Usage: Temporarily toggles making the nearest object under your crosshair look at you.");
+
+void cmd_spawn_objects(const CCommand &args)
+{
+	engine->ClientCmd("spawnobjects");
+}
+ConCommand cmdSpawnObjects("cmd_spawn_objects", cmd_spawn_objects, "Usage: Spawan nearby objects. Only needed if you use limited spawn settings or beta nodes, otherwise, not needed.");
+
+void cmd_play_nearest_gif(const CCommand &args)
+{
+	engine->ClientCmd("play_nearest_gif");
+}
+ConCommand cmdPlayNearestGif("cmd_play_nearest_gif", cmd_play_nearest_gif, "Usage: Plays the nearest GIF item to where you are looking (if one exists.)");
+
+void cmd_all_guns_toggle(const CCommand &args)
+{
+	engine->ClientCmd("toggle_weapons;");
+}
+ConCommand cmdAllGunsToggle("cmd_all_guns_toggle", cmd_all_guns_toggle, "Usage: Toggles weapons mode. Make sure to set it to 6 or higher, otherwise weapon categories will overpower the toggle off command.");
+
+void cmd_attract_camera_next(const CCommand &args)
+{
+	engine->ClientCmd("select_next;");
+}
+ConCommand cmdAttractCameraNext("cmd_attract_camera_next", cmd_attract_camera_next, "Usage: Flys your camera to the next nearest attact mode object.");
+
+void cmd_attract_camera_prev(const CCommand &args)
+{
+	engine->ClientCmd("select_prev;");
+}
+ConCommand cmdAttractCameraPrev("cmd_attract_camera_prev", cmd_attract_camera_prev, "Usage: Flys your camera to the previous nearest attact mode object.");
+
+void cmd_camera_slow_fly_mode_toggle(const CCommand &args)
+{
+	engine->ClientCmd("toggle_camera_fly_mode;");
+}
+ConCommand cmdCameraSlowFlyModeToggle("cmd_camera_slow_fly_mode_toggle", cmd_camera_slow_fly_mode_toggle, "Usage: Shrinks you down (Tiny Mode), enables flymode, adjusts flymode movement speed, and rebinds the gamepad top shoulder buttons to be Move Up / Down instead.");
+
+void cmd_vehicle_spawn(const CCommand &args)
+{
+	engine->ClientCmd("ch_createairboat");
+}
+ConCommand cmdVehicleSpawn("cmd_vehicle_spawn", cmd_vehicle_spawn, "Usage: Try not to spawn it stuck into the ground.");
+
+void cmd_headcrab(const CCommand &args)
+{
+	engine->ClientCmd("npc_create npc_headcrab");
+}
+ConCommand cmdHeadcrab("cmd_headcrab", cmd_headcrab, "Usage: They are your buddies, but they don't move around so well.");
+
+void cmd_sound_stop(const CCommand &args)
+{
+	engine->ClientCmd("stopsound");
+}
+ConCommand cmdSoundStop("cmd_sound_stop", cmd_sound_stop, "Usage: Stops all the sounds that are currently playing from the map.");
+
+void cmd_developer_mode(const CCommand &args)
+{
+	engine->ClientCmd("toggle developer");
+}
+ConCommand cmdDeveloperMode("cmd_developer_mode", cmd_developer_mode, "Usage: Toggle develoepr mode.  Shows excessive debug information in the console & on-screen when enabled.");
+
+void cmd_unpaint_all(const CCommand &args)
+{
+	engine->ClientCmd("unpaintall");
+}
+ConCommand cmdUnpaintAll("cmd_unpaint_all", cmd_unpaint_all, "Usage: Resets ALL of your painted materials in your current instance.");
+
+void cmd_unpaint(const CCommand &args)
+{
+	engine->ClientCmd("unpaint");
+}
+ConCommand cmdUnpaint("cmd_unpaint", cmd_unpaint, "Usage: Resets the painted material under your crosshair.");
+
+void cmd_paint(const CCommand &args)
+{
+	engine->ClientCmd("paint");
+}
+ConCommand cmdPaint("cmd_paint", cmd_paint, "Usage: Paints the painted material under your crosshair.");
+
+void cmd_material_pick(const CCommand &args)
+{
+	engine->ClientCmd("pick_texture");
+}
+ConCommand cmdMaterialPick("cmd_material_pick", cmd_material_pick, "Usage: Sets the texture under your crosshair as your active paint texture.");
+
+void cmd_object_move(const CCommand &args)
+{
+	engine->ClientCmd("moveobject");
+}
+ConCommand cmdObjectMove("cmd_object_move", cmd_object_move, "Usage: Move the object that is under your crosshair.");
+
+void cmd_object_clone(const CCommand &args)
+{
+	engine->ClientCmd("cloneobject");
+}
+ConCommand cmdObjectClone("cmd_object_clone", cmd_object_clone, "Usage: Clone the object that is under your crosshair.");
+
+void cmd_object_delete(const CCommand &args)
+{
+	engine->ClientCmd("deleteobject");
+}
+ConCommand cmdObjectDelete("cmd_object_delete", cmd_object_delete, "Usage: Remove the object that is under your crosshair.");
+
+void cmd_vehicle_remove_all(const CCommand &args)
+{
+	engine->ClientCmd("ent_remove_all prop_vehicle_airboat");
+}
+ConCommand cmdVehicleRemoveAll("cmd_vehicle_remove_all", cmd_vehicle_remove_all, "Usage: Removes all the vehicles that you already spawned into the world.");
+
+void cmd_vehicle_menu(const CCommand &args)
+{
+	engine->ClientCmd("vehicle_menu");
+}
+ConCommand cmdVehicleMenu("cmd_vehicle_menu", cmd_vehicle_menu, "Usage: Brings up the vehicle menu.");
+
+void cmd_task_close(const CCommand &args)
+{
+	engine->ClientCmd("task_close_entity");
+}
+ConCommand cmdTaskClose("cmd_task_close", cmd_task_close, "Usage: Close the task under your crosshair (or the currently auto-playing task if no active task is found under your crosshair.)");
+
+void cmd_task_close_all(const CCommand &args)
+{
+	engine->ClientCmd("task_close_all");
+}
+ConCommand cmdTaskCloseAll("cmd_task_close_all", cmd_task_close_all, "Usage: Close ALL running in-game tasks.");
+
+void cmd_wireframe_toggle(const CCommand &args)
+{
+	engine->ClientCmd("toggle mat_wireframe 0 3;");
+}
+ConCommand cmdWireframeToggle("cmd_wireframe_toggle", cmd_wireframe_toggle, "Usage: Toggle wireframe mode - useful for seeing through walls.");
+
+/*
+void(const CCommand &args)
+{
+	engine->ClientCmd("");
+}
+ConCommand("", , "Usage: ");
+*/

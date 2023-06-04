@@ -642,6 +642,11 @@ void C_AwesomiumBrowserInstance::Update()
 		this->OnProxyBind(null);
 }
 
+void C_AwesomiumBrowserInstance::TakeScreenshot()
+{
+	DevMsg("Take screenshot (C_AwesomiumBrowserInstance)\n");
+}
+
 void C_AwesomiumBrowserInstance::CleanUpTexture()
 {
 	if (m_pTexture && !m_pTexture->IsError() && m_pTexture->IsProcedural())

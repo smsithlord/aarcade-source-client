@@ -358,6 +358,23 @@ void CBaseTrigger::InitTrigger( )
 }
 
 
+// Added for Anarchy Arcade
+// a stub because this is normally defined in the CPP file.
+class CFilterClass : public CBaseFilter
+{
+	DECLARE_CLASS(CFilterClass, CBaseFilter);
+	DECLARE_DATADESC();
+
+public:
+	string_t m_iFilterClass;
+
+	bool PassesFilterImpl(CBaseEntity *pCaller, CBaseEntity *pEntity)
+	{
+		return pEntity->ClassMatches(STRING(m_iFilterClass));
+	}
+};
+// End added for Anarchy Arcade
+
 //-----------------------------------------------------------------------------
 // Purpose: Returns true if this entity passes the filter criteria, false if not.
 // Input  : pOther - The entity to be filtered.
@@ -429,10 +446,34 @@ bool CBaseTrigger::PassesTriggerFilters(CBaseEntity *pOther)
 
 			if ( HasSpawnFlags( SF_TRIGGER_DISALLOW_BOTS ) )
 			{
-				if ( pPlayer->IsFakeClient() )
+				if (pPlayer->IsFakeClient())
 					return false;
 			}
 		}
+
+		// Added for Anarchy Arcade
+		if (HasSpawnFlags(SF_TRIGGER_DISALLOW_BOTS))
+		{
+			// If we are in AArcade and a trigger is set to NO BOTS and also the filter is a filter_activator_class w/ "prop_shortcut" as its class name...
+			CBaseFilter *pFilter = m_hFilter.Get();
+			CFilterClass *pFilterClass = dynamic_cast<CFilterClass*>(pFilter);
+			if ( pFilterClass )
+			{
+			//char* val;
+			//if (pFilter->GetKeyValue("targetname", val, 13)) {
+			//if (pFilter->GetKeyValue("filterclass", val, 13)) {
+				//if (!Q_strcmp(val, "prop_shortcut"))
+					//if (pFilter && pFilter->ClassMatches("prop_shortcut"))
+
+				//DevMsg("Val: %s\n", STRING(pFilterClass->m_iFilterClass));
+				if (!Q_strcmp(STRING(pFilterClass->m_iFilterClass), "prop_shortcut"))
+				{
+					if (!CollisionProp()->IsPointInBounds(pOther->GetAbsOrigin()))
+						return false;
+				}
+			}
+		}
+		// End added for Anarchy Arcade
 
 		CBaseFilter *pFilter = m_hFilter.Get();
 		return (!pFilter) ? true : pFilter->PassesFilter( this, pOther );

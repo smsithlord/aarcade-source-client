@@ -255,6 +255,8 @@ public:
 	//void Reinit();
 	bool CreateWorkerThread(std::string core);
 	void Update();
+	void TakeScreenshot();
+	void TakeScreenshotNow(ITexture* pTexture, IVTFTexture *pVTFTexture, Rect_t *pSubRect, unsigned char* dest, unsigned int width, unsigned int height, unsigned int pitch, unsigned int depth);
 	bool LoadCore(std::string coreFile = "");
 	static bool LoadGame();
 	void SetReset(bool bValue);
@@ -364,6 +366,7 @@ public:
 	void SetFinishedResuming(bool bValue) { m_bFinishedResuming = bValue; }
 
 private:
+	bool m_bTakeScreenshot;
 	ConVar* m_pLocalVideoBehaviorConVar;
 	bool m_bGotTime;
 	//C_AwesomiumBrowserInstance* m_pHud;

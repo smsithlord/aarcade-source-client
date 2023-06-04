@@ -10,7 +10,7 @@ public:
 	~C_AAIManager();
 
 	void Init();
-
+	void Update();
 	void Reset();	// called when its web tab is closed.
 
 	void CreateBrowserInstance();
@@ -29,10 +29,14 @@ public:
 	void SendOnItemRemoved(std::string itemId);
 
 	void OnReadyNow();
+	void DidRender(std::string itemId);
 
 private:
 	std::vector<std::string> m_items;
 	KeyValues* m_pAnimatedImagesKV;
+	ConVar* m_pAnimateMP4sConVar;
+	//ConVar* m_pDeveloperConVar;
+	KeyValues* m_pLastRenderedListKV;
 };
 
 #endif

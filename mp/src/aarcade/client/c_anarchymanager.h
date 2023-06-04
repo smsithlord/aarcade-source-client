@@ -170,6 +170,16 @@ struct numberStatsState_t {
 	int iLibraryModels;
 };
 
+struct pet_t {
+	int iEntityIndex;
+	KeyValues* pConfigKV;
+	int iState;
+	int iCurSequence;
+	Vector pos;
+	QAngle rot;
+	//int iTargetEntityIndex;
+};
+
 class C_AnarchyManager : public CAutoGameSystemPerFrame
 {
 public:
@@ -177,6 +187,7 @@ public:
 	~C_AnarchyManager();
 
 	void Tester();
+	void DownloadSingleFile(std::string url);
 
 	virtual bool Init();
 	virtual void PostInit();
@@ -218,6 +229,13 @@ public:
 
 	std::string GenerateTextureThumb(std::string textureName);
 
+	void SpawnPet(std::string model, std::string forward, std::string idle, float flScale, std::string rot, std::string pos, float flNear, float flFar, float flSpeed);
+	void PetCreated(int iEntIndex);
+	void DestroyPet(int iEntIndex);
+	void DestroyAllPets();
+	void ProcessAllPets();
+	pet_t* GetPetByEntIndex(int iEntIndex);
+
 	bool IsLevelInitialized() { return m_bLevelInitialized; }
 
 	virtual void OnSave();
@@ -242,6 +260,7 @@ public:
 
 	bool CheckIfFileExists(std::string file);
 
+	void TestVRStuff();
 	bool GetShouldInvertVRMatrices();
 	void ToggleVR();
 	void VROff();
@@ -410,8 +429,12 @@ public:
 	void RemoveAlwaysLookObject(C_PropShortcutEntity* pShortcut);
 	void ManageAlwaysLookObjects();
 
+	int GetFixedCameraSpectateMode();
+	KeyValues* GetBestNonVRSpectatorCameraObject();
 	C_PropShortcutEntity* GetBestSpectatorCameraObject();
 	void LocalAvatarObjectCreated(int iEntIndex);
+
+	bool GetBestSpectatorCameraScreenshot(Vector& origin, QAngle& angle);
 
 	void AddSubKeysToKeys(KeyValues* kv, KeyValues* targetKV);	// TODO: Make the sibling to this weirdly named function a method of the anarchy manager too.
 
@@ -602,6 +625,9 @@ public:
 
 	void WaitForOverviewExtract();
 	void ManageExtractOverview();
+	void ManagePets();
+	void SetPetTargetPos(Vector pos);
+	void TogglePetTargetPos(Vector pos);
 
 	void PerformAutoSave(saveModeType_t saveMode = SAVEMODE_NONE, bool bDoSaveInstance = false, bool bOnlyNew = false);
 	void IncrementHueShifter(float frametime);
@@ -710,6 +736,7 @@ public:
 	bool GetSocialMode() { return m_bSocialMode; }
 	bool IsInSourceGame() { return m_bIsInSourceGame; }
 	int VRSpectatorMode() { return m_pVRSpectatorModeConVar->GetInt(); }
+	int SpectatorMode() { return 0; }// m_pSpectatorModeConvar->GetInt();}
 	bool VRSpectatorMirrorMode() { return m_pVRSpectatorMirrorModeConVar->GetBool(); }
 
 	// mutators
@@ -734,6 +761,8 @@ public:
 	//void SetIgnoreNextFire(bool bValue) { m_bIgnoreNextFire = bValue; }
 	void SetConnectedUniverse(bool bConnected, bool bIsHost, std::string address, std::string universeId, std::string instanceId, std::string sessionId, std::string lobbyId, bool bPublic, bool bPersistent, std::string lobbyPassword);
 
+	void ConvertAndPaint(std::string fileLocation);
+
 	void SetImagesReady(bool bValue) { m_bImagesReady = bValue; }
 	bool GetImagesReady() { return m_bImagesReady; }
 
@@ -746,6 +775,9 @@ public:
 
 	void HTTPResponse(HTTPRequestCompleted_t *pResult, bool bIOFailure);
 	CCallResult<C_AnarchyManager, HTTPRequestCompleted_t> m_HTTPResponseCallback;
+
+	void DownloadFileResponse(HTTPRequestCompleted_t *pResult, bool bIOFailure);
+	CCallResult<C_AnarchyManager, HTTPRequestCompleted_t> m_DownloadFileCallback;
 
 	//LRESULT CALLBACK HookWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 	void InitDragDrop(HWND hWnd);
@@ -762,11 +794,29 @@ public:
 
 	bool GetAttractMode() { return m_pAttractModeActiveConVar->GetBool(); }
 	bool GetCabinetAttractMode() { return m_pCabinetAttractModeActiveConVar->GetBool(); }
+	bool GetCamcutAttractMode() { return m_pCamcutAttractModeActiveConVar->GetBool(); }
 
 protected:
 	void ScanForLegacySave(std::string path, std::string searchPath, std::string workshopIds, std::string mountIds, C_Backpack* pBackpack);
 
 private:
+	ConVar* m_pFixedCameraMaxDistConVar;
+	ConVar* m_pFixedCameraMinDistConVar;
+	std::string m_lastBestNonVRSpectateScreenshotId;
+	ConVar* m_pFixedCameraSpectateModeConVar;
+	std::vector<pet_t*> m_pets;
+	Vector m_petTargetPos;
+
+	// All of the nextPet variables must be set together or risk garbage.
+	std::string m_nextPetModel;
+	std::string m_nextPetForward;
+	std::string m_nextPetIdle;
+	float m_flNextPetScale;
+	std::string m_nextPetPos;
+	std::string m_nextPetRot;
+	float m_flNextPetNear;
+	float m_flNextPetFar;
+	float m_flNextPetSpeed;
 
 	ConVar* m_pJoystickConVar;
 	C_PropShortcutEntity* m_pInspectShortcut;
@@ -799,6 +849,7 @@ private:
 	float m_flNextNumberStatsUpdateTime;
 	numberStatsState_t m_numberStatsState;
 	float m_flComparisonRenderTime;
+	ConVar* m_pCamcutAttractModeActiveConVar;
 	ConVar* m_pCabinetAttractModeActiveConVar;
 	ConVar* m_pAttractModeActiveConVar;
 	float m_flNextAttractCameraTime;
@@ -838,6 +889,7 @@ private:
 	//bool m_bVRSpectatorMode;
 	bool m_bIsCreatingLocalAvatar;
 	ConVar* m_pVRSpectatorModeConVar;
+	//ConVar* m_pSpectatorModeConVar;
 	ConVar* m_pVRSpectatorMirrorModeConVar;
 	ConVar* m_pVRHMDRenderConVar;
 

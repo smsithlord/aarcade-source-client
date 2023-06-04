@@ -1,7 +1,6 @@
-// ;..\..\portaudio\lib\portaudio_x86.lib
-
 #include "cbase.h"
 #include "aa_globals.h"
+// ;..\..\portaudio\lib\portaudio_x86.lib
 
 //#include "aa_globals.h"
 #include "c_libretroinstance.h"
@@ -22,6 +21,12 @@
 #include <mutex>
 
 //#include <glm/glm.hpp>
+
+// for generating timestamps to use in filenmaes of task screenshots (takeScreenshotNow)
+#include <chrono>
+#include <iomanip> // put_time
+#include <fstream>
+#include <sstream> // stringstream
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
@@ -45,6 +50,7 @@ C_LibretroInstance::C_LibretroInstance()
 {
 	DevMsg("LibretroInstance: Constructor\n");
 	//m_pHud = null;// g_pAnarchyManager->GetAwesomiumBrowserManager()->FindAwesomiumBrowserInstance("hud");
+	m_bTakeScreenshot = false;
 	m_bIsDirty = false;
 	m_iAdjustedStartTime = -1;
 	m_iLastDelta = 0;	// for fast forwarding fake input
@@ -610,6 +616,90 @@ void C_LibretroInstance::Update()
 		if (m_id == "init")
 			g_pAnarchyManager->GetLibretroManager()->DestroyLibretroInstance(this);
 	}
+}
+
+void C_LibretroInstance::TakeScreenshot()
+{
+	m_bTakeScreenshot = true;
+}
+
+void C_LibretroInstance::TakeScreenshotNow(ITexture* pTexture, IVTFTexture *pVTFTexture, Rect_t *pSubRect, unsigned char* dest, unsigned int width, unsigned int height, unsigned int pitch, unsigned int depth)
+{
+	// This declares a lambda, which can be called just like a function
+	std::string badAlphabet = "<>:\"/\\|?*";
+	auto scrubBadAlphabet = [&](std::string str_in)
+	{
+		std::string str = str_in;
+		unsigned int len = str.length();
+		for (unsigned int i = 0; i < len; i++) {
+			if (badAlphabet.find(str[i]) != std::string::npos) {
+				str[i] = '_';
+			}
+		}
+		return str;
+	};
+
+	// instead of using that name, let's make one based on a timestamp.
+	auto now = std::chrono::system_clock::now();
+	auto UTC = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+	auto in_time_t = std::chrono::system_clock::to_time_t(now);
+	std::stringstream datetime;
+	datetime << std::put_time(std::localtime(&in_time_t), "%Y.%m.%d - %X");
+	std::string dateString = datetime.str();
+	// change : to . in the hours:minutes:seconds of the %X timestamp.
+	unsigned int len = dateString.length();
+	for (unsigned int i = 0; i < len; i++) {
+		if (dateString[i] == ':') {
+			dateString[i] = '.';
+		}
+	}
+
+	// get the item's title to use in the screenshot name.
+	std::string itemTitle = ((C_EmbeddedInstance*)this)->GetTitle();
+	unsigned int maxTitleLength = 60;
+	if (itemTitle.length() > maxTitleLength) {
+		itemTitle = itemTitle.substr(0, maxTitleLength);
+	}
+
+	// scrub the item title to be windows path friendly.
+	std::string scrubbedItemTitle = scrubBadAlphabet(itemTitle);
+	std::string screenshotFolder = "taskshots/" + scrubbedItemTitle;
+	g_pFullFileSystem->CreateDirHierarchy(screenshotFolder.c_str(), "DEFAULT_WRITE_PATH");
+	std::string goodFile = screenshotFolder + "/" + scrubbedItemTitle + " " + dateString + ".tga";
+
+	/*
+	unsigned int screenshotNumber = 0;
+	std::string goodFile = screenshotFolder + "/" + "screenshot" + std::string(VarArgs("%04u", screenshotNumber)) + ".tga";
+	while (g_pFullFileSystem->FileExists(goodFile.c_str(), "DEFAULT_WRITE_PATH"))
+	{
+	screenshotNumber++;
+	goodFile = screenshotFolder + "/" + "screenshot" + std::string(VarArgs("%04u", screenshotNumber)) + ".tga";
+	}
+
+	DevMsg("File name: %s\n", goodFile.c_str());
+	*/
+
+	unsigned int bufferSize = width * height * depth;
+	// allocate a buffer to write the tga into
+	int iMaxTGASize = (width * height * depth);
+	void *pTGA = malloc(iMaxTGASize);
+	CUtlBuffer buffer(pTGA, iMaxTGASize);
+
+	if (!TGAWriter::WriteToBuffer(dest, buffer, width, height, IMAGE_FORMAT_BGRA8888, IMAGE_FORMAT_RGBA8888))
+	{
+		DevMsg("ERROR: Could not write to TGA buffer.\n");
+		g_pAnarchyManager->AddToastMessage("Failed to capture task screenshot.", true);
+		return;
+	}
+
+	// save the TGA out
+	FileHandle_t fileTGA = filesystem->OpenEx(goodFile.c_str(), "wb", 0, "DEFAULT_WRITE_PATH");
+	filesystem->Write(buffer.Base(), buffer.TellPut(), fileTGA);
+	filesystem->Close(fileTGA);
+	free(pTGA);
+
+	DevMsg("Saved screenshot %s\n", goodFile.c_str());
+	g_pAnarchyManager->AddToastMessage(VarArgs("Saved screenshot %s", goodFile.c_str()), true);
 }
 
 bool C_LibretroInstance::LoadCore(std::string coreFile)
@@ -3692,6 +3782,11 @@ void C_LibretroInstance::RegenerateTextureBits(ITexture *pTexture, IVTFTexture *
 		return;
 	
 	this->CopyLastFrame(pVTFTexture->ImageData(0, 0, 0), pSubRect->width, pSubRect->height, pSubRect->width * 4, 4);
+
+	if (m_bTakeScreenshot) {
+		this->TakeScreenshotNow(pTexture, pVTFTexture, pSubRect, pVTFTexture->ImageData(0, 0, 0), pSubRect->width, pSubRect->height, pSubRect->width * 4, 4);
+		m_bTakeScreenshot = false;
+	}
 
 	// fix the bleeding edges on projectors
 	if (m_pProjectorFixConVar->GetBool())

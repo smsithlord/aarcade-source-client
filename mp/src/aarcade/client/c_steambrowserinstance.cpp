@@ -21,6 +21,12 @@
 #include "../../../public/vgui_controls/HTML.h"
 
 #include "pixelwriter.h"
+
+// for generating timestamps to use in filenmaes of task screenshots (takeScreenshotNow)
+#include <chrono>
+#include <iomanip> // put_time
+#include <fstream>
+#include <sstream> // stringstream
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
 
@@ -76,6 +82,9 @@ int C_SteamBrowserInstance::GetKeyModifiersAlt()
 
 C_SteamBrowserInstance::C_SteamBrowserInstance()
 {
+	m_uAtlasWidth = AA_ATLAS_INSTANCE_WIDTH;
+	m_uAtlasHeight = AA_ATLAS_INSTANCE_HEIGHT;
+	m_bTakeScreenshot = false;
 	m_bWoke = false;
 	m_fNeedsWakupJuice = 0.0f;
 	m_pProjectorFixConVar = null;
@@ -290,6 +299,14 @@ void C_SteamBrowserInstance::Init(std::string id, std::string url, std::string t
 	int iWidth = (id == "hud") ? AA_HUD_INSTANCE_WIDTH : AA_EMBEDDED_INSTANCE_WIDTH;
 	int iHeight = (id == "hud") ? AA_HUD_INSTANCE_HEIGHT : AA_EMBEDDED_INSTANCE_HEIGHT;
 
+	if (id == "aai") {
+		iWidth = cvar->FindVar("atlas_width")->GetInt();//AA_ATLAS_INSTANCE_WIDTH;
+		iHeight = cvar->FindVar("atlas_height")->GetInt();//AA_ATLAS_INSTANCE_HEIGHT;
+
+		m_uAtlasWidth = iWidth;// AA_ATLAS_INSTANCE_WIDTH
+		m_uAtlasHeight = iHeight;// AA_ATLAS_INSTANCE_HEIGHT
+	}
+
 	if (id == "SteamTalker")
 	{
 		iWidth = 32;
@@ -359,6 +376,12 @@ void C_SteamBrowserInstance::OnBrowserInstanceReady(unsigned int unHandle)
 
 	int iWidth = (m_id == "hud") ? AA_HUD_INSTANCE_WIDTH : AA_EMBEDDED_INSTANCE_WIDTH;
 	int iHeight = (m_id == "hud") ? AA_HUD_INSTANCE_HEIGHT : AA_EMBEDDED_INSTANCE_HEIGHT;
+
+	if (this->m_id == "aai") {
+		iWidth = m_uAtlasWidth;// AA_ATLAS_INSTANCE_WIDTH;
+		iHeight = m_uAtlasHeight;// AA_ATLAS_INSTANCE_HEIGHT;
+	}
+
 	steamapicontext->SteamHTMLSurface()->SetSize(m_unHandle, iWidth, iHeight);
 
 	g_pAnarchyManager->GetSteamBrowserManager()->OnSteamBrowserInstanceCreated(this);
@@ -948,7 +971,10 @@ void C_SteamBrowserInstance::CopyLastFrame(const void* data, unsigned int width,
 
 void C_SteamBrowserInstance::OnBrowserInstanceURLChanged(const char* pchURL, const char* pchPostData, bool bIsRedirect, const char* pchPageTitle, bool bNewNavigation)
 {
-	m_URL = pchURL;
+	if (Q_strcmp(pchURL, ""))
+	{
+		m_URL = pchURL;
+	}
 
 	// HUD notifications should ONLY happen if THIS is the instance that the HUD is displaying right now!
 	if (g_pAnarchyManager->GetInputManager()->GetEmbeddedInstance() == this)
@@ -1154,6 +1180,11 @@ void C_SteamBrowserInstance::OnMouseMove(float x, float y)
 	unsigned int width = (m_id == "hud") ? AA_HUD_INSTANCE_WIDTH : AA_EMBEDDED_INSTANCE_WIDTH;
 	unsigned int height = (m_id == "hud") ? AA_HUD_INSTANCE_HEIGHT : AA_EMBEDDED_INSTANCE_HEIGHT;
 
+	if (this->m_id == "aai") {
+		width = m_uAtlasWidth;//  AA_ATLAS_INSTANCE_WIDTH;
+		height = m_uAtlasHeight;//  AA_ATLAS_INSTANCE_HEIGHT;
+	}
+
 	int goodX = (width * x) / 1;
 	int goodY = (height * y) / 1;
 	m_fLastMouseX = x;
@@ -1239,7 +1270,92 @@ void C_SteamBrowserInstance::Update()
 
 	//if (m_info->state == 1)
 	//if (m_pLastFrameData)
+
 		this->OnProxyBind(null);
+}
+
+void C_SteamBrowserInstance::TakeScreenshot()
+{
+	m_bTakeScreenshot = true;
+}
+
+void C_SteamBrowserInstance::TakeScreenshotNow(ITexture* pTexture, IVTFTexture *pVTFTexture, Rect_t *pSubRect, unsigned char* dest, unsigned int width, unsigned int height, unsigned int pitch, unsigned int depth)
+{
+	// This declares a lambda, which can be called just like a function
+	std::string badAlphabet = "<>:\"/\\|?*";
+	auto scrubBadAlphabet = [&](std::string str_in)
+	{
+		std::string str = str_in;
+		unsigned int len = str.length();
+		for (unsigned int i = 0; i < len; i++) {
+			if (badAlphabet.find(str[i]) != std::string::npos) {
+				str[i] = '_';
+			}
+		}
+		return str;
+	};
+
+	// instead of using that name, let's make one based on a timestamp.
+	auto now = std::chrono::system_clock::now();
+	auto UTC = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+	auto in_time_t = std::chrono::system_clock::to_time_t(now);
+	std::stringstream datetime;
+	datetime << std::put_time(std::localtime(&in_time_t), "%Y.%m.%d - %X");
+	std::string dateString = datetime.str();
+	// change : to . in the hours:minutes:seconds of the %X timestamp.
+	unsigned int len = dateString.length();
+	for (unsigned int i = 0; i < len; i++) {
+		if (dateString[i] == ':') {
+			dateString[i] = '.';
+		}
+	}
+
+	// get the item's title to use in the screenshot name.
+	std::string itemTitle = ((C_EmbeddedInstance*)this)->GetTitle();
+	unsigned int maxTitleLength = 60;
+	if (itemTitle.length() > maxTitleLength) {
+		itemTitle = itemTitle.substr(0, maxTitleLength);
+	}
+
+	// scrub the item title to be windows path friendly.
+	std::string scrubbedItemTitle = scrubBadAlphabet(itemTitle);
+	std::string screenshotFolder = "taskshots/" + scrubbedItemTitle;
+	g_pFullFileSystem->CreateDirHierarchy(screenshotFolder.c_str(), "DEFAULT_WRITE_PATH");
+	std::string goodFile = screenshotFolder + "/" + scrubbedItemTitle + " " + dateString + ".tga";
+
+	/*
+	unsigned int screenshotNumber = 0;
+	std::string goodFile = screenshotFolder + "/" + "screenshot" + std::string(VarArgs("%04u", screenshotNumber)) + ".tga";
+	while (g_pFullFileSystem->FileExists(goodFile.c_str(), "DEFAULT_WRITE_PATH"))
+	{
+		screenshotNumber++;
+		goodFile = screenshotFolder + "/" + "screenshot" + std::string(VarArgs("%04u", screenshotNumber)) + ".tga";
+	}
+
+	DevMsg("File name: %s\n", goodFile.c_str());
+	*/
+
+	unsigned int bufferSize = width * height * depth;
+	// allocate a buffer to write the tga into
+	int iMaxTGASize = (width * height * depth);
+	void *pTGA = malloc(iMaxTGASize);
+	CUtlBuffer buffer(pTGA, iMaxTGASize);
+
+	if (!TGAWriter::WriteToBuffer(dest, buffer, width, height, IMAGE_FORMAT_BGRA8888, IMAGE_FORMAT_RGBA8888))
+	{
+		DevMsg("ERROR: Could not write to TGA buffer.\n");
+		g_pAnarchyManager->AddToastMessage("Failed to capture task screenshot.", true);
+		return;
+	}
+
+	// save the TGA out
+	FileHandle_t fileTGA = filesystem->OpenEx(goodFile.c_str(), "wb", 0, "DEFAULT_WRITE_PATH");
+	filesystem->Write(buffer.Base(), buffer.TellPut(), fileTGA);
+	filesystem->Close(fileTGA);
+	free(pTGA);
+
+	DevMsg("Saved screenshot %s\n", goodFile.c_str());
+	g_pAnarchyManager->AddToastMessage(VarArgs("Saved screenshot %s", goodFile.c_str()), true);
 }
 
 // copying m_pLastFrameData onto world texture
@@ -1435,6 +1551,11 @@ void C_SteamBrowserInstance::RegenerateTextureBits(ITexture *pTexture, IVTFTextu
 		{
 			//DevMsg("copy last frame\n");
 			this->CopyLastFrame(pVTFTexture->ImageData(0, 0, 0), pSubRect->width, pSubRect->height, pSubRect->width * 4, 4);
+
+			if (m_bTakeScreenshot) {
+				this->TakeScreenshotNow(pTexture, pVTFTexture, pSubRect, pVTFTexture->ImageData(0, 0, 0), pSubRect->width, pSubRect->height, pSubRect->width * 4, 4);
+				m_bTakeScreenshot = false;
+			}
 			//DevMsg("copied\n");
 
 			// fix the bleeding edges on projectors
@@ -1580,6 +1701,8 @@ void C_SteamBrowserInstance::RegenerateTextureBits(ITexture *pTexture, IVTFTextu
 					}
 				}*/
 			}
+
+			
 		}
 	}
 
@@ -1699,7 +1822,7 @@ void C_SteamBrowserInstance::CleanUpTexture()
 		m_pTexture->SetTextureRegenerator(null);
 
 		// save the last rendered image out as a TGA to use as a thumbnail
-		if (m_pLastFrameData && !g_pAnarchyManager->GetCanvasManager()->GetItemTexture(m_originalItemId, "screen"))
+		if (m_pLastFrameData && !g_pAnarchyManager->GetCanvasManager()->GetItemTexture(m_originalItemId, "screen") && m_id != "aai" && m_id != "SteamTalker")
 		{
 			std::string filePath = "cache/snapshots";
 			std::string fileName = filePath + "/";

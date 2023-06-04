@@ -26,6 +26,9 @@ C_WindowInstance::~C_WindowInstance()
 	DevMsg("WindowInstance: Destructor\n");
 }
 
+void C_WindowInstance::TakeScreenshot() {
+	DevMsg("Take screenshot (C_WindowInstance)\n");
+}
 
 void C_WindowInstance::SelfDestruct()
 {
@@ -78,6 +81,11 @@ void C_WindowInstance::Init(std::string id, HWND hwnd, std::string title, std::s
 
 		int iWidth = AA_EMBEDDED_INSTANCE_WIDTH;
 		int iHeight = AA_EMBEDDED_INSTANCE_HEIGHT;
+
+		if (id == "aai") {
+			iWidth = AA_EMBEDDED_INSTANCE_WIDTH;
+			iHeight = AA_EMBEDDED_INSTANCE_HEIGHT;
+		}
 
 		int flags = (0x0100 | 0x0200 | 0x0800 | 0x2000000);
 

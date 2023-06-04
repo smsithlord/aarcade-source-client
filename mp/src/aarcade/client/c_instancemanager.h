@@ -106,7 +106,9 @@ public:
 	object_t* GetNearestObjectToObject(std::string mode, object_t* pOriginalObject, object_t* pCurrentObject, bool bYouTubeOnly = false, float flMaxRange = 300.0f);
 
 	std::string GetObjectWithFile(std::string file);
-
+	std::string GetObjectWithModelId(std::string modelId, bool bOnlySpawned);
+	std::string GetObjectWithItemId(std::string itemId, bool bOnlySpawned);
+	
 	std::string CreateBlankInstance(int iLegacy = 0, KeyValues* pInstanceKV = null, std::string instanceId = "", std::string mapId = "", std::string title = "", std::string file = "", std::string workshopIds = "", std::string mountIds = "", std::string style = "", C_Backpack* pBackpack = null);
 	void CreateObject(KeyValues* pObjectKV, std::string objectId, std::string itemId, std::string modelId, std::string position, std::string rotation, float scale, std::string anim, int slave, int child, int body, int skin);
 

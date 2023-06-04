@@ -173,6 +173,9 @@ C_AnarchyManager::C_AnarchyManager() : CAutoGameSystemPerFrame("C_AnarchyManager
 
 	m_pVRSpectatorModeConVar = null;
 	m_pVRSpectatorMirrorModeConVar = null;
+	m_pFixedCameraMinDistConVar = null;
+	m_pFixedCameraMaxDistConVar = null;
+	m_pFixedCameraSpectateModeConVar = null;
 	m_pVRHMDRenderConVar = null;
 	m_pNoDrawShortcutsConVar = null;
 
@@ -216,6 +219,7 @@ C_AnarchyManager::C_AnarchyManager() : CAutoGameSystemPerFrame("C_AnarchyManager
 
 	m_pAttractModeActiveConVar = null;
 	m_pCabinetAttractModeActiveConVar = null;
+	m_pCamcutAttractModeActiveConVar = null;
 
 	m_pNextBigScreenshotKV = null;
 
@@ -580,6 +584,16 @@ void C_AnarchyManager::Tester()
 	m_HTTPResponseCallback.Set(hAPICall, this, &C_AnarchyManager::HTTPResponse);
 }
 
+void C_AnarchyManager::DownloadSingleFile(std::string url)
+{
+	//https://images.igdb.com/igdb/image/upload/t_cover_big/co2kyg.png
+	HTTPRequestHandle requestHandle = steamapicontext->SteamHTTP()->CreateHTTPRequest(k_EHTTPMethodGET, url.c_str());
+
+	SteamAPICall_t hAPICall;
+	steamapicontext->SteamHTTP()->SendHTTPRequest(requestHandle, &hAPICall);
+	m_DownloadFileCallback.Set(hAPICall, this, &C_AnarchyManager::DownloadFileResponse);
+}
+
 void C_AnarchyManager::CaptureWindowSnapshotsAll()
 {
 	// get all the Windows tasks
@@ -736,6 +750,25 @@ void C_AnarchyManager::HTTPResponse(HTTPRequestCompleted_t* pResult, bool bIOFai
 	free(pBuf);
 	steamapicontext->SteamHTTP()->ReleaseHTTPRequest(pResult->m_hRequest);
 	//DevMsg("%s\n", dataString.c_str());
+}
+
+void C_AnarchyManager::DownloadFileResponse(HTTPRequestCompleted_t* pResult, bool bIOFailure)
+{
+	DevMsg("Recieved download response: %u\n", pResult->m_unBodySize);
+	void* pBuf = malloc(pResult->m_unBodySize);
+	steamapicontext->SteamHTTP()->GetHTTPResponseBodyData(pResult->m_hRequest, (uint8*)pBuf, pResult->m_unBodySize);
+
+	std::string fileName = "tmpimagedownload\\test.tbn";
+	CUtlBuffer buffer(0, pResult->m_unBodySize);
+	buffer.CopyBuffer(pBuf, pResult->m_unBodySize);
+
+	g_pFullFileSystem->CreateDirHierarchy("tmpimagedownload", "DEFAULT_WRITE_PATH");
+	FileHandle_t fileToSave = filesystem->OpenEx(fileName.c_str(), "wb", 0, "DEFAULT_WRITE_PATH");
+	filesystem->Write(buffer.Base(), buffer.TellPut(), fileToSave);
+	filesystem->Close(fileToSave);
+	buffer.Purge();
+	free(pBuf);
+	steamapicontext->SteamHTTP()->ReleaseHTTPRequest(pResult->m_hRequest);
 }
 
 bool C_AnarchyManager::Init()
@@ -1760,6 +1793,7 @@ void C_AnarchyManager::GamePrecache()
 
 	m_pAttractModeActiveConVar->SetValue(0);
 	m_pCabinetAttractModeActiveConVar->SetValue(0);
+	m_pCamcutAttractModeActiveConVar->SetValue(0);
 
 	engine->ClientCmd(VarArgs("exec %s", this->MapName()));
 
@@ -1904,10 +1938,17 @@ void C_AnarchyManager::LevelShutdownPreEntity()
 		m_bIsCreatingLocalAvatar = false;
 		m_pLocalAvatarObject = null;
 	}
+
+	this->DestroyAllPets();
+	m_petTargetPos.x = 0;
+	m_petTargetPos.y = 0;
+	m_petTargetPos.z = 0;
 	
 	m_flSpawnObjectsButtonDownTime = 0.0f;
 
 	//m_pAudioStripMaterial = null;
+
+	m_lastBestNonVRSpectateScreenshotId = "";
 	
 	m_bPrecacheInstances = cvar->FindVar("precache_instances")->GetBool();
 	m_bBatchObjectSpawn = cvar->FindVar("spawn_objects_in_batches")->GetBool();
@@ -1939,6 +1980,7 @@ void C_AnarchyManager::LevelShutdownPreEntity()
 	cvar->FindVar("player_spawn_override")->SetValue("");
 	m_pAttractModeActiveConVar->SetValue(0);
 	m_pCabinetAttractModeActiveConVar->SetValue(0);
+	m_pCamcutAttractModeActiveConVar->SetValue(0);
 
 	if (pModelPreview)
 		pModelPreview->Remove();
@@ -2056,7 +2098,7 @@ int C_AnarchyManager::GetModelThumbSize()
 
 int C_AnarchyManager::GetNoDrawShortcutsValue()
 {
-	return m_pNoDrawShortcutsConVar->GetInt();
+	return (m_pNoDrawShortcutsConVar) ? m_pNoDrawShortcutsConVar->GetInt() : 0;
 }
 
 ///*
@@ -3119,7 +3161,7 @@ std::string C_AnarchyManager::GenerateTextureThumb(std::string textureName)
 		filesystem->Close(fh);
 
 		g_pFullFileSystem->CreateDirHierarchy("cache/textures", "DEFAULT_WRITE_PATH");
-
+		
 		std::string textureId = this->GenerateLegacyHash(textureName.c_str());
 
 		//std::string textureFile = VarArgs("screenshots/overviews/%s.vtf", mapName.c_str());
@@ -3887,6 +3929,8 @@ void C_AnarchyManager::Update(float frametime)
 			this->GetPeakAudio();
 			this->IncrementHueShifter(frametime);
 			this->ManageAlwaysLookObjects();
+			this->ManagePets();
+			this->GetAAIManager()->Update();
 
 			if (m_pCanvasManager)
 			{
@@ -6401,7 +6445,22 @@ void C_AnarchyManager::ManageAlwaysLookObjects()
 		Vector vView = playerEyePosition - shortcutOrigin;
 		VectorAngles(vView, shortcutUp, shortcutAngles);
 		if (shortcutAngles.x != currentAngles.x || shortcutAngles.y != currentAngles.y)
+		{
 			engine->ClientCmd(VarArgs("setcabangles %i %f %f %f;\n", pShortcut->entindex(), shortcutAngles.x, shortcutAngles.y, shortcutAngles.z));
+
+			if (true)
+			{
+				// get the best open task
+				C_EmbeddedInstance* pInstance = (g_pAnarchyManager->GetCanvasManager()->GetDisplayInstance()) ? g_pAnarchyManager->GetCanvasManager()->GetDisplayInstance() : g_pAnarchyManager->GetCanvasManager()->GetFirstInstanceToDisplay();
+				if (pInstance) {
+					C_SteamBrowserInstance* pSteamBrowserInstance = dynamic_cast<C_SteamBrowserInstance*>(pInstance);
+					if (pSteamBrowserInstance) {
+						std::string code = "if( navigator.aaapi && navigator.aaapi.sourceEventHandler ) { navigator.aaapi.sourceEventHandler({method: 'viewUpdate', payload: {angles: [" + std::string(VarArgs("%f", shortcutAngles.x)) + ", " + std::string(VarArgs("%f", shortcutAngles.y)) + ", " + std::string(VarArgs("%f", shortcutAngles.z)) + "]}}); }";
+						pSteamBrowserInstance->InjectJavaScript(code);
+					}
+				}
+			}
+		}
 			//engine->ClientCmd(VarArgs("setcabpos %i %f %f %f %f %f %f;\n", pShortcut->entindex(), shortcutOrigin.x, shortcutOrigin.y, shortcutOrigin.z, shortcutAngles.x, shortcutAngles.y, shortcutAngles.z));//	// servercmdfix , false);	// FIXME: Other calls to setcabpos in client code may have an additional unused blank string param at the end that the server-side code doesn't ask for.  Fix that.  No extra param should be sent.
 	
 		
@@ -6410,6 +6469,165 @@ void C_AnarchyManager::ManageAlwaysLookObjects()
 		//pShortcut->SetAbsAngles(shortcutAngles);
 		//DevMsg("%02f %02f %02f\n", shortcutAngles.x, shortcutAngles.y, shortcutAngles.z);
 	}
+}
+
+bool C_AnarchyManager::GetBestSpectatorCameraScreenshot(Vector& origin, QAngle& angle)
+{
+	return false;
+	/*std::vector<KeyValues*> screenshots;
+	this->GetMetaverseManager()->GetAllScreenshotsForInstance(screenshots, m_instanceId);
+
+	Vector playerOrigin = C_BasePlayer::GetLocalPlayer()->GetAbsOrigin();
+	Vector testOrigin;
+	QAngle testAngle;
+
+	int iBestIndex = -1;
+	float flBestDistance = -1;
+	float flTestDistance;
+	for (unsigned int i = 0; i < screenshots.size(); i++)
+	{
+		if (i == 0)
+		{
+			UTIL_StringToVector(childAngles.Base(), pChildObjectKV->GetString("local/rotation", "0 0 0"));
+			testOrigin.
+			flBestDistance = screenshots[i]->GetAbsOrigin().DistTo(playerOrigin);
+			iBestIndex = i;
+		}
+		else
+		{
+			flTestDistance = m_alwaysLookObjects[i]->GetAbsOrigin().DistTo(playerOrigin);
+			if (flTestDistance < flBestDistance)
+			{
+				flBestDistance = m_alwaysLookObjects[i]->GetAbsOrigin().DistTo(playerOrigin);
+				iBestIndex = i;
+			}
+		}
+	}*/
+}
+
+int C_AnarchyManager::GetFixedCameraSpectateMode() {
+	if (!m_pFixedCameraSpectateModeConVar) {
+		m_pFixedCameraSpectateModeConVar = cvar->FindVar("fixed_camera_spectate_mode");
+	}
+	return m_pFixedCameraSpectateModeConVar->GetInt();
+}
+
+KeyValues* C_AnarchyManager::GetBestNonVRSpectatorCameraObject() {
+	float fPlayerHeight = 60.0f;
+	Vector playerOrigin = C_BasePlayer::GetLocalPlayer()->GetAbsOrigin();
+	playerOrigin.z += fPlayerHeight;
+	Vector testOrigin;
+	QAngle testAngle;
+	float flTestDistance;
+	trace_t tr;
+
+	if (!m_pFixedCameraMinDistConVar)
+	{
+		m_pFixedCameraMinDistConVar = cvar->FindVar("fixed_camera_min_dist");
+	}
+	if (!m_pFixedCameraMaxDistConVar)
+	{
+		m_pFixedCameraMaxDistConVar = cvar->FindVar("fixed_camera_max_dist");
+	}
+
+	float flMinDist = m_pFixedCameraMinDistConVar->GetFloat();//32.0f;
+	float flMaxDist = m_pFixedCameraMaxDistConVar->GetFloat();//2000.0f
+
+	// if the last m_lastBestNonVRSpectateScreenshotId is still visible, then don't change at all.
+	KeyValues* pLastScreenshotKV = this->GetMetaverseManager()->GetScreenshot(m_lastBestNonVRSpectateScreenshotId);
+	if (pLastScreenshotKV) {
+		UTIL_StringToVector(testOrigin.Base(), pLastScreenshotKV->GetString("camera/position", "0 0 0"));
+		flTestDistance = testOrigin.DistTo(playerOrigin);
+		if (flTestDistance >= flMinDist && flTestDistance <= flMaxDist)
+		{
+
+			UTIL_TraceLine(testOrigin, playerOrigin, MASK_SOLID, NULL, COLLISION_GROUP_NONE, &tr);//MASK_SOLID
+			if (tr.fraction == 1.0 || (tr.DidHitNonWorldEntity() && tr.GetEntityIndex() == C_BasePlayer::GetLocalPlayer()->entindex()))
+			{
+				return pLastScreenshotKV;
+			}
+		}
+	}
+
+	std::vector<KeyValues*> screenshots;
+	std::string instanceId = "id" + this->GetInstanceId();
+	this->GetMetaverseManager()->GetAllScreenshotsForInstance(screenshots, instanceId);
+	//Vector bestOrigin;
+	//QAngle bestAngle;
+
+	Vector forward;
+	//C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
+
+	int iBestIndex = -1;
+	float flBestDistance = -1;
+	for (unsigned int i = 0; i < screenshots.size(); i++)
+	{
+		//if (i == 0)
+		//{
+		//	UTIL_StringToVector(testOrigin.Base(), screenshots[i]->GetString("camera/position", "0 0 0"));
+		//	flTestDistance = testOrigin.DistTo(playerOrigin);
+		//	if (flTestDistance >= flMinDist) {
+		//		flBestDistance = testOrigin.DistTo(playerOrigin);
+		//		iBestIndex = i;
+		//	}
+		//}
+		//else
+		//{
+			UTIL_StringToVector(testOrigin.Base(), screenshots[i]->GetString("camera/position", "0 0 0"));
+			flTestDistance = testOrigin.DistTo(playerOrigin);
+			if ((flBestDistance < 0 || flTestDistance > flBestDistance) && flTestDistance >= flMinDist && flTestDistance <= flMaxDist)	// changed to grab the FURTHEST one, instead of the nearest one. > vs <
+			{
+				//UTIL_StringToVector(testAngle.Base(), screenshots[i]->GetString("camera/rotation", "0 0 0"));
+				//bestOrigin = testOrigin;
+				//bestAngle = testAngle;
+
+
+				UTIL_TraceLine(testOrigin, playerOrigin, MASK_SOLID, NULL, COLLISION_GROUP_NONE, &tr);//MASK_SOLID
+				if (tr.fraction == 1.0 || (tr.DidHitNonWorldEntity() && tr.GetEntityIndex() == C_BasePlayer::GetLocalPlayer()->entindex()))
+				{
+					//else if (tr.fraction != 1.0 && tr.m_pEnt)
+
+					flBestDistance = flTestDistance;
+					iBestIndex = i;
+				}
+			}
+		//}
+	}
+
+	if (iBestIndex >= 0)
+	{
+		m_lastBestNonVRSpectateScreenshotId = screenshots[iBestIndex]->GetString("id");
+		return screenshots[iBestIndex];
+		//C_PropShortcutEntity* pBestEntity = m_alwaysLookObjects[iBestIndex];
+		/*
+		if (!m_pLocalAvatarObject)
+		{
+			if (!m_bIsCreatingLocalAvatar)
+			{
+				//m_bIsCreatingLocalAvatar = true;
+				//1 - modelFile
+				//2 - origin X
+				//3 - origin Y
+				//4 - origin Z
+				//5 - angles P
+				//6 - angles Y
+				//7 - angles R
+				//8 - userId
+				std::vector<std::string> modelNames;
+				modelNames.push_back("models/players/tube0.mdl");
+				unsigned int index = rand() % modelNames.size();	// non-uniform, but who cares :S
+				std::string modelName = modelNames[index];
+
+				Vector cameraOrigin = pBestEntity->GetAbsOrigin();
+				QAngle cameraAngles = pBestEntity->GetAbsAngles();
+				engine->ClientCmd(VarArgs("create_local_avatar_object \"%s\" %f %f %f %f %f %f;\n", modelName.c_str(), cameraOrigin.x, cameraOrigin.y, cameraOrigin.z, cameraAngles.x, cameraAngles.y, cameraAngles.z));// , false);
+			}
+		}*/
+
+		//return pBestEntity;
+	}
+
+	return null;
 }
 
 C_PropShortcutEntity* C_AnarchyManager::GetBestSpectatorCameraObject()
@@ -6503,6 +6721,358 @@ C_PropShortcutEntity* C_AnarchyManager::GetBestSpectatorCameraObject()
 void C_AnarchyManager::LocalAvatarObjectCreated(int iEntIndex)
 {
 	m_pLocalAvatarObject = dynamic_cast<C_DynamicProp*>(C_BaseEntity::Instance(iEntIndex));
+}
+
+void C_AnarchyManager::SpawnPet(std::string model, std::string forward, std::string idle, float flScale, std::string rot, std::string pos, float flNear, float flFar, float flSpeed) {
+	m_nextPetModel = model;
+	m_nextPetForward = forward;
+	m_nextPetIdle = idle;
+	m_flNextPetScale = flScale;
+	m_nextPetPos = pos;
+	m_nextPetRot = rot;
+	m_flNextPetNear = flNear;
+	m_flNextPetFar = flFar;
+	m_flNextPetSpeed = flSpeed;
+	engine->ClientCmd(VarArgs("spawn_pet_server \"%s\" %f", model.c_str(), m_flNextPetScale));
+}
+
+void C_AnarchyManager::PetCreated(int iEntIndex)
+{
+	// TODO: Push this onto a pet vector the client code maintains.
+	C_DynamicProp* pDynamicProp = dynamic_cast<C_DynamicProp*>(C_BaseEntity::Instance(iEntIndex));
+	pDynamicProp->SetSolid(SOLID_NONE);
+	pDynamicProp->VPhysicsDestroyObject();
+	pDynamicProp->SetCollisionGroup(COLLISION_GROUP_NONE);
+	pet_t* pet = new pet_t();
+	pet->iState = -1;
+	pet->iEntityIndex = iEntIndex;
+	pet->iCurSequence = -1;
+	//pet.iTargetEntityIndex
+
+	KeyValues* pConfigKV = new KeyValues("pet");
+	pConfigKV->SetString("model", m_nextPetModel.c_str());// "models\\piratecat_animals\\piratecat_lionm.mdl");
+	pConfigKV->SetString("scale", VarArgs("%f %f %f", m_flNextPetScale, m_flNextPetScale, m_flNextPetScale));
+	pConfigKV->SetString("pos", m_nextPetPos.c_str());
+	pConfigKV->SetString("rot", m_nextPetRot.c_str());
+	pConfigKV->SetFloat("near", m_flNextPetNear);
+	pConfigKV->SetFloat("far", m_flNextPetFar);
+	pConfigKV->SetFloat("speed", m_flNextPetSpeed);
+
+	std::string goodIdleSequence = m_nextPetIdle;
+	int iSequence = ACT_INVALID;
+	// try to get one form the model
+	if (goodIdleSequence == "") {
+		iSequence = pDynamicProp->LookupSequence("idle");
+		if (iSequence != ACT_INVALID ) {
+			goodIdleSequence = "idle";
+		}
+	}
+
+	if (goodIdleSequence == "") {
+		DevMsg("Could not find animation for idle.\n");
+		goodIdleSequence = "idle";
+	}
+
+	std::string goodForwardSequence = m_nextPetForward;
+	iSequence = ACT_INVALID;
+	// try to get one form the model
+	if (goodForwardSequence == "") {
+		iSequence = pDynamicProp->LookupSequence("run_forward");
+		if (iSequence != ACT_INVALID) {
+			goodForwardSequence = "run_forward";
+		}
+		else {
+			iSequence = pDynamicProp->LookupSequence("walk_forward");
+			if (iSequence != ACT_INVALID) {
+				goodForwardSequence = "walk_forward";
+			}
+			else {
+				iSequence = pDynamicProp->LookupSequence("forward");
+				if (iSequence != ACT_INVALID) {
+					goodForwardSequence = "forward";
+				}
+			}
+		}
+	}
+
+	if (goodForwardSequence == "") {
+		DevMsg("Could not find animation for forward.\n");
+		goodForwardSequence = "forward";
+	}
+
+	pConfigKV->SetString("idle", goodIdleSequence.c_str());
+	pConfigKV->SetString("forward", goodForwardSequence.c_str());
+
+	pet->pConfigKV = pConfigKV;
+
+	//char buf[AA_MAX_STRING];
+	//Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", origin.x, origin.y, origin.z);
+	UTIL_StringToVector(pet->pos.Base(), m_nextPetPos.c_str());
+	UTIL_StringToVector(pet->rot.Base(), m_nextPetRot.c_str());
+
+	m_pets.push_back(pet);
+	engine->ClientCmd(VarArgs("setscale %i %f;\n", iEntIndex, m_flNextPetScale));
+}
+
+void C_AnarchyManager::DestroyAllPets() {
+	std::vector<int> victims;
+	for (unsigned int i = 0; i < m_pets.size(); i++) {
+		victims.push_back(m_pets[i]->iEntityIndex);
+	}
+
+	for (unsigned int i = 0; i < victims.size(); i++) {
+		this->DestroyPet(victims[i]);
+	}
+}
+
+void C_AnarchyManager::ProcessAllPets() {
+	C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
+	if (!pPlayer)
+		return;
+
+	/*
+	float fPlayerHeight = 60.0f;
+	Vector playerOrigin = pPlayer->GetAbsOrigin();
+	playerOrigin.z += fPlayerHeight;
+	*/
+
+	//C_BaseEntity* pViewEntity = C_BaseEntity::Instance(render->GetViewEntity());
+	//if (!pViewEntity)
+	//	return;
+
+	//Vector playerEyePosition = pViewEntity->EyePosition();
+	Vector playerOrigin = pPlayer->GetAbsOrigin();
+	bool bHasTarget = (m_petTargetPos.x != 0.0f || m_petTargetPos.y != 0.0f || m_petTargetPos.z != 0.0f);
+	Vector targetPosition = (bHasTarget) ? m_petTargetPos : pPlayer->GetAbsOrigin();
+	float flOriginalTargetElevation = targetPosition.z;
+
+	C_PropShortcutEntity* pShortcut;
+	Vector propOrigin;
+	Vector propForward;
+	Vector propRight;
+	Vector propUp;
+	QAngle propAngles;
+	QAngle currentAngles;
+
+	pet_t* pPet;
+	float dist, dist2;
+	float flRealOriginalNear;
+	float flOriginalNear;
+	float flOriginalFar;
+	float flNear;
+	float flFar;
+	float flMinDist;
+	bool bNeedsMovement;
+	int iSequence;
+	//float travelDist;
+	bool bAdjustedRate;
+	Vector testVec;
+	for (unsigned int i = 0; i < m_pets.size(); i++) {
+		pPet = m_pets[i];
+		bNeedsMovement = false;
+		bAdjustedRate = false;
+		C_PropShortcutEntity* pProp = dynamic_cast<C_PropShortcutEntity*>(C_BaseEntity::Instance(pPet->iEntityIndex));
+		if (pProp) {
+			float flSpeedFactor = pPet->pConfigKV->GetFloat("speed", 100.0f);
+			propOrigin = pProp->GetAbsOrigin();
+			currentAngles = pProp->GetAbsAngles();
+			pProp->GetVectors(&propForward, &propRight, &propUp);
+			flNear = pPet->pConfigKV->GetFloat("near", 100.0f);
+			flFar = pPet->pConfigKV->GetFloat("far", 200.0f);
+			flRealOriginalNear = flNear;
+			if (bHasTarget && i == 0) {
+				flNear = 10.0f;
+				flFar = 20.0f;
+			}
+
+			flMinDist = flNear * 0.75f;
+
+			flOriginalNear = flNear;
+			flOriginalFar = flFar;
+
+			if (bHasTarget && i > 0) {
+				flNear *= (i * 1.0f);
+				flMinDist = flNear * 0.75f;
+				flFar *= (i * 1.0f);
+			}
+			else if (!bHasTarget) {
+				flNear *= ((i + 1) * 1.0f);
+				flFar *= ((i + 1) * 1.0f);
+			}
+
+			// get distance to player
+			testVec = targetPosition;
+			testVec.z = propOrigin.z;
+			dist = propOrigin.DistTo(testVec);
+			testVec = playerOrigin;
+			testVec.z = propOrigin.z;
+			dist2 = propOrigin.DistTo(testVec);
+			if (dist < flMinDist) {
+				// push us backwards away
+				trace_t tr;
+				Vector direction = propOrigin - targetPosition;
+				direction = direction.Normalized();
+				UTIL_TraceLine(propOrigin, propOrigin + (direction * (flNear)), MASK_ALL, NULL, COLLISION_GROUP_NONE, &tr);
+				engine->ClientCmd(VarArgs("set_object_pos %i %f %f %f %f %f %f %f;\n", pProp->entindex(), tr.endpos.x, tr.endpos.y, propOrigin.z, currentAngles.x, currentAngles.y, currentAngles.z, flSpeedFactor));
+			}
+			else if (dist2 < flRealOriginalNear * 0.75f) {
+				// push us backwards away from player
+				trace_t tr;
+				Vector direction = propOrigin - playerOrigin;
+				direction = direction.Normalized();
+				UTIL_TraceLine(propOrigin, propOrigin + (direction * (flNear)), MASK_ALL, NULL, COLLISION_GROUP_NONE, &tr);
+				engine->ClientCmd(VarArgs("set_object_pos %i %f %f %f %f %f %f %f;\n", pProp->entindex(), tr.endpos.x, tr.endpos.y, propOrigin.z, currentAngles.x, currentAngles.y, currentAngles.z, flSpeedFactor));
+
+			}
+			else {
+				if (dist < flNear) {
+					if (pPet->iState != 0) {
+						pPet->iState = 0;
+						//DevMsg("State Change: idle\n");
+						std::string realSequenceTitle = pPet->pConfigKV->GetString("idle");
+						pProp->PlaySequenceRegular(realSequenceTitle.c_str());
+						pPet->iCurSequence = pProp->LookupSequence(realSequenceTitle.c_str());
+						/*int index = pProp->LookupSequence(realSequenceTitle.c_str());
+						DevMsg("Test: %s - %i\n", realSequenceTitle.c_str(), index);
+						if (index != ACT_INVALID)
+						{
+						pProp->SetSequence(index);
+						pProp->SetCycle(0.0f);
+						engine->ClientCmd(VarArgs("playsequence %i \"%s\";\n", pProp->entindex(), realSequenceTitle.c_str()));
+						}*/
+					}
+				}
+				else if (dist > flFar || pPet->iState == 1) {
+					if (pPet->iState != 1) {
+						pPet->iState = 1;
+						//DevMsg("State Change: forward\n");
+						std::string realSequenceTitle = pPet->pConfigKV->GetString("forward");
+						pProp->PlaySequenceRegular(realSequenceTitle.c_str());
+						pPet->iCurSequence = pProp->LookupSequence(realSequenceTitle.c_str());
+						/*int index = pProp->LookupSequence(realSequenceTitle.c_str());
+						DevMsg("Test: %s - %i\n", realSequenceTitle.c_str(), index);
+						if (index != ACT_INVALID)
+						{
+						pProp->SetSequence(index);
+						pProp->SetCycle(0.0f);
+						engine->ClientCmd(VarArgs("playsequence %i \"%s\";\n", pProp->entindex(), realSequenceTitle.c_str()));
+						}*/
+					}
+
+					// move towards near bubble
+					trace_t tr;
+					Vector forward = (propOrigin - targetPosition).Normalized();
+					//pPlayer->EyeVectors(&forward);
+					UTIL_TraceLine(targetPosition, targetPosition + (forward * (dist - flNear)), MASK_ALL, pPlayer, COLLISION_GROUP_NONE, &tr);
+					//UTIL_TraceLine(pPlayer->EyePosition(), pPlayer->EyePosition() + (forward * (dist - flNear)), MASK_ALL, pPlayer, COLLISION_GROUP_NONE, &tr);
+					//UTIL_TraceLine(targetPosition, targetPosition + (forward * (dist - flNear)), MASK_ALL, pPlayer, COLLISION_GROUP_NONE, &tr);
+					targetPosition = tr.endpos;
+					//targetPosition.z = propOrigin.z;
+					bNeedsMovement = true;
+					//if (tr.fraction != 1.0 && tr.m_pEnt)
+					//{
+					//if (tr.DidHitWorld())
+					//{
+
+				}
+
+				// randomize where they want to stand.
+				/*if (m_pets.size() > 1){
+					float flRange = flNear * m_pets.size();
+					Vector randomized;
+					randomized.x = random->RandomFloat() * flRange;
+					randomized.x *= (random->RandomFloat() >= 0.5f) ? -1.0f : 1.0f;
+					randomized.y = random->RandomFloat() * flRange;
+					randomized.y *= (random->RandomFloat() >= 0.5f) ? -1.0f : 1.0f;
+					targetPosition += randomized;
+					}*/
+
+				targetPosition.z = propOrigin.z;
+
+				Vector vView = targetPosition - propOrigin;
+				VectorAngles(vView, propUp, propAngles);
+				if (!bNeedsMovement) {
+					flSpeedFactor *= 0.5;
+				}
+
+				//if (propAngles.x != currentAngles.x || propAngles.y != currentAngles.y)
+				if (abs(UTIL_AngleDiff(propAngles.x, currentAngles.x)) > 7 || abs(UTIL_AngleDiff(propAngles.y + pPet->rot.y, currentAngles.y)) > 7)
+				{
+					if (!bNeedsMovement && dist < flOriginalNear * 1.5f) {
+						std::string realSequenceTitle = pPet->pConfigKV->GetString("forward");
+						iSequence = pProp->LookupSequence(realSequenceTitle.c_str());
+						if (pPet->iCurSequence != iSequence) {
+							pProp->PlaySequenceRegular(realSequenceTitle.c_str());
+							pPet->iCurSequence = iSequence;
+						}
+						pProp->SetPlaybackRate(0.5f);
+						bAdjustedRate = true;
+						propOrigin.z = flOriginalTargetElevation + pPet->pos.z;
+					}
+					/*std::string realSequenceTitle = pPet->pConfigKV->GetString("forward");
+					pProp->PlaySequenceRegular(realSequenceTitle.c_str());
+					iSequence = pProp->LookupSequence(realSequenceTitle.c_str());
+					if (pPet->iCurSequence != iSequence) {
+					pProp->PlaySequenceRegular(realSequenceTitle.c_str());
+					}*/
+				}
+				else {
+					if (!bNeedsMovement) {
+						std::string realSequenceTitle = pPet->pConfigKV->GetString("idle");
+						iSequence = pProp->LookupSequence(realSequenceTitle.c_str());
+						if (pPet->iCurSequence != iSequence) {
+							pProp->PlaySequenceRegular(realSequenceTitle.c_str());
+							pPet->iCurSequence = iSequence;
+						}
+					}
+				}
+
+				if (!bAdjustedRate) {
+					pProp->SetPlaybackRate(1.0f);
+				}
+
+				//engine->ClientCmd(VarArgs("set_object_pos %
+				//float flSpeedFactor = pPet->pConfigKV->GetFloat("speed", 100.0f);
+				if (bNeedsMovement) {
+					engine->ClientCmd(VarArgs("set_object_pos %i %f %f %f %f %f %f %f;\n", pProp->entindex(), targetPosition.x, targetPosition.y, flOriginalTargetElevation + pPet->pos.z, propAngles.x, propAngles.y + pPet->rot.y, propAngles.z, flSpeedFactor));
+				}
+				else {
+					engine->ClientCmd(VarArgs("set_object_pos %i %f %f %f %f %f %f %f;\n", pProp->entindex(), propOrigin.x, propOrigin.y, propOrigin.z, propAngles.x, propAngles.y + pPet->rot.y, propAngles.z, flSpeedFactor));
+				}
+			}
+		}
+	}
+}
+
+pet_t* C_AnarchyManager::GetPetByEntIndex(int iEntIndex) {
+	for (unsigned int i = 0; i < m_pets.size(); i++) {
+		if (m_pets[i]->iEntityIndex == iEntIndex) {
+			return m_pets[i];
+		}
+	}
+	return NULL;
+}
+
+void C_AnarchyManager::DestroyPet(int iEntIndex)
+{
+	pet_t* pPet = this->GetPetByEntIndex(iEntIndex);
+	if (!pPet)
+		return;
+
+	// remove us from pet bookkeeping
+	for (unsigned int i = 0; i < m_pets.size(); i++) {
+		if (m_pets[i] == pPet) {
+			m_pets.erase(m_pets.begin() + i);
+			break;
+		}
+	}
+
+	// delete our prop
+	engine->ClientCmd(VarArgs("removeobject %i;", iEntIndex));
+	//C_DynamicProp* pDynamicProp = dynamic_cast<C_DynamicProp*>(C_BaseEntity::Instance(iEntIndex));
+
+	pPet->pConfigKV->deleteThis();
+	delete pPet;
 }
 
 void C_AnarchyManager::AddSubKeysToKeys(KeyValues* kv, KeyValues* targetKV)
@@ -10214,6 +10784,7 @@ void C_AnarchyManager::AnarchyStartup()
 	m_pNoDrawShortcutsConVar = cvar->FindVar("nodraw_shortcuts");
 
 	m_pAlwaysAnimatingImagesConVar = cvar->FindVar("always_animating_images");
+	m_pAlwaysAnimatingImagesConVar->SetValue(true);
 
 	for (unsigned int i = 0; i < 10; i++)
 		m_pActionBarSlotConVars[i] = cvar->FindVar(VarArgs("abslot%i", i));
@@ -10221,12 +10792,14 @@ void C_AnarchyManager::AnarchyStartup()
 	m_pPaintTextureConVar = cvar->FindVar("paint_texture");
 
 	m_pVRSpectatorModeConVar = cvar->FindVar("vrspectator");
+	//m_pSpectatorModeConVar = cvar->FindVar("spectator");
 	m_pVRSpectatorMirrorModeConVar = cvar->FindVar("vrspectatormirror");
 	m_pVRHMDRenderConVar = cvar->FindVar("vrhmdrender");
 	m_pAutoRebuildSoundCacheConVar = cvar->FindVar("autobuildsoundcache");
 
 	m_pAttractModeActiveConVar = cvar->FindVar("attract_mode_active");
 	m_pCabinetAttractModeActiveConVar = cvar->FindVar("cabinet_attract_mode_active");
+	m_pCamcutAttractModeActiveConVar = cvar->FindVar("camcut_attract_mode_active");
 
 	// manage window res RTFN, before going any further.
 	this->ManageWindow();
@@ -10904,7 +11477,7 @@ aaSteamFriendRichPresence_t* C_AnarchyManager::GetFriendRichPresence(uint64 stea
 
 void C_AnarchyManager::FindNextAttractCamera()
 {
-	if (m_pCabinetAttractModeActiveConVar->GetBool())	// Abort if we are already in a cabinet attract mode.
+	if (m_pCabinetAttractModeActiveConVar->GetBool() || m_pCamcutAttractModeActiveConVar->GetBool())	// Abort if we are already in a cabinet attract mode.
 		return;
 
 	m_flNextAttractCameraTime = -1.0f;
@@ -10988,7 +11561,7 @@ void C_AnarchyManager::FindNextAttractCamera()
 // FIXME: This should be merged into FindNextAttractCamera with a direction variable.
 void C_AnarchyManager::FindPreviousAttractCamera()
 {
-	if (m_pCabinetAttractModeActiveConVar->GetBool())	// Abort if we are already in a cabinet attract mode.
+	if (m_pCabinetAttractModeActiveConVar->GetBool() || m_pCamcutAttractModeActiveConVar->GetBool())	// Abort if we are already in a cabinet attract mode.
 		return;
 
 	m_flNextAttractCameraTime = -1.0f;
@@ -11098,6 +11671,7 @@ void C_AnarchyManager::ClearAttractMode()
 	{
 		engine->ClientCmd("end_attract_mode");
 		cvar->FindVar("attract_mode_active")->SetValue(0);
+		cvar->FindVar("camcut_attract_mode_active")->SetValue(0);
 		m_flNextAttractCameraTime = -1.0f;
 	}
 }
@@ -11111,6 +11685,7 @@ void C_AnarchyManager::ToggleAttractMode()
 	{
 		engine->ClientCmd("end_attract_mode");
 		cvar->FindVar("attract_mode_active")->SetValue(0);
+		cvar->FindVar("camcut_attract_mode_active")->SetValue(0);
 		m_flNextAttractCameraTime = -1.0f;
 	}
 	else
@@ -11643,6 +12218,12 @@ bool C_AnarchyManager::CheckIfFileExists(std::string file)
 	return g_pFullFileSystem->FileExists(file.c_str(), "GAME");
 }
 
+void C_AnarchyManager::TestVRStuff() {
+	//int iVRBufferWidth = (int)hmdGetBufferSize().x;//ScreenWidth();
+	//int iVRBufferHeight = (int)hmdGetBufferSize().y;//ScreenHeight();
+	//DevMsg("BUFFER: %i x %i\n", iVRBufferWidth, iVRBufferHeight);
+}
+
 bool C_AnarchyManager::GetShouldInvertVRMatrices()
 {
 	if (!m_pDebugInvertVRMatricesConVar)
@@ -11697,9 +12278,13 @@ ITexture* C_AnarchyManager::CreateVRTwoEyesHMDRenderTarget(IMaterialSystem* pMat
 	m_iVRBufferHeight = (int)hmdGetBufferSize().y;//ScreenHeight();
 	//DevMsg("BUFFER: %i x %i\n", m_iVRBufferWidth, m_iVRBufferHeight);
 
+	//m_iVRBufferWidth = 1920;
+	//m_iVRBufferHeight = 1080;
+	
 	//int pseudo_sdk_version = 2;
 	//ITexture* pTexture = pMaterialSystem->CreateNamedRenderTargetTextureEx2(name, m_iVRBufferWidth, m_iVRBufferHeight, RT_SIZE_LITERAL, (m_iVRAPI != 2) ? pMaterialSystem->GetBackBufferFormat() : IMAGE_FORMAT_RGBA16161616F, MATERIAL_RT_DEPTH_SEPARATE, TEXTUREFLAGS_CLAMPS | TEXTUREFLAGS_CLAMPT, CREATERENDERTARGETFLAGS_HDR);
 	ITexture* pTexture = pMaterialSystem->CreateNamedRenderTargetTextureEx2(name, 12340 + i, m_iVRBufferHeight, RT_SIZE_LITERAL, IMAGE_FORMAT_ARGB8888, MATERIAL_RT_DEPTH_SEPARATE, TEXTUREFLAGS_CLAMPS | TEXTUREFLAGS_CLAMPT, 0);// CREATERENDERTARGETFLAGS_HDR);
+	//ITexture* pTexture = pMaterialSystem->CreateNamedRenderTargetTextureEx2(name, m_iVRBufferWidth, m_iVRBufferHeight, RT_SIZE_LITERAL, IMAGE_FORMAT_ARGB8888, MATERIAL_RT_DEPTH_SEPARATE, TEXTUREFLAGS_CLAMPS | TEXTUREFLAGS_CLAMPT, 0);// CREATERENDERTARGETFLAGS_HDR);
 	
 	m_pVRTwoEyesHMDRenderTextures[i] = pTexture;
 
@@ -12985,9 +13570,37 @@ std::string C_AnarchyManager::GetSteamGamesCode(std::string requestId)
 	std::string code;//
 	//code += "function aaGetSteamGames(){";
 	//code += "if( !!!window.rgGames ) { setTimeout(aaGetSteamGames, 1000); return; }";
+
+
+	//code += "var aagameslist = JSON.parse(document.getElementById('gameslist_config').getAttribute('data-profile-gameslist')).rgGames;";
+	//code += "var aagames = [];";
+	//code += "for (var aagamesi = 0; aagamesi < aagameslist.length; aagamesi++){ aagames.push({ \"name\": aagameslist[aagamesi][\"name\"], \"appid\" : aagameslist[aagamesi][\"appid\"] }); }";
+
 	code += "var aagames = [];";
-	code += "for(var aagamesi = 0; aagamesi < window.rgGames.length; aagamesi++)";
-	code += "aagames.push({\"name\": window.rgGames[aagamesi][\"name\"], \"appid\": window.rgGames[aagamesi][\"appid\"]});";
+	code += "if( document.location.href.indexOf('?tab=recent') > 0 ) {";
+	code += "var aaitems = document.body.querySelectorAll('.gameslistitems_GamesListItem_2-pQF');";
+	code += "for( var i = 0; i < aaitems.length; i++ ) {";
+	code += "var aaappid = aaitems[i].querySelector('a').href;";
+	code += "aaappid = aaappid.substring(aaappid.lastIndexOf('/')+1);";
+	code += "var aaappname = aaitems[i].querySelector('.gameslistitems_GameName_22awl').innerText.trim();";
+	code += "aagames.push({\"name\": aaappname, \"appid\": aaappid});";
+	code += "}";
+	code += "}";
+	code += "else {";
+	code += "var aagameslist = JSON.parse(document.getElementById('gameslist_config').getAttribute('data-profile-gameslist')).rgGames;";
+	code += "for(var aagamesi = 0; aagamesi < aagameslist.length; aagamesi++){ aagames.push({\"name\": aagameslist[aagamesi][\"name\"], \"appid\": aagameslist[aagamesi][\"appid\"]}); }";
+	code += "}";
+
+	
+
+
+
+
+	//code += "var aagames = [];";
+	//code += "for(var aagamesi = 0; aagamesi < window.rgGames.length; aagamesi++)";
+	//code += "aagames.push({\"name\": window.rgGames[aagamesi][\"name\"], \"appid\": window.rgGames[aagamesi][\"appid\"]});";
+
+
 	code += "document.location = 'http://www.aarcadeapicall.com.net.org/?doc=";
 	code += requestId;
 	code += "AAAPICALL' + encodeURIComponent(JSON.stringify(aagames));";
@@ -13011,6 +13624,35 @@ bool C_AnarchyManager::IsYouTube(std::string url)
 		return true;
 
 	return false;
+}
+
+void C_AnarchyManager::ManagePets()
+{
+	this->ProcessAllPets();
+}
+
+void C_AnarchyManager::SetPetTargetPos(Vector pos){
+	m_petTargetPos = pos;
+}
+
+void C_AnarchyManager::TogglePetTargetPos(Vector pos){
+	C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
+	Vector playerOrigin = pPlayer->GetAbsOrigin();
+	if (playerOrigin.DistTo(pos) < 20.0f) {
+		// clear us instead
+		m_petTargetPos.x = 0;
+		m_petTargetPos.y = 0;
+		m_petTargetPos.z = 0;
+	}
+	/*if (m_petTargetPos.x != 0.0f || m_petTargetPos.y != 0.0f || m_petTargetPos.z != 0.0f) {
+		// clear us instead
+		m_petTargetPos.x = 0;
+		m_petTargetPos.y = 0;
+		m_petTargetPos.z = 0;
+	}*/
+	else {
+		this->SetPetTargetPos(pos);
+	}
 }
 
 void C_AnarchyManager::ManageExtractOverview()
@@ -14048,7 +14690,7 @@ void C_AnarchyManager::TestSQLite2()
 
 void C_AnarchyManager::SelectNext()
 {
-	if (cvar->FindVar("attract_mode_active")->GetBool())
+	if (cvar->FindVar("attract_mode_active")->GetBool() || cvar->FindVar("camcut_attract_mode_active")->GetBool())
 	{
 		this->FindNextAttractCamera();
 		return;
@@ -14080,7 +14722,7 @@ void C_AnarchyManager::SelectNext()
 
 void C_AnarchyManager::SelectPrev()
 {
-	if (cvar->FindVar("attract_mode_active")->GetBool())
+	if (cvar->FindVar("attract_mode_active")->GetBool() || cvar->FindVar("camcut_attract_mode_active")->GetBool())
 	{
 		this->FindPreviousAttractCamera();
 		return;
@@ -14264,6 +14906,78 @@ void C_AnarchyManager::SetConnectedUniverse(bool bConnected, bool bIsHost, std::
 		m_numberStatsState.iServerVisitors = 0;
 		m_numberStatsState.iServerVisits = 0;
 	}
+}
+
+
+void C_AnarchyManager::ConvertAndPaint(std::string fileLocation) {
+	return;
+		/*
+
+	// DRAG & DROP IMAGE TO VTF CONVERSION
+	// TODO: Don't need this to be async until remote URLs are supported, that is the main async operation.
+	// 1. Perform drop raycast & remember it before async operations below.
+	//this->PickPaintTexture();
+
+	// TODO: Add support for URLs. Just do local file support for now... so SKIP step 2.
+	// 2. Download the URL dropped in & receive a callback when finished. (!! Need to create alternative download & callback handlers.)
+	// TODO: WORK (later)
+
+	// 3. Run VTEX to convert the image to a VTF saved in aarcade_user/aaauto/*.vtf (!! works but not ideal because it flashes CMD windows as it converts the image.)
+	// 3.1 generate a name to save it as based on hash. (if it already exists, don't convert it & skip to step 5.
+	// TODO: WORK
+	std::string fileHash = this->GenerateLegacyHash(fileLocation.c_str());
+
+	//std::string filePath = "cache/models";
+	//std::string fileName = filePath + "/";
+	//fileName += modelHash;
+	//fileName += ".tga";
+
+	//	return fileName;
+
+	std::string shortName = fileHash;
+	std::string saveFileName = "materials/aaauto/";
+	saveFileName += shortName;
+
+	std::string vmtFileName = saveFileName + ".vmt";
+	
+	std::string textureName = "aaauto/";
+	textureName += shortName;
+
+	// Set the new VTF as the paint texture & use the raycast from (1) to apply it to the surface.
+	m_pPaintTextureConVar->SetValue(textureName.c_str());
+
+	if (g_pFullFileSystem->FileExists(vmtFileName.c_str(), "DEFAULT_WRITE_PATH"))
+	{
+		this->PaintMaterial();
+		return;
+	}
+
+	// 4. Generate a VMT for the texture (so it can be used in Hammer) in aarcade_user/materials/aaauto/*.vmt
+	// This is actually handled by VTEX too.
+	//KeyValues* pVMT = new KeyValues("LightmappedGeneric");
+	//pVMT->SetString("$basetexture", textureName.c_str());
+	//pVMT->SaveToFile(g_pFullFileSystem, vmtFileName.c_str(), "DEFAULT_WRITE_PATH");
+
+
+	// PERFORM ASYNC OPERATION HERE & WAIT UNDETERMINED AMOUNT OF TIME?? :S
+	// For now, just trigger the async operation & don't handle the completion of it.
+
+	std::string toolsFolder = g_pAnarchyManager->GetAArcadeToolsFolder();
+	std::string userFolder = g_pAnarchyManager->GetAArcadeUserFolder();
+
+	FileHandle_t launch_file = filesystem->Open("Arcade_Launcher.bat", "w", "EXECUTABLE_PATH");
+	if (launch_file)
+	{
+		std::string executable = VarArgs("%s\\vtex.exe", toolsFolder.c_str());
+		std::string goodExecutable = "\"" + executable + "\"";
+		filesystem->FPrintf(launch_file, "%s:\n", goodExecutable.substr(1, 1).c_str());
+		filesystem->FPrintf(launch_file, "cd \"%s\"\n", goodExecutable.substr(1, goodExecutable.find_last_of("/\\", goodExecutable.find("\"", 1)) - 1).c_str());
+		filesystem->FPrintf(launch_file, "START \"Launching VTEX...\" %s -i \"%s\\cache\\textures\\temp.vtf\" -o \"%s\\cache\\textures\\%s.tga\"", goodExecutable.c_str(), userFolder.c_str(), userFolder.c_str(), textureId.c_str());
+		filesystem->Close(launch_file);
+		system("Arcade_Launcher.bat");
+		return textureId;
+	}
+	*/
 }
 
 void C_AnarchyManager::TestSQLite()

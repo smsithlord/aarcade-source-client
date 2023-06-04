@@ -23,6 +23,7 @@ public:
 	void Init(std::string id = "", std::string url = "", std::string title = "", bool alpha = false, const char* pchPostData = null, int entindex = -1);
 
 	void Update();
+	void TakeScreenshot();
 
 	void CleanUpTexture();
 	//void OnSecondsUpdated(){};

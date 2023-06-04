@@ -76,7 +76,49 @@ void AddHoverGlowEffect(const CCommand &args)
 		pEntity->AddGlowEffect();
 }
 ConCommand addhovergloweffect("addhovergloweffect", AddHoverGlowEffect, "Adds a hover glow around the entity.", FCVAR_HIDDEN);
+/*
+void ReparentShortcuts(const CCommand &args)
+{
+	// get a list of every prop_shortcut that is within ANY of the volumes that match the name.
+	//...
 
+	// get the parent entity
+	// ...
+
+	// loop 
+
+
+
+	int total = 0;
+
+	CBaseEntity *pEntity = NULL;
+	std::string entityName = args[1];
+	std::string parentEntityName = args[2];
+	std::string triggerEntityIndexes = "";
+	unsigned int uTotal = 0;
+	while ((pEntity = gEntList.FindEntityByName(pEntity, entityName.c_str())) != NULL)
+	{
+		uTotal++;
+		if (uTotal > 1) {
+			triggerEntityIndexes += " ";
+		}
+		triggerEntityIndexes += UTIL_VarArgs("%i", pEntity->entindex());
+	}
+
+	if (uTotal > 0) {
+		CBaseEntity* pParentEntity = gEntList.FindEntityByName(NULL, parentEntityName.c_str());
+		if (pParentEntity){
+			CBaseEntity* pPlayerEntity = UTIL_GetCommandClient();
+			edict_t *pClient = engine->PEntityOfEntIndex(pPlayerEntity->entindex());
+			engine->ClientCommand(pClient, UTIL_VarArgs("reparent_shortcuts_ready \"%s\" %i;", triggerEntityIndexes.c_str(), pParentEntity->entindex()));
+		}
+	}
+	else {
+		DevMsg("WARNING: Could not find any entities within volume to attach.\n");
+	}
+}
+ConCommand reparentshortcuts("reparent_shortcuts", ReparentShortcuts, "Reparents the shortcuts that are inside of the provided trigger entity to the provided parent entity.", FCVAR_NONE);
+*/
 void RemoveJunkObjects(const CCommand &args)
 {
 	g_pAnarchyManager->RemoveJunkEntities();
@@ -1869,13 +1911,14 @@ void SetObjectPos(const CCommand &args)
 		CDynamicProp* pEntity = (CDynamicProp*)GetContainingEntity(pEntityEdict);
 		Vector origin = Vector(Q_atof(args.Arg(2)), Q_atof(args.Arg(3)), Q_atof(args.Arg(4)));// + 10.0
 		QAngle angles = QAngle(Q_atof(args.Arg(5)), Q_atof(args.Arg(6)), Q_atof(args.Arg(7)));
+		float flSpeedFactor = (args.ArgC() > 8) ? Q_atof(args.Arg(8)) : 100.0f;
 
 		// initialize the values we'll spline between
 		///*
 		Vector vStartPos = pEntity->GetAbsOrigin();
 		//float flInterpStartTime = gpGlobals->curtime;
 		pEntity->SetAbsVelocity(vec3_origin);
-		pEntity->SetLerpSync(origin, angles);
+		pEntity->SetLerpSync(origin, angles, flSpeedFactor);
 		//*/
 
 		/*
@@ -3670,6 +3713,104 @@ void SpawnChatBall(const CCommand &args)
 }
 ConCommand chat_ball("chat_ball", SpawnChatBall, "For internal use only. (For now, until I make it more user-command-console friendly.");
 
+void SpawnPet_Server(const CCommand &args)
+{
+	std::string model = (args.ArgC() > 1) ? args.Arg(1) : "";
+	CBasePlayer* pPlayer = UTIL_GetLocalPlayer();
+	if (pPlayer->GetHealth() <= 0)
+		return;
+
+	Vector eyePosition;
+	Vector forward;
+	Vector right;
+	Vector up;
+	QAngle eyeAngles = pPlayer->EyeAngles();
+	pPlayer->EyePositionAndVectors(&eyePosition, &forward, &right, &up);
+
+	trace_t tr;
+	Vector vForward;
+	pPlayer->EyeVectors(&vForward);
+	UTIL_TraceLine(pPlayer->EyePosition(), pPlayer->EyePosition() + vForward * MAX_COORD_RANGE, MASK_SOLID, pPlayer, COLLISION_GROUP_NONE, &tr);
+
+
+	CBaseEntity *pSafeSpawnEntity = dynamic_cast<CBaseEntity*>(pPlayer);
+	if (!pSafeSpawnEntity)
+	{
+		DevMsg("ERROR: No spawn positions found!\n");
+		return;
+	}
+
+	// Now spawn it
+	CDynamicProp* pProp = dynamic_cast<CDynamicProp*>(CreateEntityByName("prop_shortcut"));
+	float flScale = (args.ArgC() > 2) ? Q_atof(args.Arg(2)) : 1.0;
+
+	// Pass in standard key values
+	char buf[512];
+
+	Vector safeOrigin = eyePosition;
+	safeOrigin = tr.endpos;
+	QAngle safeAngles = QAngle(0, 0, 0);
+
+	// Pass in standard key values
+	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", safeOrigin.x, safeOrigin.y, safeOrigin.z);
+	pProp->KeyValue("origin", buf);
+	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", safeAngles.x, safeAngles.y, safeAngles.z);
+	pProp->KeyValue("angles", buf);
+
+	pProp->KeyValue("fademindist", "-1");
+	pProp->KeyValue("fadescale", "1");
+	pProp->KeyValue("MaxAnimTime", "10");
+	pProp->KeyValue("MinAnimTime", "5");
+	pProp->KeyValue("modelscale", UTIL_VarArgs("%f", flScale));
+	pProp->KeyValue("renderamt", "255");
+	pProp->KeyValue("rendercolor", "255 255 255");
+	pProp->KeyValue("solid", "6");
+	pProp->KeyValue("DisableBoneFollowers", "0");
+	pProp->KeyValue("disablereceiveshadows", "0");
+	pProp->KeyValue("disableshadows", "0");
+	pProp->KeyValue("ExplodeDamage", "0");
+	pProp->KeyValue("skin", "0");
+	pProp->KeyValue("ExplodeRadius", "0");
+	pProp->KeyValue("fademaxdist", "0");
+	pProp->KeyValue("maxdxlevel", "0");
+	pProp->KeyValue("mindxlevel", "0");
+
+	pProp->KeyValue("PerformanceMode", "0");
+	pProp->KeyValue("pressuredelay", "0");
+	pProp->KeyValue("spawnflags", "0");
+	pProp->KeyValue("RandomAnimation", "0");
+	pProp->KeyValue("renderfx", "0");
+	pProp->KeyValue("rendermode", "0");
+	pProp->KeyValue("SetBodyGroup", "0");
+	pProp->KeyValue("StartDisabled", "0");
+
+	pProp->KeyValue("model", model.c_str());
+
+	if (DispatchSpawn(pProp) > -1)
+	{
+		pProp->SetMoveType(MOVETYPE_NONE);
+		pProp->SetCollisionGroup(COLLISION_GROUP_NONE);
+		pProp->SetSolid(SOLID_NONE);
+		if (pProp->VPhysicsGetObject())
+			pProp->VPhysicsDestroyObject();
+
+		CBaseEntity* pChild = pProp->FirstMoveChild();
+		while (pChild)
+		{
+			pChild->SetSolid(SOLID_NONE);
+			pChild->SetCollisionGroup(COLLISION_GROUP_NONE);
+			pChild = pChild->NextMovePeer();
+		}
+
+		pProp->NetworkStateChanged();
+
+		CBasePlayer* pRequestingPlayer = UTIL_GetCommandClient();
+		edict_t *pClient = engine->PEntityOfEntIndex(pRequestingPlayer->entindex());
+		engine->ClientCommand(pClient, "pet_created %i;\n", pProp->entindex());
+	}
+}
+ConCommand spawn_pet_server("spawn_pet_server", SpawnPet_Server, "For internal use only.", FCVAR_HIDDEN);
+
 void SpawnJunk(const CCommand &args)
 {
 	//CBaseEntity* pSafeSpawnEntity = GetEntSpawnPoint();
@@ -4237,6 +4378,21 @@ void GetColMinMax(const CCommand &args)
 }
 ConCommand getcolminmax("getcolminmax", GetColMinMax, "Interal use only.", FCVAR_HIDDEN);
 
+void GetTempPinnedCam(const CCommand &args)
+{
+	CBaseEntity* pPlayerEntity = UTIL_GetCommandClient();
+	edict_t *pClient = engine->PEntityOfEntIndex(pPlayerEntity->entindex());
+	CBaseEntity* pEntity = gEntList.FindEntityByTarget(NULL, "aatmpcamdrop");
+	if (pEntity)
+	{
+		engine->ClientCommand(pClient, UTIL_VarArgs("gottemppinnedcam %i;\n", pEntity->entindex()));
+	}
+	else {
+		engine->ClientCommand(pClient, "gottemppinnedcam -1;\n");
+	}
+}
+ConCommand gettemppinnedcam("gettemppinnedcam", GetTempPinnedCam, "Interal use only.", FCVAR_HIDDEN);
+
 void SetAngles(const CCommand &args)
 {
 	CBaseEntity* pEntity = CBaseEntity::Instance(Q_atoi(args[1]));
@@ -4336,3 +4492,58 @@ void GetValid2DBBoxes(const CCommand &args)
 	engine->ClientCommand(pClient, "got_valid_2d_bboxes;\n");
 }
 ConCommand getvalid2dbboxes("get_valid_2d_bboxes", GetValid2DBBoxes, "Interal use only.", FCVAR_HIDDEN);
+
+
+//-----------------------------------------------------------------------------
+// Purpose: 
+//-----------------------------------------------------------------------------
+void CreateCar(const CCommand &args)
+{
+	std::string modelName = (args.ArgC() > 1 ) ? args[1] : "models/buggy.mdl";
+	std::string scriptName = (args.ArgC() > 2) ? args[2] : "scripts/vehicles/jeep_test.txt";
+
+	CBasePlayer *pPlayer = UTIL_GetCommandClient();
+	if (!pPlayer)
+		return;
+
+	// Cheat to create a jeep in front of the player
+	Vector vecForward;
+	AngleVectors(pPlayer->EyeAngles(), &vecForward);
+	CBaseEntity *pCar = (CBaseEntity *)CreateEntityByName("prop_vehicle_jeep");
+	if (pCar)
+	{
+		Vector vecOrigin = pPlayer->GetAbsOrigin() + vecForward * 256 + Vector(0, 0, 64);
+		QAngle vecAngles(0, pPlayer->GetAbsAngles().y - 90, 0);
+		pCar->SetAbsOrigin(vecOrigin);
+		pCar->SetAbsAngles(vecAngles);
+		pCar->KeyValue("model", modelName.c_str());
+		pCar->KeyValue("solid", "6");
+		pCar->KeyValue("targetname", "spawnedcar");
+		pCar->KeyValue("vehiclescript", scriptName.c_str());
+		DispatchSpawn(pCar);
+		pCar->Activate();
+		pCar->Teleport(&vecOrigin, &vecAngles, NULL);
+	}
+
+	/*
+	// Cheat to create a jeep in front of the player
+	Vector vecForward;
+	AngleVectors(pPlayer->EyeAngles(), &vecForward);
+	CBaseEntity *pJeep = (CBaseEntity *)CreateEntityByName("prop_vehicle_jeep");
+	if (pJeep)
+	{
+		Vector vecOrigin = pPlayer->GetAbsOrigin() + vecForward * 256 + Vector(0, 0, 64);
+		QAngle vecAngles(0, pPlayer->GetAbsAngles().y - 90, 0);
+		pJeep->SetAbsOrigin(vecOrigin);
+		pJeep->SetAbsAngles(vecAngles);
+		pJeep->KeyValue("model", "models/vehicle.mdl");
+		pJeep->KeyValue("solid", "6");
+		pJeep->KeyValue("targetname", "jeep");
+		pJeep->KeyValue("vehiclescript", "scripts/vehicles/jalopy.txt");
+		DispatchSpawn(pJeep);
+		pJeep->Activate();
+		pJeep->Teleport(&vecOrigin, &vecAngles, NULL);
+	}*/
+}
+
+ConCommand createcar("createcar", CreateCar, "Spawn car in front of the player. Can pass in model name & vehicle script name too (optional.) Default values are models/buggy.mdl and scripts/vehicles/jeep_test.txt", FCVAR_NONE);

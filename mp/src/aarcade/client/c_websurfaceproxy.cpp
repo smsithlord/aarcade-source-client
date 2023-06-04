@@ -870,7 +870,7 @@ void CWebSurfaceProxy::OnBind(C_BaseEntity *pC_BaseEntity)
 	}
 
 	bool bAlteredUVs = false;
-	if (g_pAnarchyManager->IsAlwaysAnimatingImagesEnabled() && m_pMaterial->HasProxy() && m_iState == 2 && m_pEmbeddedInstance && m_originalId == "images")
+	if (g_pAnarchyManager->IsAlwaysAnimatingImagesEnabled() && m_pMaterial->HasProxy() && m_iState == 2 && m_pEmbeddedInstance && m_originalId == "images" && m_originalSimpleImageChannel == "screen")
 	{
 		// TEMP TEST: Test some offset stuff.
 		C_PropShortcutEntity* pShortcut = dynamic_cast<C_PropShortcutEntity*>(pC_BaseEntity);
@@ -965,10 +965,11 @@ void CWebSurfaceProxy::OnBind(C_BaseEntity *pC_BaseEntity)
 								matrix.Identity();
 
 								float* flBase = matrix.Base();
-								if (flBase)
-								{
+								//if (flBase)
+								//{
 									float flScaleX, flScaleY, flOffsetX, flOffsetY;
 									g_pAnarchyManager->GetAAIManager()->GetItemMapping(pShortcut->GetItemId(), flScaleX, flScaleY, flOffsetX, flOffsetY);
+									//g_pAnarchyManager->GetAAIManager()->DidRender(pShortcut->GetItemId());
 
 									flBase[scaleX] = flScaleX;
 									flBase[scaleY] = flScaleY;
@@ -977,7 +978,7 @@ void CWebSurfaceProxy::OnBind(C_BaseEntity *pC_BaseEntity)
 									m_pMaterialBaseTextureTransformVar->SetMatrixValue(matrix);
 
 									bAlteredUVs = true;
-								}
+								//}
 
 								/*
 								// TOP RIGHT 25%

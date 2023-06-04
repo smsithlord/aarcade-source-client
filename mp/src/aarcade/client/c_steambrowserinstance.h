@@ -78,6 +78,8 @@ public:
 
 	std::string GetId() { return m_id; }
 	void Update();
+	void TakeScreenshot();
+	void TakeScreenshotNow(ITexture* pTexture, IVTFTexture *pVTFTexture, Rect_t *pSubRect, unsigned char* dest, unsigned int width, unsigned int height, unsigned int pitch, unsigned int depth);
 
 	void CopyLastFrame(const void* data, unsigned int width, unsigned int height, unsigned int depth);
 	void CopyLastFrame(unsigned char* dest, unsigned int width, unsigned int height, size_t pitch, unsigned int depth);
@@ -181,6 +183,11 @@ private:
 	*/
 
 	//int m_iLastNeedsPaint;
+
+	unsigned int m_uAtlasWidth;// AA_ATLAS_INSTANCE_WIDTH
+	unsigned int m_uAtlasHeight;// AA_ATLAS_INSTANCE_HEIGHT
+
+	bool m_bTakeScreenshot;
 
 	bool m_bUseVideoFilters;
 	int m_iChromaLightR;

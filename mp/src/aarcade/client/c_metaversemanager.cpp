@@ -2861,6 +2861,10 @@ void C_MetaverseManager::AdoptMaterialDependency(KeyValues* pAdoptedFilesKV, std
 			textureAttributeNames.push_back("$lightwarptexture");
 			textureAttributeNames.push_back("$selfillummask");
 			textureAttributeNames.push_back("$detail");
+			textureAttributeNames.push_back("$glassenvmap");
+			textureAttributeNames.push_back("$dudv");
+			textureAttributeNames.push_back("include");
+			textureAttributeNames.push_back("replace");
 
 			for (unsigned int i = 0; i < textureAttributeNames.size(); i++)
 			{
@@ -3104,6 +3108,8 @@ void C_MetaverseManager::AdoptMaterial(KeyValues* pAdoptedFilesKV, IMaterial* pM
 	textureAttributeNames.push_back("$lightwarptexture");
 	textureAttributeNames.push_back("$selfillummask");
 	textureAttributeNames.push_back("$detail");
+	textureAttributeNames.push_back("$glassenvmap");
+	textureAttributeNames.push_back("$dudv");
 	textureAttributeNames.push_back("include");
 	textureAttributeNames.push_back("replace");
 
@@ -3788,6 +3794,10 @@ void C_MetaverseManager::AddMaterialDependencyToUploadBatch(std::string batchId,
 			textureAttributeNames.push_back("$lightwarptexture");
 			textureAttributeNames.push_back("$selfillummask");
 			textureAttributeNames.push_back("$detail");
+			textureAttributeNames.push_back("$glassenvmap");
+			textureAttributeNames.push_back("$dudv");
+			textureAttributeNames.push_back("include");
+			textureAttributeNames.push_back("replace");
 
 			for (unsigned int i = 0; i < textureAttributeNames.size(); i++)
 			{
@@ -4068,6 +4078,8 @@ std::string C_MetaverseManager::AddMaterialToUploadBatch(IMaterial* pMaterial, s
 	textureAttributeNames.push_back("$lightwarptexture");
 	textureAttributeNames.push_back("$selfillummask");
 	textureAttributeNames.push_back("$detail");
+	textureAttributeNames.push_back("$glassenvmap");
+	textureAttributeNames.push_back("$dudv");
 	textureAttributeNames.push_back("include");
 	textureAttributeNames.push_back("replace");
 
@@ -12477,10 +12489,28 @@ object_update_t* C_MetaverseManager::FindPendingObjectUpdate(std::string objectI
 	return null;
 }
 
-void C_MetaverseManager::UserSessionUpdated(int iUpdateMask, std::string userId, std::string sessionId, std::string displayName, std::string itemId, std::string objectId, std::string say, std::string bodyOrigin, std::string bodyAngles, std::string headOrigin, std::string headAngles, std::string mouseX, std::string mouseY, std::string webUrl, std::string avatarUrl, std::string state, std::string launched, std::string twitchChannel, std::string twitchLive)
+void C_MetaverseManager::UserSessionUpdated(int iUpdateMask, std::string userId, std::string sessionId, std::string displayName, std::string itemId, std::string objectId, std::string say, std::string bodyOrigin, std::string bodyAngles, std::string headOrigin, std::string headAngles, std::string mouseX, std::string mouseY, std::string webUrl, std::string avatarUrl_in, std::string state, std::string launched, std::string twitchChannel, std::string twitchLive)
 {
 	if (m_pDebugDisableMPPlayersConVar->GetBool())
 		return;
+
+	std::string avatarUrl = avatarUrl_in;
+	size_t found = avatarUrl.find("http://avatars.steamstatic.com/");
+	if ( found == std::string::npos ) {
+		// try to get user ID
+		found = avatarUrl.find_last_of("/");
+		if (found != std::string::npos) {
+			std::string steamId = avatarUrl.substr(found + 1);
+			found = steamId.find("_full.jpg");
+			if (found != std::string::npos) {
+				steamId = steamId.substr(0, found);
+				avatarUrl = "http://avatars.steamstatic.com/";
+				avatarUrl += steamId;
+				avatarUrl += "_full.jpg";
+			}
+		}
+	}
+
 	//user_t* pUser = this->GetInstanceUser(userId);
 	//if (!pUser)
 	//{

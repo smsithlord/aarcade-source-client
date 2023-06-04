@@ -10,15 +10,24 @@ C_AAIManager::C_AAIManager()
 {
 	//DevMsg("AAIManager: Constructor\n");
 	m_pAnimatedImagesKV = null;
+	m_pLastRenderedListKV = null;
 }
 
 C_AAIManager::~C_AAIManager()
 {
 	//DevMsg("AAIManager: Destructor\n");
+	m_pAnimateMP4sConVar = null;
+	//m_pDeveloperConVar = null;
+
 	if (m_pAnimatedImagesKV)
 	{
 		m_pAnimatedImagesKV->deleteThis();
 		m_pAnimatedImagesKV = null;
+	}
+
+	if (m_pLastRenderedListKV) {
+		m_pLastRenderedListKV->deleteThis();
+		m_pLastRenderedListKV = null;
 	}
 }
 
@@ -31,6 +40,9 @@ void C_AAIManager::Init()
 		m_pAnimatedImagesKV->deleteThis();
 		m_pAnimatedImagesKV = new KeyValues("items");
 	}
+
+	m_pLastRenderedListKV = new KeyValues("items");
+	m_pAnimateMP4sConVar = cvar->FindVar("always_animate_mp4s");
 }
 
 void C_AAIManager::Reset()
@@ -193,21 +205,45 @@ void C_AAIManager::GetItemMapping(std::string itemId, float &flScaleX, float &fl
 	flOffsetX = flOffsetX_out;
 	flOffsetY = flOffsetY_out;
 
+	this->DidRender(itemId);
+
 	if (!bExisted)
+	{
+		//if (!m_pDeveloperConVar) {
+			//m_pDeveloperConVar = cvar->FindVar("developer");
+		//}
+
+		//if (m_pDeveloperConVar->GetInt() == 1) {
+			//g_pAnarchyManager->AddToastMessage("Added 1 animated image to atlas");
+		//}
 		this->SendOnItemAdded(uItemIndex, itemId);
+	}
 }
 
 void C_AAIManager::RemoveItemMapping(std::string itemId)
 {
+	//if (!m_pDeveloperConVar) {
+		//m_pDeveloperConVar = cvar->FindVar("developer");
+	//}
+
 	unsigned int size = m_items.size();
 	for (unsigned int i = 0; i < size; i++)
 	{
 		if (m_items[i] == itemId)
 		{
 			m_items.erase(m_items.begin() + i);
+			//if (m_pDeveloperConVar->GetInt() == 1) {
+				//g_pAnarchyManager->AddToastMessage("Removed 1 animated image to atlas");
+			//}
 			this->SendOnItemRemoved(itemId);
 			return;
 		}
+	}
+
+	KeyValues* pVictimKV = m_pLastRenderedListKV->FindKey(itemId.c_str());
+	if (pVictimKV) {
+		m_pLastRenderedListKV->RemoveSubKey(pVictimKV);
+		pVictimKV = null;
 	}
 }
 
@@ -216,6 +252,24 @@ void C_AAIManager::OnReadyNow()
 	unsigned int size = m_items.size();
 	for (unsigned int i = 0; i < size; i++)
 		this->SendOnItemAdded(i, m_items[i]);
+}
+
+void C_AAIManager::Update() {
+	int iCurFrame = gpGlobals->framecount;
+	std::vector<std::string> victims;
+	for (KeyValues *sub = m_pLastRenderedListKV->GetFirstSubKey(); sub; sub = sub->GetNextKey()) {
+		if (iCurFrame - sub->GetInt() > 360) { // 6 seconds at 60fps = 360 frames
+			victims.push_back(std::string(sub->GetName()));
+		}
+	}
+
+	for (unsigned int i = 0; i < victims.size(); i++) {
+		this->RemoveItemMapping(victims[i]);
+	}
+}
+
+void C_AAIManager::DidRender(std::string itemId) {
+	m_pLastRenderedListKV->SetInt(itemId.c_str(), gpGlobals->framecount);
 }
 
 void C_AAIManager::SendOnItemRemoved(std::string itemId)
@@ -236,7 +290,7 @@ void C_AAIManager::SendOnItemAdded(unsigned int uIndex, std::string itemId)
 		KeyValues* pItemKV = g_pAnarchyManager->GetMetaverseManager()->GetActiveKeyValues(g_pAnarchyManager->GetMetaverseManager()->GetLibraryItem(itemId));
 		if (pItemKV)
 		{
-			std::string code = std::string(VarArgs("OnItemAdded(%u, \"", uIndex)) + itemId + std::string("\", \"") + g_pAnarchyManager->encodeURIComponent(pItemKV->GetString("file")) + std::string("\", \"") + g_pAnarchyManager->encodeURIComponent(pItemKV->GetString("screen")) + std::string("\", \"") + g_pAnarchyManager->encodeURIComponent(pItemKV->GetString("marquee")) + std::string("\", \"") + g_pAnarchyManager->encodeURIComponent(pItemKV->GetString("preview")) + std::string("\");");
+			std::string code = std::string(VarArgs("OnItemAdded(%i, %u, \"", m_pAnimateMP4sConVar->GetInt(), uIndex)) + itemId + std::string("\", \"") + g_pAnarchyManager->encodeURIComponent(pItemKV->GetString("file")) + std::string("\", \"") + g_pAnarchyManager->encodeURIComponent(pItemKV->GetString("screen")) + std::string("\", \"") + g_pAnarchyManager->encodeURIComponent(pItemKV->GetString("marquee")) + std::string("\", \"") + g_pAnarchyManager->encodeURIComponent(pItemKV->GetString("preview")) + std::string("\", \"") + g_pAnarchyManager->encodeURIComponent(pItemKV->GetString("stream")) + std::string("\");");
 			m_pBrowserInstance->InjectJavaScript(code);
 		}
 	}
