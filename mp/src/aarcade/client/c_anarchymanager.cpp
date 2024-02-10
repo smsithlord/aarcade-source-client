@@ -8,6 +8,8 @@
 #include "c_browseslate.h"
 #include <ctime>	// for UpdateSystemTimeState method
 
+#include "mathlib/vmatrix.h"
+
 #include "vgui/IInput.h"
 #include <vgui/ISurface.h>
 //#include "input.h"
@@ -286,6 +288,9 @@ C_AnarchyManager::C_AnarchyManager() : CAutoGameSystemPerFrame("C_AnarchyManager
 	m_uValidProcessedModelCount = 0;
 	m_uProcessBatchSize = 100;
 	m_uProcessCurrentCycle = 0;
+
+	m_flOldZNear = 7;
+	m_pInspectModelIdConVar = null;
 	
 	//m_hCursor = LoadCursor(NULL, IDC_ARROW);
 	m_cursor = vgui::dc_arrow;
@@ -965,7 +970,7 @@ void C_AnarchyManager::ActivateInspectObject(C_PropShortcutEntity* pShortcut) {
 
 	//float goodScale = pEntity->GetModelScale() + 0.1f * iDelta;
 
-	DevMsg("starging scale: %f\n", m_flInspectStartingScale);
+	//DevMsg("starting scale: %f\n", m_flInspectStartingScale);
 	
 	float flOffsetMultiplyer = 80.0;
 	//float flBoundingRadius = m_pInspectShortcut->BoundingRadius();
@@ -978,8 +983,8 @@ void C_AnarchyManager::ActivateInspectObject(C_PropShortcutEntity* pShortcut) {
 		flMax = size.z;
 	}
 
-	float flBoundingRadius = flMax / 2.0;
-	DevMsg("Bounding racius: %02f\n", flBoundingRadius);
+	//float flBoundingRadius = flMax / 2.0;
+	//DevMsg("Bounding racius: %02f\n", flBoundingRadius);
 
 	Vector forward = MainViewForward();
 	//Vector right = MainViewRight();
@@ -991,8 +996,8 @@ void C_AnarchyManager::ActivateInspectObject(C_PropShortcutEntity* pShortcut) {
 	m_flInspectGoodOriginDist = 24.0f;// + flBoundingRadius;
 	//float flScale = m_flInspectStartingScale;
 
-	float flDesiredRadius = 24.0f;
-	m_flInspectGoodScale = (flDesiredRadius / (flBoundingRadius / m_flInspectStartingScale)) * m_flInspectStartingScale;// flBoundingRadius;// (flBoundingRadius / m_flInspectStartingScale);
+	//float flDesiredRadius = 24.0f;
+	//m_flInspectGoodScale = (flDesiredRadius / (flBoundingRadius / m_flInspectStartingScale)) * m_flInspectStartingScale;// flBoundingRadius;// (flBoundingRadius / m_flInspectStartingScale);
 
 
 	Vector objectToView;
@@ -1007,10 +1012,83 @@ void C_AnarchyManager::ActivateInspectObject(C_PropShortcutEntity* pShortcut) {
 
 	m_flInspectPreviousScale = m_flInspectGoodScale;
 
+	Vector renderMins;
+	Vector renderMaxs;
+	m_pInspectShortcut->GetRenderBounds(renderMins, renderMaxs);
+	float x = renderMaxs.x - renderMins.x;
+	float y = renderMaxs.y - renderMins.y;
+	float z = renderMaxs.z - renderMins.z;
+	m_flInspectGoodOriginDist = fmaxf(x, fmaxf(y, z));
+
+	if (!m_pInspectModelIdConVar)
+	{
+		m_pInspectModelIdConVar = cvar->FindVar("inspect_model_id");
+	}
+
+	std::string modelId = m_pInspectShortcut->GetModelId();
+	m_pInspectModelIdConVar->SetValue(modelId.c_str());
+
+	m_inspectCenterOffsetFudge.x = 0;
+	m_inspectCenterOffsetFudge.y = 0;
+	m_inspectCenterOffsetFudge.z = 0;
+
+
+
+	// Offset position to be centered.
+	// Determin the offset, which should be relative to the model scale.
+
+
+	// Calculate the size of the bounding box
+	//Vector vecSize = renderMaxs - renderMins;
+
+	// Calculate the position of the origin relative to the bounding box, in the interval [0,1]
+	//Vector vecRelativeOrigin = (m_inspectStartingOrigin - renderMins) / vecSize;
+
+	// Convert the relative origin from the interval [0,1] to [-1,1]
+	//vecRelativeOrigin = vecRelativeOrigin * 2.0f - Vector(1, 1, 1);
+	
+	// Calculate the local center of the bounds
+
+
+	Vector goodMins = renderMins;
+	Vector goodMaxs = renderMaxs;
+	
+	/*m_pInspectShortcut->ComputeHitboxSurroundingBox(&goodMins, &goodMaxs);
+	goodMins -= m_inspectStartingOrigin;
+	goodMaxs -= m_inspectStartingOrigin;*/
+
+	// Get the collision property of the entity
+	/*CCollisionProperty* pCollision = m_pInspectShortcut->CollisionProp();
+	if (pCollision)
+	{
+		const model_t *pModel = pCollision->GetCollisionModel();
+		goodMins = pCollision->OBBMins();// *m_pInspectShortcut->GetModelScale();
+		goodMaxs = pCollision->OBBMaxs();// *m_pInspectShortcut->GetModelScale();
+		m_inspectCenterOffset = pCollision->WorldSpaceCenter() - m_inspectStartingOrigin;
+
+		////pCollision->WorldSpaceAABB(&goodMins, &goodMaxs);
+		////goodMins += m_inspectStartingOrigin;
+		////goodMaxs += m_inspectStartingOrigin;
+	}
+	else {*/
+		Vector vecRelativeOrigin = goodMins + (goodMaxs - goodMins) * 0.5f;
+		vecRelativeOrigin /= m_pInspectShortcut->GetModelScale();
+		m_inspectCenterOffset = vecRelativeOrigin;//.Init(.x = vecRelativeOrigin.x;
+	//}
+
+
+
+
+
+	//float flGoodDist = 30.0f;
+	//float multiplyer = flGoodDist - max;
+	//DevMsg("Render Max: %f\n", m_flInspectGoodOriginDist);
+
 	// set the initial good transform
 	Vector goodOrigin = MainViewForward();
 	goodOrigin *= m_flInspectGoodOriginDist;
 	goodOrigin += MainViewOrigin();
+	//goodOrigin += m_inspectCenterOffset;
 
 	/*
 	//Vector max = m_pInspectShortcut->WorldAlignMaxs();
@@ -1026,11 +1104,21 @@ void C_AnarchyManager::ActivateInspectObject(C_PropShortcutEntity* pShortcut) {
 
 	//m_pInspectShortcut->VPhysicsGetObject()->GetMassCenterLocalSpace()
 
-	if (m_flInspectGoodScale != m_flInspectStartingScale) {
+	/*if (m_flInspectGoodScale != m_flInspectStartingScale) {
 		engine->ClientCmd(VarArgs("setscale %i %f;\n", m_pInspectShortcut->entindex(), m_flInspectGoodScale));
-	}
+	}*/
+
 	engine->ClientCmd(VarArgs("snap_object_pos %i %f %f %f %f %f %f;\n", m_pInspectShortcut->entindex(), goodOrigin.x, goodOrigin.y, goodOrigin.z, m_inspectGoodAngles.x, m_inspectGoodAngles.y, m_inspectGoodAngles.z));
 	engine->ClientCmd(VarArgs("makeghost %i %i;\n", m_pInspectShortcut->entindex(), false));
+
+	ConVar* pZNearConVar = cvar->FindVar("znear");
+	m_flOldZNear = pZNearConVar->GetFloat();
+	pZNearConVar->SetValue(m_flOldZNear * (1 / 5.0f));	// set to 1/5th actual value
+
+	//engine->ClientCmd(VarArgs("set_transmit_state_sv %i 1;\n", m_pInspectShortcut->entindex(), false));
+	//m_pInspectShortcut->AddEFlags(EFL_FORCE_CHECK_TRANSMIT);
+	//m_pInspectShortcut->AddFlag(FL_EDICT_ALWAYS);
+	//m_pInspectShortcut->RemoveFlag(FL_EDICT_PVSCHECK);
 
 	//origin += forward * m_flPreviousJoystickForward * flOffsetMultiplyer; // add in the forward offset
 
@@ -1043,23 +1131,58 @@ void C_AnarchyManager::ActivateInspectObject(C_PropShortcutEntity* pShortcut) {
 	C_AwesomiumBrowserInstance* pHudBrowserInstance = g_pAnarchyManager->GetAwesomiumBrowserManager()->FindAwesomiumBrowserInstance("hud");
 	pHudBrowserInstance->SetUrl("asset://ui/inspectObject.html");
 	g_pAnarchyManager->GetInputManager()->ActivateInputMode(true, false, pHudBrowserInstance);
+
+	if (!cvar->FindVar("inspect_object_showui")->GetBool())
+	{
+		engine->ClientCmd("r_drawvgui 0;\n");
+
+		//if (cvar->FindVar("reshadedepth")->GetBool())
+		//{
+			ShowCursor(false);
+		//}
+	}
 }
 
 void C_AnarchyManager::DeactivateInspectObject() {
 	if (m_pInspectShortcut) {
 		//engine->ClientCmd(VarArgs("setparent %i;\n", m_pInspectShortcut->entindex()));
 
+		if (!cvar->FindVar("inspect_object_showui")->GetBool())
+		{
+			ShowCursor(true);
+		}
+
+		m_pInspectShortcut->SetDrawForeground(false);
+		//this->SetForegroundShortcut(null);
+
 		Vector origin = m_inspectStartingOrigin;
 		QAngle angles = m_inspectStartingAngles;
 		// NOTE: This didn't work from the UI - most likely because the cmd was coming BETWEEN engine updates?? But changing it to a server cmd fixed it.
 		//engine->ClientCmd(VarArgs("snap_object_pos %i %02f %02f %02f %02f %02f %02f;\n", m_pInspectShortcut->entindex(), origin.x, origin.y, origin.z, angles.x, angles.y, angles.z));
 
-		engine->ServerCmd(VarArgs("setscale %i %f\n", m_pInspectShortcut->entindex(), m_flInspectStartingScale));
+		//engine->ServerCmd(VarArgs("setscale %i %f\n", m_pInspectShortcut->entindex(), m_flInspectStartingScale));
+
 		engine->ServerCmd(VarArgs("snap_object_pos %i %f %f %f %f %f %f;\n", m_pInspectShortcut->entindex(), origin.x, origin.y, origin.z, angles.x, angles.y, angles.z));
 		engine->ServerCmd(VarArgs("makenonghost %i %i;\n", m_pInspectShortcut->entindex(), false));
+
+		cvar->FindVar("znear")->SetValue(m_flOldZNear);
+
+		//engine->ClientCmd(VarArgs("set_transmit_state_sv %i 0;\n", m_pInspectShortcut->entindex(), false));
+		//m_pInspectShortcut->RemoveEFlags(EFL_FORCE_CHECK_TRANSMIT);
+
 		//engine->ClientCmd(VarArgs("makenonghost %i %i;\n", m_pInspectShortcut->entindex(), false));
 		//engine->ClientCmd_Unrestricted(VarArgs("setscale %i %f\n", m_pInspectShortcut->entindex(), m_flInspectStartingScale));
 		//engine->ClientCmd_Unrestricted(VarArgs("snap_object_pos %i %f %f %f %f %f %f;\n", m_pInspectShortcut->entindex(), origin.x, origin.y, origin.z, angles.x, angles.y, angles.z));
+
+		engine->ClientCmd("inspect_yaw 0; inspect_pitch 0; inspect_horiz 0; inspect_vert 0; inspect_tall 0;");
+
+		if (!cvar->FindVar("inspect_object_showui")->GetBool())
+		{
+			if (!cvar->FindVar("reshadedepth")->GetBool())
+			{
+				engine->ClientCmd("r_drawvgui 1;\n");
+			}
+		}
 	}
 
 	m_pInspectShortcut = null;
@@ -1108,7 +1231,388 @@ void C_AnarchyManager::InspectModeTick(float flFrameTime) {
 		DevMsg("Value: %i\n", iVal);
 	}*/
 
-	if (iJoystick > 0) {
+	//bool bUseAdditive = false;
+	bool bUseRotationAlt = true;
+
+	if (!m_pInspectYawConVar) {
+		m_pInspectYawConVar = cvar->FindVar("inspect_yaw");
+		m_pInspectPitchConVar = cvar->FindVar("inspect_pitch");
+		m_pInspectHorizConVar = cvar->FindVar("inspect_horiz");
+		m_pInspectVertConVar = cvar->FindVar("inspect_vert");
+		m_pInspectTallConVar = cvar->FindVar("inspect_tall");
+	}
+
+	bool bShouldUseJoystick = (iJoystick > 0 && (m_flPreviousJoystickYaw != 0 || m_flPreviousJoystickPitch != 0 || m_flPreviousJoystickSide != 0 || m_flPreviousJoystickForward != 0 || vgui::input()->IsKeyDown(KEY_XBUTTON_LTRIGGER) || vgui::input()->IsKeyDown(KEY_XBUTTON_RTRIGGER)));  //(iJoystick > 0 && !m_pInspectHorizConVar->GetBool() && !m_pInspectPitchConVar->GetBool() && !m_pInspectYawConVar->GetBool() && !m_pInspectVertConVar->GetBool() && !m_pInspectTallConVar->GetBool());
+
+	float xVal = (bShouldUseJoystick) ? m_flPreviousJoystickYaw : m_pInspectYawConVar->GetFloat();
+	float yVal = (bShouldUseJoystick) ? m_flPreviousJoystickPitch : m_pInspectPitchConVar->GetFloat();
+	float horizVal = (bShouldUseJoystick) ? m_flPreviousJoystickSide : m_pInspectHorizConVar->GetFloat();
+	float vertVal = (bShouldUseJoystick) ? m_flPreviousJoystickForward : m_pInspectVertConVar->GetFloat();
+	float vertAxisVal = 0;
+	if (bShouldUseJoystick)
+	{
+		vertAxisVal += vgui::input()->IsKeyDown(KEY_XBUTTON_LTRIGGER) ? -1 : 0;
+		vertAxisVal += vgui::input()->IsKeyDown(KEY_XBUTTON_RTRIGGER) ? 1 : 0;
+
+		// reset any overrides
+		m_pInspectYawConVar->SetValue(0.0f);
+		m_pInspectPitchConVar->SetValue(0.0f);
+		m_pInspectHorizConVar->SetValue(0.0f);
+		m_pInspectVertConVar->SetValue(0.0f);
+		m_pInspectTallConVar->SetValue(0.0f);
+	}
+	else {
+		vertAxisVal = m_pInspectTallConVar->GetFloat();
+	}
+
+	if (true) {
+		if (bUseRotationAlt) {
+			// ALT ROTATION
+			// Have an X and Y value on the interval [-1, 1]
+			// Rotate 180 * these values on the local coordinate system. (no dt involved.)
+
+			bool bIsWalkMode = vgui::input()->IsKeyDown(KEY_XBUTTON_LEFT_SHOULDER) || vgui::input()->IsKeyDown(KEY_LSHIFT) || vgui::input()->IsKeyDown(KEY_RSHIFT);
+			if (bIsWalkMode) {
+				if (this->GetInputManager()->GetInputMode())//>GetFullscreenMode())
+				{
+					DevMsg("Turning on walk around mode...\n");
+					this->GetInputManager()->SetFullscreenMode(false);
+					this->GetInputManager()->DeactivateInputMode(true);
+				}
+
+				//  we are walking, so don't use gamepad inputs.
+				vertVal = 0;
+				horizVal = 0;
+				yVal = 0;
+				xVal = 0;
+				vertAxisVal = 0;
+			}
+			else
+			{
+				/*if (vgui::input()->IsMouseDown(MOUSE_LEFT))
+				{
+					// override joystick values w/ convar values
+					//bUseAdditive = true;	// TODO: When use additive gets initiated, it needs to update its working origin & angles as the new baseline.
+					xVal = m_pInspectYawConVar->GetFloat();
+					yVal = m_pInspectPitchConVar->GetFloat();
+					horizVal = m_pInspectHorizConVar->GetFloat();
+					vertVal = m_pInspectVertConVar->GetFloat();
+					vertAxisVal = m_pInspectTallConVar->GetFloat();
+				}*/
+
+				if (!this->GetInputManager()->GetInputMode())
+				{
+					DevMsg("Turning off walk around mode...\n");
+					//this->GetInputManager()->SetFullscreenMode(true);
+					this->GetInputManager()->ActivateInputMode(true, false, null, true, false);
+
+					if (!cvar->FindVar("inspect_object_showui")->GetBool())
+					{
+						//ShowCursor(false);
+						if (cvar->FindVar("reshadedepth")->GetInt() != 0)
+						{
+							cvar->FindVar("r_drawvgui")->SetValue(0);
+						}
+					}
+					else {
+						//ShowCursor(true);
+					}
+
+					// for reshade depth support built into this method...
+					//this->GetInputManager()->SetFullscreenMode(true);
+				}
+			}
+
+			// Assuming 'pEntity' is a pointer to the entity you want to rotate.
+			C_BaseEntity* pEntity = m_pInspectShortcut;
+
+			//engine->ClientCmd(VarArgs("set_transmit_state_sv %i 1;\n", m_pInspectShortcut->entindex(), false));
+
+
+
+
+			if (bIsWalkMode)
+			{
+				//m_inspectStartingAngles = m_pInspectShortcut->GetAbsAngles();
+				//m_inspectStartingOrigin = m_pInspectShortcut->GetAbsOrigin();
+				Vector objectToView;
+				VectorSubtract(MainViewOrigin(), Vector(m_pInspectShortcut->GetAbsOrigin()), objectToView);
+
+				float flYaw = UTIL_VecToYaw(objectToView);
+				float flPitch = UTIL_VecToPitch(objectToView);
+				m_inspectGoodAngles = QAngle(flPitch, flYaw, 0);
+			}
+
+
+			//float flAngleMultiplyer = 150.0f;
+			//m_inspectOffsetAngles += QAngle(m_pInspectPitchConVar * flAngleMultiplyer * flFrameTime, m_pInspectYawConVar * flAngleMultiplyer * flFrameTime, 0);
+
+			//QAngle angles = m_inspectGoodAngles;//m_pInspectShortcut->GetAbsAngles();
+			//angles += m_inspectOffsetAngles;
+
+
+
+
+
+			QAngle currentAngles = m_inspectOffsetAngles;// pEntity->GetAbsAngles(); // Get the current angles.
+			currentAngles += m_inspectGoodAngles;
+			matrix3x4_t rotMatrix, entityMatrix, newMatrix;
+			
+			// Convert the current angles to a matrix.
+			AngleMatrix(currentAngles, entityMatrix);
+
+			//Vector orbitPosOverride(0, 0, 0);
+			//ConVar* pTesterJointVal = cvar->FindVar("testerjointval");
+			/*if (pTesterJointVal->GetBool())
+			{
+				Vector altOriginLocalOffset(0, pTesterJointVal->GetFloat(), 0);
+				//VMatrix translation;
+				//MatrixBuildTranslation(translation, altOriginLocalOffset);
+				VMatrix temp = entityMatrix;
+				MatrixTranslate(temp, altOriginLocalOffset);
+				entityMatrix = temp.As3x4();
+				MatrixPosition(entityMatrix, orbitPosOverride);
+
+				MatrixVectors(entityMatrix, &vecForward, &vecRight, &vecUp);*/
+				//matrix3x4_t originOffsetMatrix;
+				//SetIdentityMatrix(originOffsetMatrix);
+				//MatrixSetTranslation(altOriginLocalOffset, entityMatrix);
+				//MatrixBuildRotationAboutAxis(Vector(0.f, 1.f, 0.f), hlvr_hand_pitch.GetFloat(), rot);
+
+				//rotMatrix *= originOffsetMatrix;
+				/*VMatrix temp;
+				MatrixMultiply(rotMatrix, originOffsetMatrix, temp);
+				rotMatrix = temp.As3x4();
+
+				MatrixPosition(rotMatrix, orbitPosOverride);*/
+				//MatrixPosition(originOffsetMatrix)
+
+
+				/*matrix3x4_t rot;
+				SetIdentityMatrix(rot);
+				if (!isLeftSpace) {
+					MatrixSetTranslation(Vector(handOffset.x, -handOffset.y, handOffset.z), rot);
+				}
+				else {
+					MatrixSetTranslation(handOffset, rot);
+				}
+				returnValue = returnValue * rot;
+
+				MatrixBuildRotationAboutAxis(Vector(0.f, 1.f, 0.f), hlvr_hand_pitch.GetFloat(), rot);
+				returnValue = returnValue * rot;*/
+
+
+
+
+
+				/*VMatrix vMat(entityMatrix);
+				MatrixTranslate(vMat, altOriginLocalOffset);
+
+				Vector vecOrigin, vecForward, vecRight, vecUp;
+				MatrixVectors(vMat.As3x4(), &vecForward, &vecRight, &vecUp);
+				MatrixPosition(vMat.As3x4(), vecOrigin);*/
+			//}
+
+			// TOOD: Add alt-origin offset here to entityMatrix
+			// ...
+			// Orbiting would alter the position, the offset is somewhere inside of entityMatrix. (If the previous step worked at all, lul)
+
+			// Create a rotation matrix for a 90-degree rotation around the Y-axis.
+			float flRotAxisAmount = xVal;	// [-1, 1]
+			float flRotRange = 180.0f;
+			float flRotAmount = flRotRange * flRotAxisAmount;
+
+			float flPitchAxisAmount = yVal;	// [-1, 1]
+			float flPitchRange = 180.0f;
+			float flPitchAmount = flPitchRange * flPitchAxisAmount;
+
+			AngleMatrix(QAngle(flPitchAmount, flRotAmount, 0), rotMatrix);
+
+			// Concatenate the entity's matrix with the rotation matrix.
+			// This applies the rotation relative to the entity's current orientation.
+			MatrixMultiply(entityMatrix, rotMatrix, newMatrix);
+
+			// Convert the new matrix back to angles.
+			QAngle newAngles;
+			MatrixAngles(newMatrix, newAngles);
+
+			//C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
+			Vector forward = MainViewForward();
+			Vector right = MainViewRight();
+			Vector up = MainViewUp();
+			//Vector forward, right, up;
+			//pPlayer->EyeVectors(&forward, &right, &up);
+			//Vector eyePosition = MainViewOrigin();//pPlayer->EyePosition();
+
+			// TODO: When alt rotation is used, offset should also behave similar to rotation & not rely on dt!
+			float flOffsetMultiplyer = 150.0;
+			//m_inspectOffsetOrigin += forward * (vertVal * flOffsetMultiplyer * flFrameTime); // add in the forward offset
+			//m_inspectOffsetOrigin += right * (horizVal * flOffsetMultiplyer * flFrameTime); // add in the sideways offset
+
+			if (vgui::input()->IsKeyDown(KEY_LCONTROL) || vgui::input()->IsKeyDown(KEY_RCONTROL))
+			{
+				//Vector oldInspectCenterOffset = m_inspectCenterOffset;
+
+				//m_inspectCenterOffsetFudge.y += horizVal * (flOffsetMultiplyer*0.5) * flFrameTime;
+				//m_inspectCenterOffsetFudge.x += vertVal * (flOffsetMultiplyer*0.5) * flFrameTime;
+				//m_inspectCenterOffsetFudge.z += vertAxisVal * -(flOffsetMultiplyer*0.5) * flFrameTime;
+
+				//m_inspectCenterOffset.y += horizVal * (flOffsetMultiplyer*0.5) * flFrameTime;
+				//m_inspectCenterOffset.x += vertVal * (flOffsetMultiplyer*0.5) * flFrameTime;
+				//m_inspectCenterOffset.z += vertAxisVal * -(flOffsetMultiplyer*0.5) * flFrameTime;
+
+				//m_inspectCenterOffset += m_inspectCenterOffsetFudge;
+
+				//if (oldInspectCenterOffset.DistTo(m_inspectCenterOffset) > 0.1) {
+				if ( horizVal != 0 || vertVal != 0 || vertAxisVal != 0 )
+				{
+					m_inspectCenterOffsetFudge.y += horizVal * (flOffsetMultiplyer*0.5) * flFrameTime;
+					m_inspectCenterOffsetFudge.x += vertVal * (flOffsetMultiplyer*0.5) * flFrameTime;
+					m_inspectCenterOffsetFudge.z += vertAxisVal * -(flOffsetMultiplyer*0.5) * flFrameTime;
+
+					std::string modelId = m_pInspectShortcut->GetModelId();
+
+					C_AwesomiumBrowserInstance* pHudBrowserInstance = m_pAwesomiumBrowserManager->FindAwesomiumBrowserInstance("hud");
+					if (pHudBrowserInstance)
+					{
+						//m_pAwesomiumBrowserManager->javas
+						std::vector<std::string> params;
+						params.push_back(modelId);
+						params.push_back(VarArgs("%02f %02f %02f\n", m_inspectCenterOffsetFudge.x, m_inspectCenterOffsetFudge.y, m_inspectCenterOffsetFudge.z));
+						//UTIL_StringToVector
+
+						// 0: modelId
+						// 1: inspectCenterOffset
+						// 2: 
+						pHudBrowserInstance->DispatchJavaScriptMethod("cmdListener", "onCenterChanged", params);
+					}
+				}
+			}
+			else
+			{
+				m_inspectOffsetOrigin.y += vertVal * flOffsetMultiplyer * flFrameTime; // add in the forward offset
+				m_inspectOffsetOrigin.x += horizVal * flOffsetMultiplyer * flFrameTime; // add in the sideways offset
+				m_inspectOffsetOrigin.z += vertAxisVal * flOffsetMultiplyer * 0.4 * flFrameTime; // add in the up/down offset
+			}
+			
+			Vector origin = MainViewForward();
+			origin *= m_flInspectGoodOriginDist;
+			origin += MainViewOrigin();
+
+			//Vector origin = m_inspectGoodOrigin;// m_pInspectShortcut->GetAbsOrigin();
+			//origin += m_inspectOffsetOrigin;
+			origin += forward * m_inspectOffsetOrigin.y;
+			origin += right * m_inspectOffsetOrigin.x;
+			origin += up * m_inspectOffsetOrigin.z;
+
+
+
+			//if (orbitPosOverride.x != 0 || orbitPosOverride.y != 0 || orbitPosOverride.z != 0) {
+			//if (pTesterJointVal->GetInt() != 0 )
+			if ( true )
+			{
+				//origin.x += orbitPosOverride.x;
+				//origin.y += orbitPosOverride.y;
+				//origin.z += orbitPosOverride.z;
+				//Vector orbitPosOverrideVector;
+				//orbitPosOverrideVector.x = orbitPosOverride.x * vecRight;
+
+				//origin += vecForward * orbitPosOverride.y;
+				//origin += vecRight * orbitPosOverride.x;
+				//origin += vecUp * orbitPosOverride.z;
+
+				//origin += vecForward * vecOrigin.y;
+				//origin += vecRight * vecOrigin.x;
+				//origin += vecUp * vecOrigin.z;
+
+				VMatrix finalMatrix;//m_pInspectShortcut
+				//finalMatrix.SetupMatrixOrgAngles(origin, newAngles);
+
+				finalMatrix.SetupMatrixAngles(newAngles);
+				//Vector altOriginLocalOffset(0, pTesterJointVal->GetFloat(), pTesterJointVal->GetFloat());
+				//MatrixPosition(entityMatrix, altOriginLocalOffset);
+
+				Vector vecOrigin, vecForward, vecRight, vecUp;
+				MatrixVectors(finalMatrix.As3x4(), &vecForward, &vecRight, &vecUp);
+				float flModelScale = m_pInspectShortcut->GetModelScale();
+
+				Vector centerWithFudge = m_inspectCenterOffset;
+				centerWithFudge += m_inspectCenterOffsetFudge;
+
+				origin += vecForward * -centerWithFudge.x * flModelScale;
+				origin += vecRight * -centerWithFudge.y * flModelScale;
+				origin += vecUp * -centerWithFudge.z * flModelScale;
+
+				//origin += vecOrigin;
+			}
+
+
+
+
+			engine->ClientCmd(VarArgs("snap_object_pos %i %02f %02f %02f %02f %02f %02f;\n", m_pInspectShortcut->entindex(), origin.x, origin.y, origin.z, newAngles.x, newAngles.y, newAngles.z));
+
+		}
+	}
+	else if (iJoystick > 0) {
+		// ROTATION
+		// Have an X and Y value on the interval [-1, 1]
+		// Constant rotate along the global coordinate system * dt.
+
+		float flPreviousJoystickForward = m_flPreviousJoystickForward;
+		float flPreviousJoystickSide = m_flPreviousJoystickSide;
+		bool bLTriggerDown = vgui::input()->IsKeyDown(KEY_XBUTTON_LTRIGGER);
+		bool bRTriggerDown = vgui::input()->IsKeyDown(KEY_XBUTTON_RTRIGGER);
+		float flPreviousJoystickPitch = m_flPreviousJoystickPitch;
+		float flPreviousJoystickYaw = m_flPreviousJoystickYaw;
+
+		bool bIsWalkMode = vgui::input()->IsKeyDown(KEY_XBUTTON_LEFT_SHOULDER) || vgui::input()->IsKeyDown(KEY_LSHIFT) || vgui::input()->IsKeyDown(KEY_RSHIFT);
+		if (bIsWalkMode) {
+			if (this->GetInputManager()->GetInputMode())//>GetFullscreenMode())
+			{
+				DevMsg("Turning on walk around mode...\n");
+				this->GetInputManager()->SetFullscreenMode(false);
+				this->GetInputManager()->DeactivateInputMode(true);
+			}
+
+			//  we are walking, so don't use gamepad inputs.
+			flPreviousJoystickForward = 0;
+			flPreviousJoystickSide = 0;
+			flPreviousJoystickPitch = 0;
+			flPreviousJoystickYaw = 0;
+			bLTriggerDown = false;
+			bRTriggerDown = false;
+		}
+		else
+		{
+			if (vgui::input()->IsMouseDown(MOUSE_LEFT))
+			{
+				// override joystick values w/ convar values
+				DevMsg("TODO: Override inspect joystick inputs.\n");
+			}
+
+			if (!this->GetInputManager()->GetInputMode())
+			{
+				DevMsg("Turning off walk around mode...\n");
+				//this->GetInputManager()->SetFullscreenMode(true);
+				this->GetInputManager()->ActivateInputMode(true, false, null, true, false);
+
+				if (!cvar->FindVar("inspect_object_showui")->GetBool())
+				{
+					//ShowCursor(false);
+					if (cvar->FindVar("reshadedepth")->GetInt() != 0)
+					{
+						cvar->FindVar("r_drawvgui")->SetValue(0);
+					}
+				}
+				else {
+					//ShowCursor(true);
+				}
+
+				// for reshade depth support built into this method...
+				//this->GetInputManager()->SetFullscreenMode(true);
+			}
+		}
+
 		//g_pAnarchyManager->UpdateGamepadAxisInput(m_flPreviousJoystickForward, m_flPreviousJoystickSide, m_flPreviousJoystickPitch, m_flPreviousJoystickYaw);
 		//DevMsg("Value: (%02f, %02f)\n", m_flPreviousJoystickYaw, m_flPreviousJoystickPitch);
 
@@ -1123,14 +1627,14 @@ void C_AnarchyManager::InspectModeTick(float flFrameTime) {
 		float flOffsetMultiplyer = 150.0;
 		//m_inspectOffsetOrigin += forward * (m_flPreviousJoystickForward * flOffsetMultiplyer * flFrameTime); // add in the forward offset
 		//m_inspectOffsetOrigin += right * (m_flPreviousJoystickSide * flOffsetMultiplyer * flFrameTime); // add in the sideways offset
-		m_inspectOffsetOrigin.y += m_flPreviousJoystickForward * flOffsetMultiplyer * flFrameTime; // add in the forward offset
-		m_inspectOffsetOrigin.x += m_flPreviousJoystickSide * flOffsetMultiplyer * flFrameTime; // add in the sideways offset
+		m_inspectOffsetOrigin.y += flPreviousJoystickForward * flOffsetMultiplyer * flFrameTime; // add in the forward offset
+		m_inspectOffsetOrigin.x += flPreviousJoystickSide * flOffsetMultiplyer * flFrameTime; // add in the sideways offset
 
 		float flTriggerAxis = 0.0f;
-		if (vgui::input()->IsKeyDown(KEY_XBUTTON_LTRIGGER)) {
+		if (bLTriggerDown) {
 			flTriggerAxis = -1.0f;
 		}
-		else if (vgui::input()->IsKeyDown(KEY_XBUTTON_RTRIGGER)) {
+		else if (bRTriggerDown) {
 			flTriggerAxis = 1.0f;
 		}
 
@@ -1151,7 +1655,7 @@ void C_AnarchyManager::InspectModeTick(float flFrameTime) {
 		//Vector centerSpot = m_pInspectShortcut->CollisionProp()->OBBCenter();// m_pInspectShortcut->WorldSpaceCenter();
 		//m_pInspectShortcut->VPhysicsGetObject()->GetMassCenterLocalSpace()
 		//DevMsg("Center Spot: %f %f %f\n", centerSpot.x, centerSpot.y, centerSpot.z);
-		//Vector centerOffset = centerSpot;// centerSpot - m_pInspectShortcut->GetAbsOrigin();
+		//Vector centerOffset = centerSpot;// centerSm_flInspectGoodScalepot - m_pInspectShortcut->GetAbsOrigin();
 
 		//DevMsg("Offset Spot: %f %f %f\n", centerOffset.x, centerOffset.y, centerOffset.z);
 		//DevMsg("Good Scale: %f\n", m_flInspectGoodScale);
@@ -1168,11 +1672,78 @@ void C_AnarchyManager::InspectModeTick(float flFrameTime) {
 		//QAngle angles = m_inspectStartingAngle;//pPlayer->GetAbsAngles();
 		//angles += QAngle(180 * m_flPreviousJoystickPitch, 180 * m_flPreviousJoystickYaw, 0);
 
+
+
+		if (bIsWalkMode)
+		{
+			//m_inspectStartingAngles = m_pInspectShortcut->GetAbsAngles();
+			//m_inspectStartingOrigin = m_pInspectShortcut->GetAbsOrigin();
+			Vector objectToView;
+			VectorSubtract(MainViewOrigin(), Vector(m_pInspectShortcut->GetAbsOrigin()), objectToView);
+
+			float flYaw = UTIL_VecToYaw(objectToView);
+			float flPitch = UTIL_VecToPitch(objectToView);
+			m_inspectGoodAngles = QAngle(flPitch, flYaw, 0);
+		}
+
+
+
 		float flAngleMultiplyer = 150.0f;
-		m_inspectOffsetAngles += QAngle(m_flPreviousJoystickPitch * flAngleMultiplyer * flFrameTime, m_flPreviousJoystickYaw * flAngleMultiplyer * flFrameTime, 0);
+		m_inspectOffsetAngles += QAngle(flPreviousJoystickPitch * flAngleMultiplyer * flFrameTime, flPreviousJoystickYaw * flAngleMultiplyer * flFrameTime, 0);
 
 		QAngle angles = m_inspectGoodAngles;//m_pInspectShortcut->GetAbsAngles();
 		angles += m_inspectOffsetAngles;
+
+
+		// test some stuff
+		/*
+		// Calculate the center of the render bounds
+		QAngle rotationPerTick;
+		rotationPerTick = angles;
+
+		Vector vecMins, vecMaxs;
+		m_pInspectShortcut->GetRenderBounds(vecMins, vecMaxs);
+		Vector pivotPoint = m_pInspectShortcut->GetAbsOrigin() + (vecMaxs + vecMins) * 0.5f;
+
+		// Calculate the vector from the pivot point to the entity
+		Vector vecToEntity = m_pInspectShortcut->GetAbsOrigin() - pivotPoint;
+
+		// Construct a rotation matrix using the desired rotation
+		//VMatrix matRotation;
+		matrix3x4_t matRotation;
+		AngleMatrix(rotationPerTick, matRotation);
+
+		// Apply the rotation matrix to the vector
+		VectorRotate(vecToEntity, matRotation, vecToEntity);
+
+		// Calculate the new position of the entity
+		Vector newPos = pivotPoint + vecToEntity;
+
+		// Set the entity's new position
+		//m_pInspectShortcut->SetAbsOrigin(newPos);
+		DevMsg("Stuff: %02f %02f %02f\n", newPos.x, newPos.y, newPos.z);
+		//origin.x = newPos.x;
+		//origin.y = newPos.y;
+		//origin.z = newPos.z;
+
+		//Vector posDif = m_inspectOffsetOrigin -
+		//origin = MainViewForward();
+		//origin *= m_flInspectGoodOriginDist;
+		//origin += MainViewOrigin();
+		////Vector origin = m_inspectGoodOrigin;// m_pInspectShortcut->GetAbsOrigin();
+		////origin += m_inspectOffsetOrigin;
+		//origin += forward * m_inspectOffsetOrigin.y;
+		//origin += right * m_inspectOffsetOrigin.x;
+		//origin += up * m_inspectOffsetOrigin.z;
+
+		// Apply the rotation to the entity's current angles
+		QAngle newAngles = m_pInspectShortcut->GetAbsAngles() + rotationPerTick;
+		//m_pInspectShortcut->SetAbsAngles(newAngles);
+		angles.x = newAngles.x;
+		angles.y = newAngles.y;
+		angles.z = newAngles.z;
+		*/
+		// end testing stuff
 
 		engine->ClientCmd(VarArgs("snap_object_pos %i %02f %02f %02f %02f %02f %02f;\n", m_pInspectShortcut->entindex(), origin.x, origin.y, origin.z, angles.x, angles.y, angles.z));
 	}
@@ -1182,6 +1753,27 @@ void C_AnarchyManager::InspectModeTick(float flFrameTime) {
 
 	//if (fabs(m_flPreviousJoystickSide) > 0.1 || fabs(m_flPreviousJoystickForward) > 0.1)
 }
+
+void C_AnarchyManager::ApplyCarryData(std::string origin)
+{
+	if (m_pInspectShortcut) {
+		Vector originVec;
+		UTIL_StringToVector(originVec.Base(), origin.c_str());
+		//m_inspectCenterOffset = originVec;
+		//m_inspectCenterOffset.x = originVec.y;
+		//m_inspectCenterOffset.y = originVec.x;
+		//m_inspectCenterOffset.z = originVec.z;
+		m_inspectCenterOffsetFudge.x = originVec.x;
+		m_inspectCenterOffsetFudge.y = originVec.y;
+		m_inspectCenterOffsetFudge.z = originVec.z;
+	}
+}
+
+/*
+void C_AnarchyManager::SetForegroundShortcut(C_PropShortcutEntity* pShortcut)
+{
+	m_pForegroundShortcut = pShortcut;
+}*/
 
 void C_AnarchyManager::StartQuestsSoon()
 {
@@ -1929,6 +2521,8 @@ void C_AnarchyManager::LevelShutdownPreEntity()
 
 	this->DeactivateInspectObject();
 
+	//m_pForegroundShortcut = null;
+
 	m_flStartQuestsSoon = 0.0f;
 
 	m_pQuestManager->ShutdownWorldQuests();
@@ -2568,7 +3162,7 @@ void C_AnarchyManager::RefreshImages(std::string itemId, std::string modelId)
 	}
 }
 
-std::string C_AnarchyManager::CreateModelPreview(std::string givenModelName)
+std::string C_AnarchyManager::CreateModelPreview(std::string givenModelName, bool bOverwrite)
 {
 	//pModelPreview
 	C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
@@ -2582,7 +3176,7 @@ std::string C_AnarchyManager::CreateModelPreview(std::string givenModelName)
 	fileName += modelHash;
 	fileName += ".tga";
 
-	if (g_pFullFileSystem->FileExists(fileName.c_str(), "DEFAULT_WRITE_PATH"))
+	if (!bOverwrite && g_pFullFileSystem->FileExists(fileName.c_str(), "DEFAULT_WRITE_PATH"))
 		return fileName;
 	
 #ifdef VR_ALLOWED
@@ -5776,7 +6370,7 @@ bool C_AnarchyManager::TempSelectEntity(int iEntityIndex)
 
 	C_AwesomiumBrowserInstance* pHudBrowserInstance = g_pAnarchyManager->GetAwesomiumBrowserManager()->FindAwesomiumBrowserInstance("hud");
 
-	if (vgui::input()->IsKeyDown(KEY_XBUTTON_LTRIGGER))
+	if (vgui::input()->IsKeyDown(KEY_XBUTTON_LTRIGGER) || vgui::input()->IsKeyDown(KEY_LSHIFT) || vgui::input()->IsKeyDown(KEY_RSHIFT))
 		g_pAnarchyManager->GetInputManager()->SetGamepadInputMode(true);
 	g_pAnarchyManager->GetInputManager()->ActivateInputMode(false, false, pLookingInstance);
 	cvar->FindVar("glow_enabled")->SetValue(false);
@@ -5870,6 +6464,11 @@ bool C_AnarchyManager::HandleUiToggle(bool bIsFromToggleHandler)
 		}
 
 		return false;
+	}
+
+	if (m_pInspectShortcut)
+	{
+		this->DeactivateInspectObject();
 	}
 
 	// update this code block when joypad input gets restricted to the selected input slate instance!!
@@ -6345,9 +6944,10 @@ bool C_AnarchyManager::DirectorySafe(std::string text)
 		return false;
 
 	// - The following folders should be blacklisted: driveletter:/windows, driveletter:\windows
+	// - But only if the folder is (case insenstive) "windows".  Things like "driveletter:/Windows Stuff/" should be 
 	if (text.length() > 7)
 	{
-		if (!Q_stricmp(text.substr(3, 7).c_str(), "windows"))
+		if (!Q_stricmp(text.substr(3, 7).c_str(), "windows") && (text.length() == 10 || text[10] == '\\' || text[10] == '/'))
 			return false;
 	}
 
@@ -7261,8 +7861,8 @@ float C_AnarchyManager::GetZNear()
 	else
 		flNear = znear.GetFloat();
 
-	if (flNear < 2.0f)
-		flNear = 2.0f;
+	if (flNear < 0.1f)
+		flNear = 0.1f;
 	else if (flNear > 10.0f)
 		flNear = 10.0f;
 
@@ -8654,7 +9254,7 @@ void C_AnarchyManager::ShowMouseMenu()
 
 	C_AwesomiumBrowserInstance* pHudBrowserInstance = m_pAwesomiumBrowserManager->FindAwesomiumBrowserInstance("hud");
 
-	if (vgui::input()->IsKeyDown(KEY_XBUTTON_LTRIGGER) || vgui::input()->IsKeyDown(KEY_XBUTTON_START))
+	if (vgui::input()->IsKeyDown(KEY_XBUTTON_LTRIGGER) || vgui::input()->IsKeyDown(KEY_LSHIFT) || vgui::input()->IsKeyDown(KEY_RSHIFT) || vgui::input()->IsKeyDown(KEY_XBUTTON_START))
 		g_pAnarchyManager->GetInputManager()->SetGamepadInputMode(true);
 	pHudBrowserInstance->SetUrl("asset://ui/mouseEZ.html");
 	m_pInputManager->ActivateInputMode(true, false);

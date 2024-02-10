@@ -8,6 +8,9 @@
 #include "../func_dust_shared.h"
 #include "CAnarchyManager.h"
 #include <algorithm>
+
+//#include "dmxloader/dmxloader.h"
+//#include "dmxloader/dmxelement.h"
 //#include "../../game/server/func_dust.cpp"
 //#include ".."
 //#include "../../game/client/glow_outline_effect.h"
@@ -52,6 +55,90 @@ ConVar attract_mode_drift("attract_mode_drift", "2.0", FCVAR_ARCHIVE, "The speed
 ConVar attract_mode_hold("attract_mode_hold", "8.0", FCVAR_ARCHIVE, "The amount of time, in seconds, to hold each screenshot position while in attract mode.");
 ConVar attract_mode_time("attract_mode_time", "4.0", FCVAR_ARCHIVE, "The amount of time, in seconds, that it takes to reach each screenshot position while in attract mode.");
 ConVar cabinet_attract_mode_active("cabinet_attract_mode_active", "0", FCVAR_REPLICATED | FCVAR_HIDDEN, "Internal use only.");
+
+
+/* WORKING server-side DMX iterating
+// start PCF reading tests
+void IterateDmxElementServer(CDmxElement* pRoot)
+{
+	for (int i = 0; i<pRoot->AttributeCount(); i++)
+	{
+		CDmxAttribute* pCur = pRoot->GetAttribute(i);
+		CDmxElement* subElem;
+		DmAttributeType_t type = pCur->GetType();
+
+		if (type == AT_STRING)
+		{
+			//Msg("Name: %s\tType: %i\tNumComponents: %i\tValue: %s\n", pCur->GetName(), type, NumComponents(type), pCur->GetValue<CUtlString>().Get());
+			//if (Q_strcmp(pCur->GetName(), "name") && Q_strcmp(pCur->GetName(), "functionName"))
+			//	Msg("%s\t%s\n", pCur->GetName(), pCur->GetValue<CUtlString>().Get());
+			if (!Q_strcmp(pCur->GetName(), "material"))
+			{
+				Msg("%s\t%s\n", pCur->GetName(), pCur->GetValue<CUtlString>().Get());
+			}
+		}
+		else if (IsArrayType(type))
+		{
+			//Msg("Name: %s\tType: %i\tNumComponents: %i\tValue: %s\n", pCur->GetName(), type, NumComponents(type), pCur->GetValue<CUtlString>().Get());
+
+			// assume the array type is AT_ELEMENT_ARRAY
+			// output the array length here
+			const CUtlVector<CDmxElement*>& array = pCur->GetArray<CDmxElement*>();
+			int arrayLength = array.Count();
+			//Msg("Array Length: %i\n", arrayLength);
+
+			// Optionally iterate through the array elements
+			for (int j = 0; j < arrayLength; j++)
+			{
+				subElem = array[j];
+				// Process subElem here, such as recursively calling IterateDmxElement
+				IterateDmxElementServer(subElem);
+			}
+
+			//const CUtlVector<CDmxElement>& dmxElementArray = pCur->GetArray<CDmxElement>();
+			//const CUtlVector<DmElementArray_t> elementArray = pCur->GetArray();
+			//for (int i = 0; i < dmxElementArray.Count(); ++i)
+			//{
+				//Msg("Array element detected.\n");
+				//const CDmxElement& arrayElem = dmxElementArray[i];
+				//CDmxElement* arrayElemPointer = ?;
+				//IterateDmxElement(arrayElemPointer);
+
+
+				//const CDmxElement& arrayElem = dmxElementArray[i];
+				//CDmxElement* arrayElemPointer = const_cast<CDmxElement*>(&arrayElem);
+				//IterateDmxElement(arrayElemPointer);
+
+				//Msg("Name: %s\tType: %i\tNumComponents: %i\tValue: %s\n", pCur->GetName(), type, NumComponents(type), pCur->GetValue<CUtlString>().Get());
+			//}
+		}
+		else {
+			//Msg("Name: %s\tType: %i\tNumComponents: %i\n", pCur->GetName(), type, NumComponents(type));
+		}
+	}
+}
+
+CON_COMMAND(dmx_iterate_server, "Prints a DMX file to the console")
+{
+	DECLARE_DMX_CONTEXT();
+	Msg("Loading: %s\n", args[1]);
+	CDmxElement* DMX = (CDmxElement*)DMXAlloc(50000000);
+
+	if (UnserializeDMX(args[1], "MOD", false, &DMX))
+	{
+		IterateDmxElementServer(DMX);
+	}
+	else
+		Warning("Could not read DMX file %s\n", args[1]);
+}
+
+// end PCF reading tests
+
+*/
+
+
+
+
 
 void AddGlowEffect(const CCommand &args)
 {
@@ -452,6 +539,25 @@ void SmokeTest(const CCommand &args)
 }
 ConCommand smoke_test("smoke_test", SmokeTest, "For internal use only.");
 
+	// OBSOLETE TEST FUNC!
+void SetTransmitStateSV(const CCommand &args)
+{
+	CPropShortcutEntity* pShortcut = dynamic_cast<CPropShortcutEntity*>(CBaseEntity::Instance(Q_atoi(args[1])));
+	if (pShortcut)
+	{
+		bool bState = (Q_atoi(args[2]) != 0);
+		//Msg("Transmit State Default: %i\n", pShortcut->GetTransmitState());// 421
+		if (bState)
+		{
+			pShortcut->SetTransmitState(FL_EDICT_ALWAYS);
+		}
+		else {
+			pShortcut->SetTransmitState(421);
+		}
+	}
+}
+ConCommand set_transmit_state_sv("set_transmit_state_sv", SetTransmitStateSV, "Change the transmit state of an entity between FL_EDICT_ALWAYS and default.");
+
 void SpawnShortcut(const CCommand &args)
 {
 	Vector origin(Q_atof(args[5]), Q_atof(args[6]), Q_atof(args[7]));
@@ -741,6 +847,13 @@ void SelectorTrace(const CCommand &args)
 	}*/
 }
 ConCommand selectortrace("selector_trace", SelectorTrace, "Usegae: Find out what the local user is looking at.", FCVAR_HIDDEN);
+
+void ServerTesterJoint(const CCommand &args)
+{
+	Msg("Testing...\n");
+	Msg("Server values for:\n\tMAX_EDICT_BITS\t%i\n\tMAX_EDICTS\t%i\n\tNUM_ENT_ENTRY_BITS\t%i\n\tNUM_ENT_ENTRIES\t%i\n", MAX_EDICT_BITS, MAX_EDICTS, NUM_ENT_ENTRY_BITS, NUM_ENT_ENTRIES);
+}
+ConCommand server_testerjoint("server_testerjoint", ServerTesterJoint, "Usegae: Server tester joint.", FCVAR_NONE);
 
 void ShowHubsMenu(const CCommand &args)
 {

@@ -1083,6 +1083,15 @@ void CViewRender::Render( vrect_t *rect )
 	if (g_pAnarchyManager->IsPaused())
 		return;
 
+	// Added for Anarchy Arcade
+	/*if (g_pAnarchyManager->GetForegroundShortcut())
+	{
+		// set depth override flags
+		CMatRenderContextPtr pRenderContext(materials);
+		pRenderContext->OverrideDepthEnable(true, false);
+	}*/
+	// End Added for Anarchy Arcade
+
 	VPROF_BUDGET( "CViewRender::Render", "CViewRender::Render" );
 	tmZone(TELEMETRY_LEVEL0, TMZF_NONE, "%s", __FUNCTION__);
 	
@@ -1821,6 +1830,15 @@ void CViewRender::Render( vrect_t *rect )
 		render->VGui_Paint(PAINT_UIPANELS | PAINT_CURSOR);
 		render->PopView(GetFrustum());
 	}
+
+	// Added for Anarchy Arcade
+	/*if (g_pAnarchyManager->GetForegroundShortcut())
+	{
+		// reset depth override flags
+		CMatRenderContextPtr pRenderContext(materials);
+		pRenderContext->OverrideDepthEnable(false, false);
+	}*/
+	// End Added for Anarchy Arcade
 
 	/*
 	if (g_pAnarchyManager->IsVRActive())

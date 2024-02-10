@@ -85,6 +85,7 @@ public:
 
 	// mutators	
 	void SetGUIGamepadEnabled(bool bValue);// { m_bGUIGamepadEnabled = value; }
+	void SetNextLoadOverrideForInstance(C_LibretroInstance* pLibretroInstance, std::string override);
 
 private:
 	ConVar* m_pSoundAllowedConVar;
@@ -117,6 +118,7 @@ private:
 	std::map<std::string, unsigned int> m_retroKeyAnalogMap;
 	std::map<std::string, unsigned int> m_retroKeyPointerMap;
 	std::map<std::string, retro_key> m_retroKeyKeyboardMap;
+	std::map<C_LibretroInstance*, std::string> m_nextLoadOverrideMap;
 };
 
 #endif

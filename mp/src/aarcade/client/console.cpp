@@ -44,6 +44,8 @@ ConVar vrspectator("vrspectator", "0", FCVAR_ARCHIVE);
 ConVar vrspectatormirror("vrspectatormirror", "1", FCVAR_ARCHIVE);
 ConVar vrhmdrender("vrhmdrender", "1", FCVAR_NONE);
 
+ConVar testerjointval("testerjointval", "0", FCVAR_NONE);
+
 ConVar spectator("spectator", "0", FCVAR_NONE);
 ConVar fixed_camera_min_dist("fixed_camera_min_dist", "32.0", FCVAR_NONE, "Minimum distance the player can be standing next to the fixed camera position before it's considered an invalid position.");
 ConVar fixed_camera_max_dist("fixed_camera_max_dist", "500.0", FCVAR_NONE, "Maximum distance the player can be from a screenshot for it to be considered as a fixed camera position.");
@@ -107,6 +109,8 @@ ConVar node_model("node_model", "", FCVAR_ARCHIVE, "Override the default model u
 
 ConVar painted_skyname("painted_skyname", "", FCVAR_HIDDEN, "Internal.  Used to remember the name of a painted sky.");
 
+ConVar inspect_model_id("inspect_model_id", "", FCVAR_HIDDEN, "Internal.  Used for the UI renderer to access the model ID when appropriate.");
+
 ConVar temppinnedcamindex("temppinnedcamindex", "-1", FCVAR_HIDDEN, "Internal. Used to keep track of when the 3rd person camera pin command is active.");
 
 ConVar default_engine_no_focus_sleep("default_engine_no_focus_sleep", "0", FCVAR_ARCHIVE);
@@ -139,6 +143,7 @@ ConVar cl_hovertitles("cl_hovertitles", "1", FCVAR_ARCHIVE, "Show the titles of 
 ConVar cl_toastmsgs("cl_toastmsgs", "0", FCVAR_ARCHIVE, "Show event notifications on the top-left of the screen.");
 ConVar workshop("workshop", "1", FCVAR_NONE, "Internal. Read-only. Set with launcher.");
 ConVar mounts("mounts", "1", FCVAR_NONE, "Internal. Read-only. Set with launcher.");
+ConVar inspect_object_showui("inspect_object_showui", "0", FCVAR_ARCHIVE, "Bool. Determines if the UI is shown during inspect mode or not.");
 ConVar reshade("reshade", "0", FCVAR_NONE, "Internal. Read-only. Set with launcher.");
 ConVar reshadedepth("reshadedepth", "0", FCVAR_NONE, "Internal. Read-only. Set with launcher.");
 ConVar play_everywhere("play_everywhere", "0", FCVAR_NONE, "Bool. Causes ALL screens to temporarily behave as video mirrors.");
@@ -178,6 +183,12 @@ ConVar attract_mode_wipe("attract_mode_wipe", "0", FCVAR_ARCHIVE, "Do a before/a
 ConVar modelThumbs("model_thumbs_enabled", "1", FCVAR_ARCHIVE);
 
 ConVar local_auto_playlists("local_auto_playlists", "1", FCVAR_ARCHIVE);
+
+ConVar inspect_yaw("inspect_yaw", "0", FCVAR_NONE);
+ConVar inspect_pitch("inspect_pitch", "0", FCVAR_NONE);
+ConVar inspect_horiz("inspect_horiz", "0", FCVAR_NONE);
+ConVar inspect_vert("inspect_vert", "0", FCVAR_NONE);
+ConVar inspect_tall("inspect_tall", "0", FCVAR_NONE);
 
 ConVar youtube_end_behavior("youtube_end_behavior", "default", FCVAR_ARCHIVE);
 ConVar youtube_playlist_behavior("youtube_playlist_behavior", "default", FCVAR_ARCHIVE);
@@ -640,6 +651,43 @@ void SelectPrev(const CCommand &args)
 }
 ConCommand select_prev("select_prev", SelectPrev, "Usage: Selects the previous nearest cabinet (you must currently have one selected first.)", FCVAR_NONE);
 
+void SetDrawForeground(const CCommand &args)
+{
+	//SetDrawForeground
+	
+	bool bValue = (args.ArgC() > 1) ? Q_atoi(args[1]) : true;
+
+	// get the object we are given, or the object we are aimed at, or the object nearest to where we are aiming (in that priority)
+	C_PropShortcutEntity* pShortcut = null;
+
+	if (args.ArgC() > 1)
+		pShortcut = dynamic_cast<C_PropShortcutEntity*>(C_BaseEntity::Instance(Q_atoi(args[2])));
+
+	if (!pShortcut)
+		pShortcut = dynamic_cast<C_PropShortcutEntity*>(C_BaseEntity::Instance(g_pAnarchyManager->GetSelectorTraceEntityIndex()));
+
+	if (!pShortcut)
+	{
+		// grab the next nearest object then
+		float flMaxRange = 1000.0f;
+		object_t* pObject = g_pAnarchyManager->GetInstanceManager()->GetNearestObjectToPlayerLook(NULL, flMaxRange);
+		while (pObject)
+		{
+			if (pObject->spawned)
+			{
+				pShortcut = dynamic_cast<C_PropShortcutEntity*>(C_BaseEntity::Instance(pObject->entityIndex));
+				break;
+			}
+
+			pObject = g_pAnarchyManager->GetInstanceManager()->GetNearestObjectToPlayerLook(pObject, flMaxRange);
+		}
+	}
+
+	if (pShortcut)
+		pShortcut->SetDrawForeground(bValue);
+}
+ConCommand set_draw_foreground("set_draw_foreground", SetDrawForeground, "Usage: Causes the model to be drawn in front of everything else.", FCVAR_NONE);
+
 void LookAtMe(const CCommand &args)
 {
 	C_PropShortcutEntity* pShortcut = null;// = (pEntity) ? dynamic_cast<C_PropShortcutEntity*>(pEntity) : null;
@@ -726,12 +774,20 @@ void InspectObject(const CCommand &args)
 
 	}
 
-	if (pShortcut)
+	if (pShortcut && (!pShortcut->GetMoveParent() || pShortcut->GetMoveParent() == pShortcut))
 	{
+		pShortcut->SetDrawForeground(true);
+		//g_pAnarchyManager->SetForegroundShortcut(pShortcut);
 		g_pAnarchyManager->ActivateInspectObject(pShortcut);
 	}
 }
 ConCommand inspect_object("inspect_object", InspectObject, "Usage: Inspect the object under your crosshair.", FCVAR_NONE);
+
+/*void SetTransmitState(const CCommand &args)
+{
+	
+}
+ConCommand set_transmit_state("set_transmit_state", SetTransmitState, "Change the transmit state of an entity between FL_EDICT_ALWAYS and default.", FCVAR_NONE);*/
 
 void InspectObjectStop(const CCommand &args)
 {
@@ -1031,6 +1087,17 @@ void WheelMenu(const CCommand &args)
 	g_pAnarchyManager->GetInputManager()->ActivateInputMode(true, false, pHudBrowserInstance);
 }
 ConCommand wheel_menu("wheel_menu", WheelMenu, "Usage: show the wheel menu.");
+
+void RadialMenu(const CCommand &args)
+{
+	if (g_pAnarchyManager->GetSelectedEntity())
+		g_pAnarchyManager->TaskRemember();
+
+	C_AwesomiumBrowserInstance* pHudBrowserInstance = g_pAnarchyManager->GetAwesomiumBrowserManager()->FindAwesomiumBrowserInstance("hud");
+	pHudBrowserInstance->SetUrl("asset://ui/radialMenu.html");
+	g_pAnarchyManager->GetInputManager()->ActivateInputMode(true, false, pHudBrowserInstance);
+}
+ConCommand radial_menu("radial_menu", RadialMenu, "Usage: show the radial menu.");
 
 void AvatarMenu(const CCommand &args)
 {
@@ -1846,6 +1913,14 @@ void RestartQuestSystem(const CCommand &args)
 }
 ConCommand restartquestsystem("restart_quest_system", RestartQuestSystem, "Resets & restarts the available quests in this world.", FCVAR_NONE);
 
+void ApplyCarryData(const CCommand &args)
+{
+	std::string originOffset = args[1];
+	g_pAnarchyManager->ApplyCarryData(originOffset);
+}
+ConCommand applyCarryData("apply_carry_cata", ApplyCarryData, "Internal. Applies an override to the carry origin offset for inspect mode.", FCVAR_HIDDEN);
+
+
 #include "../openvr/openvr.h"
 void TesterJoint(const CCommand &args)
 {
@@ -2026,6 +2101,8 @@ void TesterJoint(const CCommand &args)
 	}
 */
 
+	// WORKING (i think) implementation of modifying an MDL **file** to use a different material. Literally creating a diffrent/new asset & saving it to disk.
+/*
 	std::string matName = args[1];
 	std::string varName = args[2];
 	std::string mdlName = args[3];
@@ -2037,6 +2114,9 @@ void TesterJoint(const CCommand &args)
 	//pAITests->CloneModelAndApplyMaterial(mdlName.c_str(), cloneddynvtfscreen.c_str());
 	pAITests->ChangeModelInternalNameAndSave(mdlName.c_str(), cloneddynvtfscreen.c_str(), "automats/cloneddynvtfscreen");
 	delete pAITests;
+*/
+	//g_pAnarchyManager->GetMetaverseManager()->TesterJoint();
+DevMsg("Client values for:\n\tMAX_EDICT_BITS\t%i\n\tMAX_EDICTS\t%i\n\tNUM_ENT_ENTRY_BITS\t%i\n\tNUM_ENT_ENTRIES\t%i\n", MAX_EDICT_BITS, MAX_EDICTS, NUM_ENT_ENTRY_BITS, NUM_ENT_ENTRIES);
 }
 ConCommand testerjoint("testerjoint", TesterJoint, "Usage: ");
 
@@ -3453,7 +3533,7 @@ void InputModeOn()
 			C_BaseEntity* pEntity = C_BaseEntity::Instance(pSelectedEmbeddedInstance->GetOriginalEntIndex());
 			if (pEntity && pEntity == g_pAnarchyManager->GetSelectedEntity())
 			{
-				if (vgui::input()->IsKeyDown(KEY_XBUTTON_LTRIGGER))
+				if (vgui::input()->IsKeyDown(KEY_XBUTTON_LTRIGGER) || vgui::input()->IsKeyDown(KEY_LSHIFT) || vgui::input()->IsKeyDown(KEY_RSHIFT))
 					g_pAnarchyManager->GetInputManager()->SetGamepadInputMode(true);
 
 				g_pAnarchyManager->GetInputManager()->ActivateInputMode(false, false, pSelectedEmbeddedInstance);// fullscreen);
@@ -3542,7 +3622,7 @@ void InputModeOn()
 								g_pAnarchyManager->SelectEntity(pEntity);
 								g_pAnarchyManager->GetInputManager()->SetTempSelect(true);
 
-								if (vgui::input()->IsKeyDown(KEY_XBUTTON_LTRIGGER))
+								if (vgui::input()->IsKeyDown(KEY_XBUTTON_LTRIGGER) || vgui::input()->IsKeyDown(KEY_LSHIFT) || vgui::input()->IsKeyDown(KEY_RSHIFT))
 									g_pAnarchyManager->GetInputManager()->SetGamepadInputMode(true);
 								g_pAnarchyManager->GetInputManager()->ActivateInputMode(false, false, pRememberedInstance);
 								//g_pAnarchyManager->RemoveLastHoverGlowEffect();
@@ -3582,7 +3662,7 @@ void InputModeOn()
 						g_pAnarchyManager->SelectEntity(pEntity);
 						g_pAnarchyManager->GetInputManager()->SetTempSelect(true);
 
-						if (vgui::input()->IsKeyDown(KEY_XBUTTON_LTRIGGER))
+						if (vgui::input()->IsKeyDown(KEY_XBUTTON_LTRIGGER) || vgui::input()->IsKeyDown(KEY_LSHIFT) || vgui::input()->IsKeyDown(KEY_RSHIFT))
 							g_pAnarchyManager->GetInputManager()->SetGamepadInputMode(true);
 						g_pAnarchyManager->GetInputManager()->ActivateInputMode(false, false, pRememberedInstance);
 						bHandled = true;
@@ -4503,6 +4583,18 @@ void cmd_developer_mode(const CCommand &args)
 	engine->ClientCmd("toggle developer");
 }
 ConCommand cmdDeveloperMode("cmd_developer_mode", cmd_developer_mode, "Usage: Toggle develoepr mode.  Shows excessive debug information in the console & on-screen when enabled.");
+
+void cmd_inspect(const CCommand &args)
+{
+	engine->ClientCmd("inspect_object");
+}
+ConCommand cmdInspect("cmd_inspect", cmd_inspect, "Usage: Grab / inspect the object nearest your crosshair.");
+
+void cmd_radial_menu(const CCommand &args)
+{
+	engine->ClientCmd("radial_menu");
+}
+ConCommand cmdRadialMenu("cmd_radial_menu", cmd_radial_menu, "Usage: Open a radial menu of favorites & nearby objects. (Experimental)");
 
 void cmd_unpaint_all(const CCommand &args)
 {

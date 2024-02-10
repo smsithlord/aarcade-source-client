@@ -246,6 +246,10 @@ public:
 
 	void CleanUpTexture();
 
+	void GoSomewhere(int iDirection);
+	void GoPrevious();
+	void GoNext();
+
 	void OnMouseMove(float x, float y);
 	KeyValues* GetOverlayKV() { return m_pOverlayKV; }
 	void SetOverlay(std::string overlayId);

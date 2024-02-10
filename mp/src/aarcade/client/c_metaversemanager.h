@@ -120,6 +120,9 @@ public:
 	bool CreateLibraryBackup();
 	unsigned int GetLibraryDbSize();
 
+	void TesterJoint();
+	void IterateDmxElement(CDmxElement* pRoot, std::vector<std::string>& materialFileNames);
+
 	void Update();
 	void PerformLocalPlayerUpdate();
 

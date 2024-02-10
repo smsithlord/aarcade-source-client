@@ -13,6 +13,7 @@
 #include <algorithm>
 
 #include "c_anarchymanager.h"
+#include "materialsystem/imaterialsystem.h"
 
 #include <KeyValues.h>
 #include "Filesystem.h"
@@ -36,6 +37,8 @@ C_PropShortcutEntity::C_PropShortcutEntity()
 	m_pCloudAssetsDownload = null;
 	m_pFadeDistMinConVar = null;
 	m_pFadeDistMaxConVar = null;
+	m_bDrawForeground = false;
+	m_pForegroundMaterial = null;
 
 	this->SetHotlink(true);
 }
@@ -628,12 +631,80 @@ bool C_PropShortcutEntity::ShouldDraw()
 }
 */
 
+void C_PropShortcutEntity::SetDrawForeground(bool bValue)
+{
+	m_bDrawForeground = bValue;
+}
+
 int C_PropShortcutEntity::DrawModel(int flags)	// Added for Anarchy Arcade
 {
 	//if ((g_pAnarchyManager->GetNoDrawShortcutsValue() == 1 || (g_pAnarchyManager->GetNoDrawShortcutsValue() == 2 && g_pAnarchyManager->UseSBSRendering() && g_pAnarchyManager->GetEye() != ISourceVirtualReality::VREye::VREye_Left)))
 	//	return 0;
 
-	return BaseClass::DrawModel(flags);
+	if (m_bDrawForeground)
+	{
+		CMatRenderContextPtr pRenderContext(materials);
+		pRenderContext->DepthRange(0.0f, 0.1f);
+		int result = BaseClass::DrawModel(flags);
+
+		//float depthmin = 0.0f;
+		//float depthmax = 1.0f;
+		pRenderContext->DepthRange(0.0f, 1.0f);
+		return result;
+
+		/*
+		CMatRenderContextPtr pRenderContext(materials);
+		pRenderContext->OverrideDepthEnable(true, true);
+
+		// Call the original DrawModel function
+		int result = BaseClass::DrawModel(flags);
+
+		// Restore the old depth range
+		pRenderContext->OverrideDepthEnable(false, false);
+		//pRenderContext->PopRenderTargetAndViewport();
+		return result;
+		*/
+
+		// get the override material (if needed)
+		/*
+		if (!m_pForegroundMaterial)
+		{
+			//m_pForegroundMaterial = materials->FindMaterial("dev/glow_color", TEXTURE_GROUP_OTHER, true);
+			//KeyValues* pMaterialKV = new KeyValues("UnlitGeneric");
+			//pMaterialKV->SetString("$basetexture", "vgui/canvas");
+			//IMaterial* pMaterial = materials->CreateMaterial("projectorview", pMaterialKV);
+			//pMaterial->Refresh();
+			//DevMsg("Projector Material Name: %s\n", pMaterial->GetName());
+			//m_pForegroundMaterial = pMaterial;
+		}
+
+		// override
+		if (m_pForegroundMaterial)
+		{
+			g_pStudioRender->ForcedMaterialOverride(m_pForegroundMaterial);
+		}
+
+		int result = BaseClass::DrawModel(flags);
+		g_pStudioRender->ForcedMaterialOverride(NULL);
+		//pRenderContext->PopRenderTargetAndViewport();
+		return result;
+		*/
+
+		/*C_BaseEntity *pAttachment = this->FirstMoveChild();
+		while (pAttachment != NULL)
+		{
+			if (pAttachment->ShouldDraw())
+			{
+				pAttachment->DrawModel(flags);
+			}
+			pAttachment = pAttachment->NextMovePeer();
+		}*/
+	}
+	else
+	{
+		// Call the original DrawModel function
+		return BaseClass::DrawModel(flags);
+	}
 }
 
 

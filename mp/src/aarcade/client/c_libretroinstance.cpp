@@ -450,6 +450,203 @@ void C_LibretroInstance::CleanUpTexture()
 	}
 }
 
+void C_LibretroInstance::GoPrevious()
+{
+	DevMsg("GoPrevious from C++\n");
+	this->GoSomewhere(-1);
+}
+
+void C_LibretroInstance::GoSomewhere(int iDirection)
+{
+
+	//unsigned int numArgs = args.size() - iArgOffset;
+
+	// TODO:
+	// Get the item ID
+	// Get the item KV
+	// Get the full file path to the local file.
+	// Separate the path from the filename.
+	//// OBSOLETE: Separate the file extension from the filename.
+	// Search the folder for all supported Libretro video types. (No need to restrict file searching to same file extension as the current file. This means the search algo must be improved some.)
+	// Feed the dir & file extension into the code below...
+	// And then... finish w/ the C++, so create the GoPrevious function too.
+	// Finally, improve the UI in the HTML so that the next/previous buttons only appear on video files.
+
+
+	//std::string fullFile = "V:\\TV\\Beast Wars\\Beast Machines 1x05 - Forbidden Fruit.avi";
+
+	LibretroInstanceInfo_t* info = this->GetInfo();
+	std::string fileName = "";
+	std::string fileFull = info->game;// "Beast Machines 1x05 - Forbidden Fruit.avi";
+	std::string dir = "";// "V:\\TV\\Beast Wars";	// TODO: get the real dir for this LibretroInstance's item.
+
+	std::string fileExtension = fileFull;
+	std::transform(fileExtension.begin(), fileExtension.end(), fileExtension.begin(), ::tolower);
+	size_t extensionFound = fileExtension.find_last_of(".");
+	if (extensionFound != std::string::npos)
+		fileExtension = fileExtension.substr(extensionFound + 1);
+	else
+	{
+		DevMsg("libretro: ABORTED: The next file has no file extension.\n");
+		return;
+	}
+
+	if (fileFull.find(':') == 1)
+	{
+		std::string testPath = fileFull;
+		std::transform(testPath.begin(), testPath.end(), testPath.begin(), ::tolower);
+		std::replace(testPath.begin(), testPath.end(), '\\', '/');
+
+		size_t foundTestPathSlash = testPath.find_last_of("/");
+		if (foundTestPathSlash != std::string::npos)
+		{
+			dir = fileFull.substr(0, foundTestPathSlash);
+			fileName = fileFull.substr(foundTestPathSlash + 1);
+		}
+	}
+
+	if (dir == "")
+	{
+		DevMsg("libretro: ABORTED: Failed to parse file path.\n");
+		return;
+	}
+
+	//std::string testerExtensions = info->valid_extensions;
+	//std::transform(testerExtensions.begin(), testerExtensions.end(), testerExtensions.begin(), ::tolower);
+	//std::vector<std::string> tokens;
+	//g_pAnarchyManager->Tokenize(testerExtensions, tokens, "|");
+
+
+
+	//std::string fileExtension = "avi";	// TODO: get the real file extension for this LibretroInstance's item.
+
+	std::vector<std::string> files;
+
+	unsigned int uFoundIndex = -1;
+	FileFindHandle_t findHandle;
+	const char *pFilename = g_pFullFileSystem->FindFirstEx(VarArgs("%s\\*.%s", dir.c_str(), fileExtension.c_str()), "", &findHandle);
+	while (pFilename != NULL)
+	{
+		if (!Q_strcmp(pFilename, ".") || !Q_strcmp(pFilename, ".."))
+		{
+			pFilename = g_pFullFileSystem->FindNext(findHandle);
+			continue;
+		}
+
+		if (!g_pFullFileSystem->FindIsDirectory(findHandle))
+		{
+			if (fileName == std::string(pFilename))
+				uFoundIndex = files.size();
+
+			files.push_back(pFilename);
+		}
+		pFilename = g_pFullFileSystem->FindNext(findHandle);
+	}
+	g_pFullFileSystem->FindClose(findHandle);
+
+	if (files.size() <= 1)
+	{
+		// do something?
+	}
+	else
+	{
+		/*DevMsg("Sibling Files:\n");
+		for (unsigned int i = 0; i < files.size(); i++) {
+			if (i == uFoundIndex)
+				DevMsg(">\t%s\n", files[i].c_str());
+			else
+				DevMsg("\t%s\n", files[i].c_str());
+		}*/
+
+		unsigned int uNextFileIndex = uFoundIndex + iDirection;
+		if (uNextFileIndex >= files.size())
+			uNextFileIndex = 0;
+		else if (uNextFileIndex < 0)
+			uNextFileIndex = files.size() - 1;
+
+		std::string nextFileName = files[uNextFileIndex];
+		std::string nextFileFull = dir + "\\" + nextFileName;
+
+		DevMsg("Next File: %s\n", nextFileFull.c_str());
+
+		// mp3-style flow
+		this->SetShouldReopen(true);	// NOTE: The LibretroManager needs to know the file we want to override to somehow. (Because this libretro instance is about to be destroyed.)
+		g_pAnarchyManager->GetLibretroManager()->SetNextLoadOverrideForInstance(this, nextFileFull);
+		g_pAnarchyManager->GetLibretroManager()->DestroyLibretroInstance(this);
+
+		// mp3-style playlist logic:
+		// TODO:
+		// It is not currently possible to switch games currently running in the libretro instance, but that would be the ideal way to manage switching games during runtime of the same core.
+		// Cross-thread communication is difficult to keep in sync w/ all the pointer references. This approach may lead to lots of side effects.
+
+		// RE-ROLL LOGIC:
+		// TODO:
+		// Check if an item already exists for the nextFileFull		//var goodItem = aaapi.cmdEx("findLibraryItem", "file", nextFileFull);
+		// If so, aaapi.cmd("assignObjectItem", entityInfo.object.id, goodItem.info.id);
+		// Otherwise...
+		// Generate an item title for the new item
+		// Give it the same type as the sibling item
+		// Save the item, and then... aaapi.cmd("assignObjectItem", entityInfo.object.id, goodItem.info.id);
+	}
+
+	//response.SetProperty(WSLit("amount"), JSValue(iAmount));
+	//response.SetProperty(WSLit("files"), files);
+
+
+	/*
+	// IF this is a LOCAL file that is also an MP3, then try to give all sibling files in the URL request.
+	std::string otherFiles = "";
+
+	if (m_pLocalAutoPlaylistsConVar->GetBool())
+	{
+	std::string file = pActiveKV->GetString("file");
+	if (file.find(':') == 1)
+	{
+	std::string testPath = file;
+	std::transform(testPath.begin(), testPath.end(), testPath.begin(), ::tolower);
+	std::replace(testPath.begin(), testPath.end(), '\\', '/');
+
+	size_t foundTestPathSlash = testPath.find_last_of("/");
+	if (foundTestPathSlash != std::string::npos)
+	{
+	testPath = testPath.substr(0, foundTestPathSlash);
+
+	std::string fileExtension = file;
+	std::transform(fileExtension.begin(), fileExtension.end(), fileExtension.begin(), ::tolower);
+
+	size_t extensionFound = fileExtension.find_last_of(".");
+	if (extensionFound != std::string::npos)
+	fileExtension = fileExtension.substr(extensionFound + 1);
+	else
+	fileExtension = "";
+
+	if (fileExtension == "mp3" && g_pFullFileSystem->FileExists(file.c_str()))
+	{
+	int iNumFiles = 0;
+	FileFindHandle_t findHandle;
+	std::string otherFile;
+	const char *pFilename = g_pFullFileSystem->FindFirstEx(VarArgs("%s/*.%s", testPath.c_str(), fileExtension.c_str()), "", &findHandle);
+	while (pFilename != NULL && iNumFiles < 20)
+	{
+	//otherFile = VarArgs("%s/%s", testPath.c_str(), pFilename);
+	otherFiles += VarArgs("&f%i=", iNumFiles) + g_pAnarchyManager->encodeURIComponent(pFilename);// otherFile);
+	iNumFiles++;
+	pFilename = g_pFullFileSystem->FindNext(findHandle);
+	}
+	g_pFullFileSystem->FindClose(findHandle);
+	}
+	}
+	}
+	}
+	*/
+}
+
+void C_LibretroInstance::GoNext()
+{
+	DevMsg("GoNext from C++\n");
+	this->GoSomewhere(1);
+}
+
 void C_LibretroInstance::OnMouseMove(float x, float y)
 {
 	//unsigned int width = (m_id == "hud") ? AA_HUD_INSTANCE_WIDTH : AA_EMBEDDED_INSTANCE_WIDTH;

@@ -640,7 +640,7 @@ public:
 	ITexture* GetModelPreviewRenderTarget();
 
 	void PrecacheModel(std::string file);
-	std::string CreateModelPreview(std::string givenModelName);
+	std::string CreateModelPreview(std::string givenModelName, bool bOverwrite = false);
 	int GetModelThumbSize();
 	void TravelByScreenshot(std::string screenshotId);
 
@@ -667,6 +667,10 @@ public:
 	void ActivateInspectObject(C_PropShortcutEntity* pShortcut);
 	void DeactivateInspectObject();
 	void InspectModeTick(float flFrameTime);
+	void ApplyCarryData(std::string origin);
+
+	//void SetForegroundShortcut(C_PropShortcutEntity* pShortcut);
+	//C_PropShortcutEntity* GetForegroundShortcut() { return m_pForegroundShortcut; }
 
 	// accessors
 	std::string GetFailedModelThumbName() { return failedModelName; }
@@ -825,6 +829,8 @@ private:
 	float m_flInspectStartingScale;
 	//Vector m_inspectGoodOrigin;
 	float m_flInspectGoodOriginDist;
+	Vector m_inspectCenterOffset;
+	Vector m_inspectCenterOffsetFudge;
 	QAngle m_inspectGoodAngles;
 	Vector m_inspectOffsetOrigin;
 	QAngle m_inspectOffsetAngles;
@@ -838,6 +844,9 @@ private:
 	float m_flStartQuestsSoon;
 
 //	C_SteamBrowserInstance* m_pTalkerSteamBrowserInstance;
+
+	float m_flOldZNear;
+	ConVar* m_pInspectModelIdConVar;
 
 	float m_flLastGlobalStatFetchTime;
 	float m_flNextGlobalPlayerCountUpdateTime;
@@ -1075,11 +1084,19 @@ private:
 
 	C_BaseEntity* m_pSelectedEntity;
 
+	//C_PropShortcutEntity* m_pForegroundShortcut;
+
 	std::string m_aarcadeUserFolder;
 	std::string m_aarcadeToolsFolder;
 	std::string m_legacyFolder;
 	std::string m_workshopFolder;
 	std::string m_oldEngineNoFocusSleep;
+
+	ConVar* m_pInspectYawConVar;
+	ConVar* m_pInspectPitchConVar;
+	ConVar* m_pInspectHorizConVar;
+	ConVar* m_pInspectVertConVar;
+	ConVar* m_pInspectTallConVar;
 };
 
 extern C_AnarchyManager* g_pAnarchyManager;

@@ -28,6 +28,7 @@ public:
 
 	void Precache();
 	int DrawModel(int flags);
+	void SetDrawForeground(bool bValue);
 	//bool ShouldDraw();
 
 	void OnUsed();
@@ -59,6 +60,8 @@ private:
 	char m_itemId[AA_MAX_STRING];
 	char m_objectId[AA_MAX_STRING];
 	char m_modelId[AA_MAX_STRING];
+	bool m_bDrawForeground;
+	IMaterial* m_pForegroundMaterial;
 };
 
 #endif //C_PROP_SHORTCUT_ENTITY_H

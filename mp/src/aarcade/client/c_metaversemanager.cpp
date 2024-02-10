@@ -1228,6 +1228,144 @@ bool C_MetaverseManager::ConvertLibraryVersion(unsigned int uOld, unsigned int u
 	return false;
 }
 
+void C_MetaverseManager::IterateDmxElement(CDmxElement* pRoot, std::vector<std::string>& materialFileNames)
+{
+	for (int i = 0; i<pRoot->AttributeCount(); i++)
+	{
+		CDmxAttribute* pCur = pRoot->GetAttribute(i);
+		CDmxElement* subElem;
+		DmAttributeType_t type = pCur->GetType();
+
+		if (type == AT_STRING && !Q_strcmp(pCur->GetName(), "material"))
+		{
+			//DevMsg("Detected particle material: %s\n", pCur->GetValue<CUtlString>().Get());
+			materialFileNames.push_back(pCur->GetValue<CUtlString>().Get());
+		}
+		else if (IsArrayType(type))
+		{
+			const CUtlVector<CDmxElement*>& array = pCur->GetArray<CDmxElement*>();
+			int arrayLength = array.Count();
+			for (int j = 0; j < arrayLength; j++)
+			{
+				subElem = array[j];
+				IterateDmxElement(subElem, materialFileNames);
+			}
+		}
+	}
+}
+
+// This is just a test function. Actual implementation is within C_MetaverseManager::AddMapToUploadBatch()
+void C_MetaverseManager::TesterJoint()
+{
+	// PARTICLE MANIFEST
+	std::string pcfManifestName = "maps/halfhouse_abfab36c_particles.txt";//"particles/burning_fx.pcf";//"maps/test_particles.txt";
+
+	// find all PCF files referenced in the manifest
+	std::vector<std::string> pcfFileNames;
+	KeyValues* particlesManifest = new KeyValues("particles_manifest");
+	if (particlesManifest->LoadFromFile(g_pFullFileSystem, pcfManifestName.c_str(), "GAME"))
+	{
+		// Index the MANIFEST file (pcfManifestName)
+		DevMsg("PARTICLE MANIFEST: %s\n", pcfManifestName.c_str());
+
+		for (KeyValues *sub = particlesManifest->GetFirstSubKey(); sub; sub = sub->GetNextKey())
+		{
+			if (!Q_stricmp(sub->GetName(), "file"))
+			{
+				std::string pcfFileName = sub->GetString();
+
+				// process the PCF file
+				DECLARE_DMX_CONTEXT();
+				CDmxElement* DMX = (CDmxElement*)DMXAlloc(50000000);
+
+				if (UnserializeDMX(pcfFileName.c_str(), "GAME", false, &DMX))
+				{
+					// Index the PCF files (pcfFileNames)
+					DevMsg("\tPCF FILE: %s\n", pcfFileName.c_str());
+					pcfFileNames.push_back(pcfFileName);
+
+					std::vector<std::string> vmtFileNames;
+					this->IterateDmxElement(DMX, vmtFileNames);
+
+					// Index the VMT files (vmfFileNames)
+					std::string vmtFileName;
+					for (int i = 0; i < vmtFileNames.size(); i++)
+					{
+						vmtFileName = vmtFileNames[i];
+						DevMsg("\t\tMATERIAL: %s\n", vmtFileName.c_str());
+					}
+				}
+			}
+		}
+	}
+	particlesManifest->deleteThis();
+}
+
+/*
+void C_MetaverseManager::TesterJoint()
+{
+	// PARTICLE FILE PROCESSING TESTS (.pcf)
+	std::string pcfManifestName = "maps/test_particles.txt";//"particles/burning_fx.pcf";//"maps/test_particles.txt";
+
+	// find all PCF files referenced in the manifest
+	std::vector<std::string> pcfFileNames;
+	KeyValues* particlesManifest = new KeyValues("particles_manifest");
+	if (particlesManifest->LoadFromFile(g_pFullFileSystem, pcfManifestName.c_str(), "MOD"))
+	{
+		for (KeyValues *sub = particlesManifest->GetFirstSubKey(); sub; sub = sub->GetNextKey())
+		{
+			pcfFileNames.push_back(sub->GetString());
+		}
+
+		// Index the MANIFEST file (pcfManifestName)
+		DevMsg("PARTICLE MANIFEST: %s\n", pcfManifestName.c_str());
+	}
+	particlesManifest->deleteThis();
+
+	std::string pcfFileName;
+	for (unsigned int i = 0; i < pcfFileNames.size(); i++) {
+		pcfFileName = pcfFileNames[i];
+		KeyValues* particles = new KeyValues("Particles");
+		if (particles->LoadFromFile(g_pFullFileSystem, pcfFileName.c_str(), "MOD"))
+		{
+			for (KeyValues *sub = particles->GetFirstSubKey(); sub; sub = sub->GetNextKey())
+			{
+				pcfFileNames.push_back(sub->GetString());
+
+				// Index the PCF files (pcfFileNames)
+				DevMsg("\tPCF FILE: %s\n", pcfFileNames[pcfFileNames.size()-1].c_str());
+			}
+		}
+		particles->deleteThis();
+	}
+
+	for (unsigned int i = 0; i < pcfFileNames.size(); i++) {
+		pcfFileName = pcfFileNames[i];
+
+		DECLARE_DMX_CONTEXT();
+		CDmxElement* DMX = (CDmxElement*)DMXAlloc(50000000);
+
+		if (UnserializeDMX(pcfFileName.c_str(), "MOD", false, &DMX))
+		{
+			std::vector<std::string> vmtFileNames;
+			this->IterateDmxElement(DMX, vmtFileNames);
+
+			// Index the VMT files (vmfFileNames)
+			std::string vmtFileName;
+			for (int i = 0; i < vmtFileNames.size(); i++)
+			{
+				vmtFileName = vmtFileNames[i];
+				DevMsg("\t\tMATERIAL: %s\n", vmtFileName.c_str());
+			}
+		}
+		else
+		{
+			DevMsg("Could not read PCF file %s\n", pcfFileName.c_str());
+		}
+	}
+}
+*/
+
 void C_MetaverseManager::Update()
 {
 	if (m_bHasDisconnected && !g_pAnarchyManager->IsPaused() && !engine->IsPaused())
@@ -3397,6 +3535,7 @@ void C_MetaverseManager::OnAssetUploadBatchReady()
 
 			std::string other = "";
 			// is this a model (MDL) or a model material (VMT)? (If so, then it may have dependencies.)
+			// UPDATE: maps (BSP) also have dependencies of MODELS, MATERIALS, and now OTHER as well. Note that all OTHER dependneices are FLAT. (12/10/2023)
 			// first, check if it's a BSP.
 			if (fullPath.find(".bsp") == fullPath.length() - 4 || fullPath.find(".BSP") == fullPath.length() - 4)
 			{
@@ -3404,6 +3543,28 @@ void C_MetaverseManager::OnAssetUploadBatchReady()
 				if (pMapKV)
 				{
 					// the map can have subkeys: materials, models, models/materials
+					// UPDATE: they can also have OTHER subkey, as of 12/10/2023
+
+					// OTHER ASSETS USED IN THE MAP (_particles.txt, PCF files, material files used by the PCFs.)
+					pOtherParentKV = pMapKV->FindKey("other");
+					if (pOtherParentKV)
+					{
+						for (KeyValues* pOtherKV = pOtherParentKV->GetFirstSubKey(); pOtherKV; pOtherKV = pOtherKV->GetNextKey())
+						{
+							if (other != "")
+								other += "::";
+
+							otherHash = pOtherKV->GetName();
+							if (otherHash.length() < 3)
+							{
+								DevMsg("ERROR: Another otherHash is length less than 3! Invalid!\n");
+								return;
+							}
+							other += otherHash.substr(2);
+							other += "::";
+							other += pOtherKV->GetString("");
+						}
+					}
 
 					// MATERIALS USED IN THE MAP
 					pMapMaterialsKV = pMapKV->FindKey("materials");
@@ -4311,6 +4472,7 @@ void C_MetaverseManager::SendBatch(std::string batchId)
 	KeyValues* pMapModelsKV;
 	KeyValues* pMapModelKV;
 
+	KeyValues* pMapsOtherKV;
 	KeyValues* pModelOtherKV;
 	KeyValues* pOtherKV;
 	KeyValues* pModelMaterialsKV;
@@ -4358,6 +4520,15 @@ void C_MetaverseManager::SendBatch(std::string batchId)
 		//DevMsg("Map: %s\n", pBatchMapKV->GetString("file"));
 		buf = pBatchMapKV->GetString("file");// VarArgs("maps/%s", pBatchMapKV->GetString("file"));
 		pUniqueKV->SetString(pBatchMapKV->GetName(), buf.c_str());
+
+		// MAPS OTHER
+		pMapsOtherKV = pBatchMapKV->FindKey("other", true);
+		for (pOtherKV = pMapsOtherKV->GetFirstSubKey(); pOtherKV; pOtherKV = pOtherKV->GetNextKey())
+		{
+			//DevMsg("\tFile (%s): %s\n", pOtherKV->GetName(), pOtherKV->GetString(""));
+			buf = pOtherKV->GetString("");
+			pUniqueKV->SetString(pOtherKV->GetName(), buf.c_str());
+		}
 
 		// MAP MATERIALS
 		pMapMaterialsKV = pBatchMapKV->FindKey("materials", true);
@@ -4618,6 +4789,288 @@ std::string C_MetaverseManager::AddMapToUploadBatch(std::string mapId, std::stri
 		//if (pathTypeQuery == PATH_IS_NORMAL && strstr(path, ".vpk\\") == null && strstr(path, ".vpk/") == null && strstr(path, ".VPK\\") == null && strstr(path, ".VPK/") == null)
 
 		pBatchKV->SetString(VarArgs("maps/id%s/file", fileHash.c_str()), bspFile.c_str());
+		
+		std::string assetFile;
+		KeyValues* pDetectedAssets = new KeyValues("assets");
+
+
+
+
+		// START PARTICLE SYSTEM STUFF
+		// TODO: Improve **consumption** of maps from the cloud to have an "other" field, similar to models.
+
+		// PARTICLE MANIFEST
+		DevMsg("NOTE: Particle Manifest packing is still disabled!");
+		std::string pcfManifestName = bspFile;//"maps/%s_particles.txt"
+
+		auto found = pcfManifestName.find(".bsp");
+		if (found == pcfManifestName.length() - 4)
+		{
+			pcfManifestName = pcfManifestName.substr(0, found);
+			pcfManifestName += "_particles.txt";
+
+			// clean up the asset file name for the "[MAPNAME]_particles.txt" particle manifest
+			// NOTE: Until session cloud re-downloading is implemented, it will still be best practice to pack the particle manifest into the BSP itself to FORCE updates to guests.
+			assetFile = pcfManifestName;
+
+			char* fixAssetFilename = VarArgs("%s", assetFile.c_str());
+			V_FixSlashes(fixAssetFilename);
+			V_FixDoubleSlashes(fixAssetFilename);
+			assetFile = fixAssetFilename;
+
+			std::replace(assetFile.begin(), assetFile.end(), '\\', '/');
+			std::transform(assetFile.begin(), assetFile.end(), assetFile.begin(), ::tolower);
+
+			auto found = assetFile.find("./");
+			while (found != std::string::npos)
+			{
+				assetFile.erase(found, 2);
+				found = assetFile.find("./");
+			}
+
+			found = assetFile.find("../");
+			while (found != std::string::npos)
+			{
+				assetFile.erase(found, 3);
+				found = assetFile.find("../");
+			}
+
+			// does this file already exist in the batch?  (obviously not, but here's the logic used for the cases where it actualy *might* exist already)
+			bool bNeedsAdd = true;
+			for (KeyValues* tsub = pDetectedAssets->GetFirstSubKey(); tsub; tsub = tsub->GetNextKey())
+			{
+				if (!Q_strcmp(tsub->GetString(), assetFile.c_str()))
+				{
+					bNeedsAdd = false;
+					break;
+				}
+			}
+
+			if (bNeedsAdd)
+			{
+				// OTHER file - [MAPNAME]_particles.txt
+				if (filesystem->FileExists(assetFile.c_str(), "GAME"))
+				{
+					// find all PCF files referenced in the manifest
+					std::vector<std::string> pcfFileNames;
+					KeyValues* particlesManifest = new KeyValues("particles_manifest");
+					if (particlesManifest->LoadFromFile(g_pFullFileSystem, assetFile.c_str(), "GAME"))
+					{
+						// Index the MANIFEST file (pcfManifestName)
+						DevMsg("PARTICLE MANIFEST: %s\n", assetFile.c_str());
+
+						KeyValues* pMapOtherBatchParentKV = pBatchKV->FindKey(VarArgs("maps/id%s/other", fileHash.c_str()), true);
+						std::string assetFileHash = g_pAnarchyManager->GenerateLegacyHash(assetFile.c_str());
+						pMapOtherBatchParentKV->SetString(VarArgs("id%s", assetFileHash.c_str()), assetFile.c_str());
+
+						// other (_particle.txt manifest file)
+						KeyValues* key = pDetectedAssets->CreateNewKey();	// NOTE: This bookkeeping might best be more aggressive to avoid checking of the SAME material over & over w/ fail
+						key->SetString("", assetFile.c_str());
+
+						// detect all PCF files referenced by the manifest
+						for (KeyValues *sub = particlesManifest->GetFirstSubKey(); sub; sub = sub->GetNextKey())
+						{
+							if (!Q_stricmp(sub->GetName(), "file"))
+							{
+								std::string pcfFileName = sub->GetString();
+
+
+								// clean up the asset file name for the PCF file
+								assetFile = pcfFileName;
+
+								char* fixAssetFilename = VarArgs("%s", assetFile.c_str());
+								V_FixSlashes(fixAssetFilename);
+								V_FixDoubleSlashes(fixAssetFilename);
+								assetFile = fixAssetFilename;
+
+								std::replace(assetFile.begin(), assetFile.end(), '\\', '/');
+								std::transform(assetFile.begin(), assetFile.end(), assetFile.begin(), ::tolower);
+
+								auto found = assetFile.find("./");
+								while (found != std::string::npos)
+								{
+									assetFile.erase(found, 2);
+									found = assetFile.find("./");
+								}
+
+								found = assetFile.find("../");
+								while (found != std::string::npos)
+								{
+									assetFile.erase(found, 3);
+									found = assetFile.find("../");
+								}
+
+								// does this file already exist in the batch?
+								bool bNeedsAdd = true;
+								for (KeyValues* tsub = pDetectedAssets->GetFirstSubKey(); tsub; tsub = tsub->GetNextKey())
+								{
+									if (!Q_strcmp(tsub->GetString(), assetFile.c_str()))
+									{
+										bNeedsAdd = false;
+										break;
+									}
+								}
+
+								if (bNeedsAdd)
+								{
+									// process the PCF file
+									DECLARE_DMX_CONTEXT();
+									CDmxElement* DMX = (CDmxElement*)DMXAlloc(50000000);
+
+									if (UnserializeDMX(assetFile.c_str(), "GAME", false, &DMX))
+									{
+										// Index the PCF files (pcfFileNames)
+										DevMsg("\tPCF FILE: %s\n", assetFile.c_str());
+										pcfFileNames.push_back(assetFile);
+
+										std::string assetFileHash = g_pAnarchyManager->GenerateLegacyHash(assetFile.c_str());
+										pMapOtherBatchParentKV->SetString(VarArgs("id%s", assetFileHash.c_str()), assetFile.c_str());
+
+										// other (PCF file)
+										KeyValues* key = pDetectedAssets->CreateNewKey();	// NOTE: This bookkeeping might best be more aggressive to avoid checking of the SAME material over & over w/ fail
+										key->SetString("", assetFile.c_str());
+
+										std::vector<std::string> vmtFileNames;
+										this->IterateDmxElement(DMX, vmtFileNames);
+
+										// Index the VMT files (vmfFileNames)
+										std::string vmtFileName;
+										for (int i = 0; i < vmtFileNames.size(); i++)
+										{
+											vmtFileName = vmtFileNames[i];
+
+											// process the assetName (vmtFileName)
+											// clean up the asset file name for the VMT file
+											assetFile = vmtFileName;
+
+											char* fixAssetFilename = VarArgs("%s", assetFile.c_str());
+											V_FixSlashes(fixAssetFilename);
+											V_FixDoubleSlashes(fixAssetFilename);
+											assetFile = fixAssetFilename;
+
+											std::replace(assetFile.begin(), assetFile.end(), '\\', '/');
+											std::transform(assetFile.begin(), assetFile.end(), assetFile.begin(), ::tolower);
+
+											auto found = assetFile.find("./");
+											while (found != std::string::npos)
+											{
+												assetFile.erase(found, 2);
+												found = assetFile.find("./");
+											}
+
+											found = assetFile.find("../");
+											while (found != std::string::npos)
+											{
+												assetFile.erase(found, 3);
+												found = assetFile.find("../");
+											}
+
+											// convert the vmtFileName to a materialShortName
+											// note that our VMT filename will currently NOT have the "materials/" prefix, but it WILL have the ".vmt" postfix.
+											found = assetFile.find(".vmt");
+											if (found == assetFile.length() - 4)
+											{
+												assetFile = assetFile.substr(0, found);
+
+												// check to make sure this material isn't already listed
+												// NOTE: This is actually checking for the SHORT material name, not the actual asset name.
+												// However, this is how the other material adds work in AddMapToUploadBatch. So if 1 gets improved, they all should get improved.
+												// Also, this should work just fine. But it is different than the other detected asset checks because of this.
+
+												bool bNeedsAdd = true;
+												for (KeyValues* tsub = pDetectedAssets->GetFirstSubKey(); tsub; tsub = tsub->GetNextKey())
+												{
+													if (!Q_strcmp(tsub->GetString(), assetFile.c_str()))
+													{
+														bNeedsAdd = false;
+														break;
+													}
+												}
+
+												if (bNeedsAdd)
+												{
+													// if it needs to be added, add it using the same logic as using adding skybox materials. (Remember to handle assetFile & the materialShortName the same way too.)
+
+													// pack this material
+													IMaterial* pMaterial = null;
+													if (bUseLoadedMaterialValues)
+													{
+														g_pMaterialSystem->FindMaterial(assetFile.c_str(), TEXTURE_GROUP_WORLD);
+														if (!pMaterial || pMaterial->IsErrorMaterial())
+															pMaterial = g_pMaterialSystem->FindMaterial(assetFile.c_str(), TEXTURE_GROUP_MODEL);
+														else if (!pMaterial || pMaterial->IsErrorMaterial())
+															pMaterial = g_pMaterialSystem->FindMaterial(assetFile.c_str(), TEXTURE_GROUP_VGUI);
+														else if (!pMaterial || pMaterial->IsErrorMaterial())
+															pMaterial = g_pMaterialSystem->FindMaterial(assetFile.c_str(), TEXTURE_GROUP_PARTICLE);
+														else if (!pMaterial || pMaterial->IsErrorMaterial())
+															pMaterial = g_pMaterialSystem->FindMaterial(assetFile.c_str(), TEXTURE_GROUP_DECAL);
+														else if (!pMaterial || pMaterial->IsErrorMaterial())
+															pMaterial = g_pMaterialSystem->FindMaterial(assetFile.c_str(), TEXTURE_GROUP_SKYBOX);
+														else if (!pMaterial || pMaterial->IsErrorMaterial())
+															pMaterial = g_pMaterialSystem->FindMaterial(assetFile.c_str(), TEXTURE_GROUP_CLIENT_EFFECTS);
+														else if (!pMaterial || pMaterial->IsErrorMaterial())
+															pMaterial = g_pMaterialSystem->FindMaterial(assetFile.c_str(), TEXTURE_GROUP_OTHER);
+														//else if (g_pFullFileSystem->FileExists(VarArgs("materials/skybox/%s.vmt", assetFile.c_str(), "GAME")))
+														//	materialNameOverride = assetFile;
+													}
+
+													if (pMaterial && !pMaterial->IsErrorMaterial())
+													{
+														KeyValues* pBatchParentKV = pBatchKV->FindKey(VarArgs("maps/id%s/materials", fileHash.c_str()), true);
+														this->AddMaterialToUploadBatch(pMaterial, batchId, pBatchParentKV);
+
+														// materials
+														KeyValues* key = pDetectedAssets->CreateNewKey();	// NOTE: This bookkeeping might best be more aggressive to avoid checking of the SAME material over & over w/ fail
+														key->SetString("", assetFile.c_str());
+													}
+													else
+													{
+														std::string materialName = "";	// always blank, for now.
+														if (assetFile != "")
+														{
+															std::string testFileName = "materials/";
+															testFileName += assetFile;
+															testFileName += ".vmt";
+
+															KeyValues* materialKV = new KeyValues("material");
+															// A KeyValues for the VMT *must* be loaded to proceed if no material is passed to us.
+															if (materialKV->LoadFromFile(g_pFullFileSystem, testFileName.c_str(), "GAME"))
+																materialName = assetFile;
+															materialKV->deleteThis();
+
+															if (materialName != "")
+															{
+																KeyValues* pBatchParentKV = pBatchKV->FindKey(VarArgs("maps/id%s/materials", fileHash.c_str()), true);
+																this->AddMaterialToUploadBatch(null, batchId, pBatchParentKV, materialName);
+
+																// materials
+																KeyValues* key = pDetectedAssets->CreateNewKey();	// NOTE: This bookkeeping might best be more aggressive to avoid checking of the SAME material over & over w/ fail
+																key->SetString("", assetFile.c_str());
+															}
+														}
+													}
+
+													// and then 
+													DevMsg("\t\tMATERIAL: %s\n", vmtFileName.c_str());
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+					particlesManifest->deleteThis();
+				}
+			}
+		}
+		// END PARTICLE SYSTEM STUFF
+
+
+
+
+
+
 
 		// now attempt to load up the map's VMF file from Anarchy Arcade/aarcade_user/mapsrc
 		// scan it for every world material & model referneced from it and add them to the batch
@@ -4633,12 +5086,9 @@ std::string C_MetaverseManager::AddMapToUploadBatch(std::string mapId, std::stri
 		std::string shortFileName = g_pAnarchyManager->MapName();
 
 		std::string projectName = shortFileName;
-		auto found = projectName.find_last_of("_");
+		found = projectName.find_last_of("_");
 		if (found != std::string::npos)
 			projectName = projectName.substr(0, found);
-
-		std::string assetFile;
-		KeyValues* pDetectedAssets = new KeyValues("assets");
 
 		bool bDidLoadVMF = false;
 		if (g_pFullFileSystem->FileExists(VarArgs("mapsrc/%s/%s.vmf", projectName.c_str(), shortFileName.c_str()), "DEFAULT_WRITE_PATH"))
@@ -10424,19 +10874,25 @@ void C_MetaverseManager::AssetDownloadHTTPResponse(HTTPRequestCompleted_t* pResu
 		return;
 	}
 
+
+	char* fixTopFile = VarArgs("%s", topFile.c_str());
+	V_FixSlashes(fixTopFile, '/');
+	V_FixDoubleSlashes(fixTopFile);
+	std::string fixedTopFile = fixTopFile;
+
 	int zipIndex;
 	ZIPENTRY zipEntry;
-	ZRESULT result = FindZipItem(hz, topFile.c_str(), true, &zipIndex, &zipEntry);
+	ZRESULT result = FindZipItem(hz, fixedTopFile.c_str(), true, &zipIndex, &zipEntry);
 	if (result != ZR_OK)
 	{
-		DevMsg("ERROR: Could not find file in ZIP %s\n", topFile.c_str());
+		DevMsg("ERROR: Could not find file in ZIP %s\n", fixedTopFile.c_str());
 		CloseZip(hz);
 		free(pBuf);
 		steamapicontext->SteamHTTP()->ReleaseHTTPRequest(pResult->m_hRequest);
 		return;
 	}
 
-	std::string relativeFile = VarArgs("download/%s", topFile.c_str());
+	std::string relativeFile = VarArgs("download/%s", fixedTopFile.c_str());
 	std::replace(relativeFile.begin(), relativeFile.end(), '\\', '/');
 	std::string relativePathOnly = relativeFile.substr(0, relativeFile.find_last_of("/"));
 	g_pFullFileSystem->CreateDirHierarchy(relativePathOnly.c_str(), "DEFAULT_WRITE_PATH");

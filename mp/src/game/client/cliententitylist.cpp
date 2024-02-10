@@ -118,6 +118,10 @@ int CClientEntityList::NumberOfEntities( bool bIncludeNonNetworkable )
 
 void CClientEntityList::SetMaxEntities( int maxents )
 {
+	/*// Added for Anarchy Arcade
+	DevMsg("Max entities attempting to set to %i, but overriding with %i instead.\n", maxents, MAX_EDICTS);
+	m_iMaxServerEnts = MAX_EDICTS;
+	// End added for Anarchy Arcade*/
 	m_iMaxServerEnts = maxents;
 }
 

@@ -3468,6 +3468,39 @@ void JSHandler::OnMethodCall(WebView* caller, unsigned int remote_object_id, con
 
 		g_pAnarchyManager->SteamTalker(text, voice, flPitch, flRate, flVolume);
 	}
+	else if (methodName == "injectWebJS")
+	{
+		std::string code = (args.size() - iArgOffset > 0) ? Awesomium::ToString(args[iArgOffset + 0].ToString()) : "";
+
+		// get the embedded instance
+		C_EmbeddedInstance* pEmbeddedInstance = g_pAnarchyManager->GetInputManager()->GetEmbeddedInstance();
+
+		// if current instance is NOT Steamworks browser, throw error
+		C_SteamBrowserInstance* pSteamBrowserInstance = dynamic_cast<C_SteamBrowserInstance*>(pEmbeddedInstance);
+		if (!pSteamBrowserInstance)
+		{
+			DevMsg("ERROR: Active browser is NOT a Steamworks browser.");
+			return;
+		}
+
+		pSteamBrowserInstance->InjectJavaScript(code);
+	}
+	else if (methodName == "goPrevious")
+	{
+		C_LibretroInstance* pLibretroInstance = dynamic_cast<C_LibretroInstance*>(g_pAnarchyManager->GetInputManager()->GetEmbeddedInstance());
+		if (pLibretroInstance)
+		{
+			pLibretroInstance->GoPrevious();
+		}
+	}
+	else if (methodName == "goNext")
+	{
+		C_LibretroInstance* pLibretroInstance = dynamic_cast<C_LibretroInstance*>(g_pAnarchyManager->GetInputManager()->GetEmbeddedInstance());
+		if (pLibretroInstance)
+		{
+			pLibretroInstance->GoNext();
+		}
+	}
 	//else if (methodName == "convertAndPaint")
 	//{
 	//	std::string fileLocation = (args.size() - iArgOffset > 0) ? Awesomium::ToString(args[iArgOffset + 0].ToString()) : "";
@@ -9290,8 +9323,10 @@ JSValue JSHandler::OnMethodCallWithReturnValue(WebView* caller, unsigned int rem
 	}
 	else if (methodName == "generateModelThumbnail")
 	{
+		unsigned int numArgs = args.size() - iArgOffset;
 		std::string modelFile = Awesomium::ToString(args[iArgOffset + 0].ToString());
-		std::string fileName = g_pAnarchyManager->CreateModelPreview(modelFile);
+		bool bOverwrite = (numArgs > 1) ? args[iArgOffset + 1].ToBoolean() : false;
+		std::string fileName = g_pAnarchyManager->CreateModelPreview(modelFile, bOverwrite);
 		return JSValue(WSLit(fileName.c_str()));
 	}
 	//else if (methodName == "precacheModel")

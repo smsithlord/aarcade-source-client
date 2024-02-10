@@ -703,6 +703,7 @@ void C_LibretroManager::Update()
 						}
 						else
 						{
+							// default behavior is to do nothing & remain on the last rendered frame. (because looping is currently unstable.)
 						}
 					}
 				}
@@ -841,7 +842,15 @@ void C_LibretroManager::DestroyLibretroInstance(C_LibretroInstance* pInstance)
 
 			C_LibretroInstance* pReplacementLibretroInstance = this->CreateLibretroInstance();
 			pReplacementLibretroInstance->Init(oldId, oldTitle, iOldEntIndex);
-			pReplacementLibretroInstance->SetOriginalGame(oldOriginalGame);
+			DevMsg("Original game: %s\n", oldOriginalGame.c_str());
+
+			auto it = m_nextLoadOverrideMap.find(pInstance);
+			if (it != m_nextLoadOverrideMap.end()) {
+				DevMsg("Overriding w/ game: %s\n", it->second.c_str());
+				pReplacementLibretroInstance->SetOriginalGame(it->second);
+			}
+			else
+				pReplacementLibretroInstance->SetOriginalGame(oldOriginalGame);
 			if (!pReplacementLibretroInstance->LoadCore(oldOriginalCore))
 				DevMsg("ERROR: Failed to load core: %s\n", oldOriginalCore.c_str());
 		}
@@ -1152,6 +1161,11 @@ void C_LibretroManager::SetGUIGamepadEnabled(bool bValue)
 {
 	m_bGUIGamepadEnabled = bValue;
 	cvar->FindVar("libretro_gui_gamepad")->SetValue(bValue);
+}
+
+void C_LibretroManager::SetNextLoadOverrideForInstance(C_LibretroInstance* pLibretroInstance, std::string override)
+{
+	m_nextLoadOverrideMap[pLibretroInstance] = override;
 }
 
 std::string C_LibretroManager::GetLibretroPath(retro_path_names retro_path_name)

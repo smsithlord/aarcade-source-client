@@ -64,6 +64,7 @@ mp/game/*
 mp/game
 
 # more explicit added stuff below here...
+mp/src/Output-Debug.txt
 mp/src/fgdlib/fgdlib.vcxproj.filters
 mp/src/fgdlib/fgdlib.vcxproj.vpc_crc
 mp/src/fgdlib/fgdlib.vpc.sentinel
