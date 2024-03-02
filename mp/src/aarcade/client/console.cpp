@@ -2120,6 +2120,14 @@ DevMsg("Client values for:\n\tMAX_EDICT_BITS\t%i\n\tMAX_EDICTS\t%i\n\tNUM_ENT_EN
 }
 ConCommand testerjoint("testerjoint", TesterJoint, "Usage: ");
 
+/*void GetIdTime(const CCommand &args)
+{
+	std::string id = (args.ArgC() > 1) ? args[1] : "";
+	long long llVal = g_pAnarchyManager->DecodeTimestampFromId(id);
+	DevMsg("Timestamp: %lld\n", llVal);
+}
+ConCommand getIdTime("get_id_time", GetIdTime, "Usage: Attempts to extract a timtestamp from an item ID. Only works on IDs generated w/ the Firebase-style algo - such that items uses in Redux.");*/
+
 void VROff(const CCommand &args)
 {
 	g_pAnarchyManager->VROff();

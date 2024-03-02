@@ -585,6 +585,7 @@ public:
 
 	// helpers
 	void GenerateUniqueId(char* result);
+	//long long DecodeTimestampFromId(std::string id);
 	const char* GenerateUniqueId();
 	const char* GenerateUniqueId2();
 	std::string ExtractLegacyId(std::string itemFile, KeyValues* item = null);

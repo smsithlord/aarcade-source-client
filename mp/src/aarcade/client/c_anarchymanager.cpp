@@ -10956,6 +10956,32 @@ void C_AnarchyManager::GenerateUniqueId(char* result)
 	return;// id.c_str();	// works on library browser menu	// GETS CALLS ON DIFFERENT TICKS
 }
 
+/*
+long long C_AnarchyManager::DecodeTimestampFromId(std::string id)//(const std::string& id) {
+{
+	std::string PUSH_CHARS = "-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz";
+	long long timestamp = 0;
+
+	// Extract the first 8 characters of the ID for the timestamp
+	for (int i = 0; i < 8; ++i) {
+		// Find the index of each character in the PUSH_CHARS string
+		size_t index = PUSH_CHARS.find(id[i]);
+		if (index != std::string::npos) {
+			// Accumulate the decoded timestamp
+			timestamp = timestamp * 64 + index;
+		}
+		else {
+			//std::cerr << "Invalid character in ID: " << id[i] << std::endl;
+			return -1;
+		}
+	}
+
+	// Adjust for the double division by 64 that was done during encoding
+	timestamp = timestamp * 64 * 64;
+	return timestamp;
+}
+*/
+
 const char* C_AnarchyManager::GenerateUniqueId()
 {
 	std::string PUSH_CHARS = "-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz";

@@ -238,6 +238,8 @@ private:
 	std::map<std::string, aaAPIObjectTransform_t*> m_apiObjectTransforms;
 	float m_flChromaA1;
 	float m_flChromaA2;
+
+	std::string m_syncFixInitialURL;
 };
 
 #endif
