@@ -387,8 +387,8 @@ void C_SteamBrowserInstance::OnBrowserInstanceReady(unsigned int unHandle)
 	g_pAnarchyManager->GetSteamBrowserManager()->OnSteamBrowserInstanceCreated(this);
 	g_pAnarchyManager->AddToastMessage(VarArgs("Web Browser Opened (%i running)", g_pAnarchyManager->GetSteamBrowserManager()->GetInstanceCount()));
 
-	m_syncFixInitialURL = m_initialURL;
-	//steamapicontext->SteamHTMLSurface()->LoadURL(m_unHandle, m_initialURL.c_str(), "");
+	//m_syncFixInitialURL = m_initialURL;
+	steamapicontext->SteamHTMLSurface()->LoadURL(m_unHandle, m_initialURL.c_str(), "");
 }
 
 void C_SteamBrowserInstance::OnBrowserInstanceWantsToClose()
@@ -1507,10 +1507,10 @@ void C_SteamBrowserInstance::Render()
 
 
 
-		if (m_syncFixInitialURL != "") {
+		/*if (m_syncFixInitialURL != "") {
 			steamapicontext->SteamHTMLSurface()->LoadURL(m_unHandle, m_syncFixInitialURL.c_str(), "");
 			m_syncFixInitialURL = "";
-		}
+		}*/
 }
 
 inline int calculateDistance(int c, int min, int max)

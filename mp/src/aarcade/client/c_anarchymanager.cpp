@@ -9066,6 +9066,7 @@ void C_AnarchyManager::RunAArcade()
 	cvar->FindVar("throttle_embedded_render")->SetValue(0);	// force threaded rendering to be off.
 
 	ConVar* pCvar = cvar->FindVar("avatar_url");
+	pCvar->SetValue("https://avatars.akamai.steamstatic.com/fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb_full.jpg");
 	if (!Q_strcmp(pCvar->GetString(), ""))
 	{
 		pCvar->SetValue("http://aarcade.tv/anarchybot/avatars/default0.jpg");	// to prevent us doing this in an infinite loop due to failure.
