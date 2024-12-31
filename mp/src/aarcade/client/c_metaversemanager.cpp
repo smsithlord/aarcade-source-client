@@ -1568,6 +1568,7 @@ void C_MetaverseManager::Update()
 					{
 						// make sure there's no object already existing at this position.
 						object_t* pOriginalObject = new object_t();//g_pAnarchyManager->GetInstanceManager()->GetInstanceObject(m_pSpawningObjectEntity->GetObjectId());
+						pOriginalObject->_lastVisibleFrame = -1;
 						pOriginalObject->angles = pNodeInfoEntity->GetAbsAngles();
 						pOriginalObject->origin = pNodeInfoEntity->GetAbsOrigin();
 						pOriginalObject->child = false;
@@ -2984,6 +2985,9 @@ void C_MetaverseManager::AdoptMaterialDependency(KeyValues* pAdoptedFilesKV, std
 			// Cycle through the different material vars
 			std::vector<std::string> textureAttributeNames;
 			textureAttributeNames.push_back("$basetexture");
+			textureAttributeNames.push_back("$basetexture2");
+			textureAttributeNames.push_back("$blendmodulatetexture");
+			textureAttributeNames.push_back("$bumpmap2");
 			textureAttributeNames.push_back("$texture2");
 			textureAttributeNames.push_back("$bumpmap");
 			textureAttributeNames.push_back("$normalmap");
@@ -2996,8 +3000,12 @@ void C_MetaverseManager::AdoptMaterialDependency(KeyValues* pAdoptedFilesKV, std
 			textureAttributeNames.push_back("$corneatexture");
 			textureAttributeNames.push_back("$ambientoccltexture");
 			textureAttributeNames.push_back("$phongexponenttexture");
+			textureAttributeNames.push_back("$phongwarptexture");
 			textureAttributeNames.push_back("$lightwarptexture");
 			textureAttributeNames.push_back("$selfillummask");
+			textureAttributeNames.push_back("$emissiveblendbasetexture");
+			textureAttributeNames.push_back("$emissiveblendflowtexture");
+			textureAttributeNames.push_back("$emissiveblendtexture");
 			textureAttributeNames.push_back("$detail");
 			textureAttributeNames.push_back("$glassenvmap");
 			textureAttributeNames.push_back("$dudv");
@@ -3231,6 +3239,9 @@ void C_MetaverseManager::AdoptMaterial(KeyValues* pAdoptedFilesKV, IMaterial* pM
 	// Cycle through the different material vars
 	std::vector<std::string> textureAttributeNames;
 	textureAttributeNames.push_back("$basetexture");
+	textureAttributeNames.push_back("$basetexture2");
+	textureAttributeNames.push_back("$blendmodulatetexture");
+	textureAttributeNames.push_back("$bumpmap2");
 	textureAttributeNames.push_back("$texture2");
 	textureAttributeNames.push_back("$bumpmap");
 	textureAttributeNames.push_back("$normalmap");
@@ -3243,8 +3254,12 @@ void C_MetaverseManager::AdoptMaterial(KeyValues* pAdoptedFilesKV, IMaterial* pM
 	textureAttributeNames.push_back("$corneatexture");
 	textureAttributeNames.push_back("$ambientoccltexture");
 	textureAttributeNames.push_back("$phongexponenttexture");
+	textureAttributeNames.push_back("$phongwarptexture");
 	textureAttributeNames.push_back("$lightwarptexture");
 	textureAttributeNames.push_back("$selfillummask");
+	textureAttributeNames.push_back("$emissiveblendbasetexture");
+	textureAttributeNames.push_back("$emissiveblendflowtexture");
+	textureAttributeNames.push_back("$emissiveblendtexture");
 	textureAttributeNames.push_back("$detail");
 	textureAttributeNames.push_back("$glassenvmap");
 	textureAttributeNames.push_back("$dudv");
@@ -3940,6 +3955,9 @@ void C_MetaverseManager::AddMaterialDependencyToUploadBatch(std::string batchId,
 			// Cycle through the different material vars
 			std::vector<std::string> textureAttributeNames;
 			textureAttributeNames.push_back("$basetexture");
+			textureAttributeNames.push_back("$basetexture2");
+			textureAttributeNames.push_back("$blendmodulatetexture");
+			textureAttributeNames.push_back("$bumpmap2");
 			textureAttributeNames.push_back("$texture2");
 			textureAttributeNames.push_back("$bumpmap");
 			textureAttributeNames.push_back("$normalmap");
@@ -3952,8 +3970,12 @@ void C_MetaverseManager::AddMaterialDependencyToUploadBatch(std::string batchId,
 			textureAttributeNames.push_back("$corneatexture");
 			textureAttributeNames.push_back("$ambientoccltexture");
 			textureAttributeNames.push_back("$phongexponenttexture");
+			textureAttributeNames.push_back("$phongwarptexture");
 			textureAttributeNames.push_back("$lightwarptexture");
 			textureAttributeNames.push_back("$selfillummask");
+			textureAttributeNames.push_back("$emissiveblendbasetexture");
+			textureAttributeNames.push_back("$emissiveblendflowtexture");
+			textureAttributeNames.push_back("$emissiveblendtexture");
 			textureAttributeNames.push_back("$detail");
 			textureAttributeNames.push_back("$glassenvmap");
 			textureAttributeNames.push_back("$dudv");
@@ -4224,6 +4246,9 @@ std::string C_MetaverseManager::AddMaterialToUploadBatch(IMaterial* pMaterial, s
 	IMaterialVar* pTexture = NULL;
 	std::vector<std::string> textureAttributeNames;
 	textureAttributeNames.push_back("$basetexture");
+	textureAttributeNames.push_back("$basetexture2");
+	textureAttributeNames.push_back("$blendmodulatetexture");
+	textureAttributeNames.push_back("$bumpmap2");
 	textureAttributeNames.push_back("$texture2");
 	textureAttributeNames.push_back("$bumpmap");
 	textureAttributeNames.push_back("$normalmap");
@@ -4236,8 +4261,12 @@ std::string C_MetaverseManager::AddMaterialToUploadBatch(IMaterial* pMaterial, s
 	textureAttributeNames.push_back("$corneatexture");
 	textureAttributeNames.push_back("$ambientoccltexture");
 	textureAttributeNames.push_back("$phongexponenttexture");
+	textureAttributeNames.push_back("$phongwarptexture");
 	textureAttributeNames.push_back("$lightwarptexture");
 	textureAttributeNames.push_back("$selfillummask");
+	textureAttributeNames.push_back("$emissiveblendbasetexture");
+	textureAttributeNames.push_back("$emissiveblendflowtexture");
+	textureAttributeNames.push_back("$emissiveblendtexture");
 	textureAttributeNames.push_back("$detail");
 	textureAttributeNames.push_back("$glassenvmap");
 	textureAttributeNames.push_back("$dudv");
@@ -9941,7 +9970,8 @@ void C_MetaverseManager::UserInfoReceivedHosting(HTTPRequestCompleted_t* pResult
 	if (found != std::string::npos)
 		avatarURL = avatarURL.substr(0, found);
 
-	cvar->FindVar("avatar_url")->SetValue(avatarURL.c_str());
+	DevMsg("Applying avatar URL override...\n");
+	//cvar->FindVar("avatar_url")->SetValue(avatarURL.c_str());
 	m_bHostSessionNow = true;
 }
 
@@ -9968,7 +9998,8 @@ void C_MetaverseManager::UserInfoReceivedStartup(HTTPRequestCompleted_t* pResult
 	if (found != std::string::npos)
 		avatarURL = avatarURL.substr(0, found);
 
-	cvar->FindVar("avatar_url")->SetValue(avatarURL.c_str());
+	DevMsg("Applying avatar URL override...\n");
+	//cvar->FindVar("avatar_url")->SetValue(avatarURL.c_str());
 	g_pAnarchyManager->RunAArcade();
 }
 /*
@@ -10073,6 +10104,8 @@ void C_MetaverseManager::RefreshIfUserMap(std::string mapFile_in)
 	// Confirm that the BSP is in aarcade_user/download/maps/[mapFile].bsp
 	if (!g_pFullFileSystem->FileExists(VarArgs("download/maps/%s", mapFile.c_str()), "DEFAULT_WRITE_PATH"))
 		return;
+
+	// FIXME: TODO: Explicity confirm that the file exists in the **absolute** path that aligns with the DEFAULT_WRITE_PATH. (The above check *might* be doing that already.)
 
 	// Remove the BSP
 	g_pFullFileSystem->RemoveFile(VarArgs("download/maps/%s", mapFile.c_str()), "DEFAULT_WRITE_PATH");
@@ -11890,6 +11923,7 @@ void C_MetaverseManager::HostSession()
 
 	if (!Q_strcmp(cvar->FindVar("avatar_url")->GetString(), ""))
 	{
+		DevMsg("OBSOLETE! This line should be depreicated & never called.\n");
 		CSteamID sid = steamapicontext->SteamUser()->GetSteamID();
 		HTTPRequestHandle requestHandle = steamapicontext->SteamHTTP()->CreateHTTPRequest(k_EHTTPMethodGET, VarArgs("https://api.steampowered.com/ISteamUser/GetPlayerSummaries/v2/?key=%s&steamids=%llu", AA_STEAMWORKS_API_KEY, sid.ConvertToUint64()));
 

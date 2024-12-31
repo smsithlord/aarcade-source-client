@@ -120,6 +120,7 @@ C_AwesomiumBrowserManager::C_AwesomiumBrowserManager()
 	WebConfig config;
 	config.log_level = kLogLevel_Normal;
 	config.child_process_path = WSLit("./AArcadeWebview.exe");
+	//config.additional_options.Push(WSLit("--ignore-certificate-errors"));	// does not fix NSS and SSL issues w/ loading images from servers that only support modern stuff.
 
 	m_pWebCore = WebCore::Initialize(config);
 

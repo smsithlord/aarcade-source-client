@@ -40,6 +40,12 @@ C_InstanceManager::C_InstanceManager()
 	m_pDebugObjectSpawnConVar = cvar->FindVar("debug_object_spawn");
 	m_pSkipObjectsConVar = cvar->FindVar("skip_objects");
 	m_pReShadeConVar = cvar->FindVar("reshade");
+
+	m_iAutoUnspawnFramesSkipped = 0;
+	m_pAutoUnspawnModeConVar = cvar->FindVar("auto_unspawn_mode");
+	m_pAutoUnspawnEntityFrameSkipConVar = cvar->FindVar("auto_unspawn_entity_frameskip");
+	m_pAutoUnspawnIntervalFrameSkipConVar = cvar->FindVar("auto_unspawn_interval_frameskip");
+
 	m_pReShadeDepthConVar = cvar->FindVar("reshadedepth");
 	m_pVGUIConVar = cvar->FindVar("r_drawvgui");
 	m_pNearestSpawnDistConVar = cvar->FindVar("spawn_dist");
@@ -965,6 +971,7 @@ object_t* C_InstanceManager::AddObject(std::string objectId, std::string itemId,
 	//DevMsg("Object ID here is: %s\n", goodObjectId.c_str());
 
 	object_t* pObject = new object_t();
+	pObject->_lastVisibleFrame = -1;
 	pObject->objectId = goodObjectId;
 	pObject->created = created;
 	pObject->owner = owner;
@@ -1229,10 +1236,130 @@ int C_InstanceManager::SetNearestSpawnDist(double maxDist)
 	return count;
 }
 
-bool C_InstanceManager::SpawnNearestObject()
+void C_InstanceManager::ProcessAutoUnspawnUpdate() {
+	// unspawn any objects that haven't been seen in a while
+	int iNumSpawned = this->SpawnNearestObject(true);
+	int iEntityFrameSkip = (m_pAutoUnspawnModeConVar->GetInt() == 2) ? 0 : m_pAutoUnspawnEntityFrameSkipConVar->GetInt();
+	int iNumRemoved = this->UnspawnAllObjects(iEntityFrameSkip);
+	//m_unspawnedObjects.clear();
+
+	if (iNumRemoved > 0 || iNumSpawned > 0)
+	{
+		DevMsg("AutoUnspawn: +%i/-%i\n", iNumSpawned, iNumRemoved);
+	}
+}
+
+int C_InstanceManager::UnspawnAllObjects(int minSkippedFrames) {
+	/*if (minSkippedFrames == -1)
+	{
+		m_unspawnedObjects.clear();
+	}*/
+
+	int iNumUnspawned = 0;
+	auto it = m_objects.begin();
+	while (it != m_objects.end())
+	{
+		if (it->second->spawned && (minSkippedFrames <= 0 || gpGlobals->framecount - it->second->_lastVisibleFrame >= minSkippedFrames))
+		{
+			if (!engine->IsBoxInViewCluster(it->second->origin + Vector(1, 1, 1), it->second->origin + Vector(-1, -1, -1)))
+			{
+				if (this->UnspawnObject(it->second->objectId)) {
+					iNumUnspawned++;
+				}
+			}
+			else {
+				it->second->_lastVisibleFrame = gpGlobals->framecount;
+			}
+		}
+		it++;
+	}
+	/*if (minSkippedFrames == -1)
+	{
+		DevMsg("Unspawned %i objects.\n", iNumUnspawned);
+	}*/
+	return iNumUnspawned;
+}
+
+bool C_InstanceManager::UnspawnObject(std::string objectId) {
+	object_t* pObject = this->GetInstanceObject(objectId);
+	if (!pObject || !pObject->spawned) {	// unless FORCED, skip if object already exists --OR-- if it is a critical object - such as one that is parented to another, used in a quest, or other special case.
+		return false;
+	}
+
+	bool bIsParent = false;
+	// iterate through all objects & see if we are their parent
+	int iEntityIndex = pObject->entityIndex;
+	auto it = m_objects.begin();
+	while (it != m_objects.end())
+	{
+		if (it->second->spawned && it->second->parentEntityIndex == iEntityIndex)
+		{
+			bIsParent = true;
+			break;
+		}
+		it++;
+	}
+
+	bool bIsQuestObject = g_pAnarchyManager->GetQuestManager()->IsObjectUsedByAnyEZQuests(pObject);
+	bool bIsChild = pObject->child;
+	bool bIsAutoplayObject = (this->GetCurrentInstance()->autoplayId == objectId);//if autoplay is disabled via the console command, then there really is no autoplay object. FIXME: Maybe use this check too/instead: pShortcut->SetTransmitState(FL_EDICT_ALWAYS);
+	bool bIsSpawningObject = (g_pAnarchyManager->GetMetaverseManager()->GetSpawningObject() && g_pAnarchyManager->GetMetaverseManager()->GetSpawningObject()->objectId == objectId);
+	bool bIsInspectObject = (g_pAnarchyManager->GetInspectShortcut() && g_pAnarchyManager->GetInspectShortcut()->GetObjectId() == objectId);
+	bool bIsSelectedEntity = (g_pAnarchyManager->GetSelectedEntity() && g_pAnarchyManager->GetSelectedEntity()->entindex() == iEntityIndex);
+	bool bIsUsedByTaskInstance = g_pAnarchyManager->GetSteamBrowserManager()->FindSteamBrowserInstanceByEntityIndex(iEntityIndex) || g_pAnarchyManager->GetLibretroManager()->FindLibretroInstanceByEntityIndex(iEntityIndex) || g_pAnarchyManager->GetAwesomiumBrowserManager()->FindAwesomiumBrowserInstanceByEntityIndex(iEntityIndex);
+
+	if (bIsParent || bIsQuestObject || bIsChild || bIsAutoplayObject || bIsSpawningObject || bIsInspectObject || bIsSelectedEntity || bIsUsedByTaskInstance) {	// unless FORCED, skip if it is a critical object - such as one that is parented to another, used in a quest, or other special case.
+		return false;
+	}
+
+	// Remove the object
+	//engine->ClientCmd(VarArgs("removeobject %i;", iEntityIndex));
+	engine->ExecuteClientCmd(VarArgs("removeobject %i\n", iEntityIndex));
+
+	// Then wait until the object is actually removed...
+	// ... (perhaps it is syncronously removed because we are essentially a listening server.)
+
+	// And then clean up the object reference...
+	pObject->spawned = false;
+	pObject->entityIndex = -1;
+	pObject->parentEntityIndex = -1;
+	m_unspawnedObjects.push_back(pObject);
+	return true;
+}
+
+int C_InstanceManager::SpawnNearestObject(bool bAutoSpawnerMode)
 {
-	bool bNeedSpawnOverride;	// If the object is used by a quest OR it is the autoplay object, it should really spawn RIGHT NOW instead.
+	bool bNeedSpawnOverride = false;	// If the object is used by a quest OR it is the autoplay object, it should really spawn RIGHT NOW instead.
 	object_t* pTestObject = null;
+
+	if (bAutoSpawnerMode)
+	{
+		int iNumSpawned = 0;
+		std::vector<object_t*> victims;
+		for (unsigned int i = 0; i < m_unspawnedObjects.size(); i++)
+		{
+			pTestObject = m_unspawnedObjects[i];
+			bNeedSpawnOverride = (this->GetCurrentInstance()->autoplayId == pTestObject->objectId);
+			if (!bNeedSpawnOverride)
+				bNeedSpawnOverride = g_pAnarchyManager->GetQuestManager()->IsObjectUsedByAnyEZQuests(pTestObject);
+
+			if (!bNeedSpawnOverride) // always apply view check while in bAutoSpawnerMode?? (for now, at least.)
+				bNeedSpawnOverride = engine->IsBoxInViewCluster(pTestObject->origin + Vector(1, 1, 1), pTestObject->origin + Vector(-1, -1, -1));
+
+			if (bNeedSpawnOverride)
+			{
+				victims.push_back(pTestObject);
+			}
+		}
+
+		for (unsigned int i = 0; i < victims.size(); i++)
+		{
+			pTestObject = victims[i];
+			this->SpawnObject(pTestObject, true);
+			iNumSpawned++;
+		}
+		return iNumSpawned;
+	}
 
 	if (g_pAnarchyManager->ShouldBatchObjectSpawn() && m_fNearestSpawnDist <= 0)	// just spawn everything
 	{
@@ -1264,7 +1391,7 @@ bool C_InstanceManager::SpawnNearestObject()
 		m_fNearestSpawnDist = m_pNearestSpawnDistConVar->GetFloat();
 
 		//if (iEstimate == 0)
-		return false;
+		return 0;
 		//else
 		//	return true;
 	}
@@ -1344,14 +1471,14 @@ bool C_InstanceManager::SpawnNearestObject()
 	if (pNearObject)
 	{
 		this->SpawnObject(pNearObject, bNearestNeedsSpawnOverride);
-		return true;
+		return 1;
 	}
 
 	// If we are done spawning objects in this batch, restore our spawn dist to the cvar value.
 	// (This is because we may ahve overrode the spawn dist by holding down the SPANW OBJECTS button for 1 second.)
 	m_fNearestSpawnDist = m_pNearestSpawnDistConVar->GetFloat();
 
-	return false;
+	return 0;
 }
 
 void C_InstanceManager::AddInstance(int iLegacy, std::string instanceId, std::string mapId, std::string title, std::string file, std::string workshopIds, std::string mountIds, std::string autoplayId, std::string style)
@@ -2127,10 +2254,11 @@ void C_InstanceManager::SpawnActionPressed(bool bForceSpawnAll)
 	Vector playerPos = pPlayer->GetAbsOrigin();
 	Vector playerEyePos = pPlayer->EyePosition();
 
-	bool bNeedsVisiblityTest = (m_fNearestSpawnDist > 0 && m_pSpawnObjectsWithinViewOnlyConVar->GetBool());
+	bool bNeedsVisiblityTest = m_pSpawnObjectsWithinViewOnlyConVar->GetBool();//(m_fNearestSpawnDist > 0 && m_pSpawnObjectsWithinViewOnlyConVar->GetBool());
 	bool bPassesVisibilityTest;
 	//if (true)	// turn off double-tap loading if unspawned item title previews are on while walking around
-	if (bForceSpawnAll || m_fNearestSpawnDist <= 0 || !m_pSpawnObjectsDoubleTapConVar->GetBool() || (m_fLastSpawnActionPressed != 0 && gpGlobals->realtime - m_fLastSpawnActionPressed < fDuration))
+	//if (bForceSpawnAll || m_fNearestSpawnDist <= 0 || !m_pSpawnObjectsDoubleTapConVar->GetBool() || (m_fLastSpawnActionPressed != 0 && gpGlobals->realtime - m_fLastSpawnActionPressed < fDuration))
+	if (bForceSpawnAll || (!bNeedsVisiblityTest && m_fNearestSpawnDist <= 0) || !m_pSpawnObjectsDoubleTapConVar->GetBool() || (m_fLastSpawnActionPressed != 0 && gpGlobals->realtime - m_fLastSpawnActionPressed < fDuration))
 	{
 		m_fLastSpawnActionPressed = 0.0f;// gpGlobals->realtime;
 
@@ -2182,7 +2310,7 @@ void C_InstanceManager::SpawnActionPressed(bool bForceSpawnAll)
 		//{
 		std::string screenshotPostfix = (loadingScreenshotId != "") ? "&screenshot=" + loadingScreenshotId : "";
 		std::string maxDist = (bForceSpawnAll) ? "0" : VarArgs("%f", m_fNearestSpawnDist);
-		std::string uri = "asset://ui/spawnItems.html?max=" + maxDist + screenshotPostfix;//"99999999999.9"
+		std::string uri = "asset://ui/spawnItems.html?notFirstSpawn=1&max=" + maxDist + screenshotPostfix;//"99999999999.9"
 
 		C_AwesomiumBrowserInstance* pHudBrowserInstance = g_pAnarchyManager->GetAwesomiumBrowserManager()->FindAwesomiumBrowserInstance("hud");
 		g_pAnarchyManager->GetAwesomiumBrowserManager()->SelectAwesomiumBrowserInstance(pHudBrowserInstance);
@@ -2223,6 +2351,8 @@ void C_InstanceManager::SpawnActionPressed(bool bForceSpawnAll)
 					//	bPassesVisibilityTest = true;
 					//else
 					//{
+						//if (!engine->CullBox(pTestObject->origin + Vector(0.1, 0.1, 0.1), pTestObject->origin + Vector(-0.1, -0.1, -0.1)))
+						//if (engine->IsBoxVisible(pTestObject->origin + Vector(0.1, 0.1, 0.1), pTestObject->origin + Vector(-0.1, -0.1, -0.1)))
 						if (engine->IsBoxInViewCluster(pTestObject->origin + Vector(1, 1, 1), pTestObject->origin + Vector(-1, -1, -1)))
 							bPassesVisibilityTest = true;
 						else
@@ -2939,6 +3069,8 @@ void C_InstanceManager::LevelShutdownPostEntity()
 	//m_fNearestSpawnDist = 0;
 	m_iUnspawnedWithinRangeEstimate = 0;
 
+	m_iAutoUnspawnFramesSkipped = 0;
+
 	// clear out objects and unspanwed objects
 	auto it = m_objects.begin();
 	while (it != m_objects.end())
@@ -2967,6 +3099,29 @@ void C_InstanceManager::LevelShutdownPreEntity()
 //#include "debugoverlay_shared.h"
 void C_InstanceManager::Update()
 {
+	if (engine->IsInGame())
+	{
+		int iVal = m_pAutoUnspawnModeConVar->GetInt();
+		if (iVal)
+		{
+			if (iVal == 2) {
+				iVal = 0;
+			}
+			else {
+				m_iAutoUnspawnFramesSkipped++;
+			}
+
+			if (!iVal || m_iAutoUnspawnFramesSkipped > m_pAutoUnspawnIntervalFrameSkipConVar->GetInt()) {
+				m_iAutoUnspawnFramesSkipped = 0;
+				this->ProcessAutoUnspawnUpdate();
+			}
+
+			if (!iVal ) {
+				m_pAutoUnspawnModeConVar->SetValue(iVal);
+			}
+		}
+	}
+
 	if (engine->IsInGame() && m_pReShadeConVar->GetBool() && m_pReShadeDepthConVar->GetBool())
 	{
 		bool bHasDebugText = (debugoverlay->GetFirst()) ? true : false;

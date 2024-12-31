@@ -1,5 +1,28 @@
 # Files to ignore when considering what GIT should commit.
 
+mp/src/utils/vrad_launcher/Debug/*
+*/Debug/*
+mp/src/utils/vice/Debug/*
+mp/src/utils/vrad/Debug/*
+mp/src/utils/vbsp/Debug/*
+mp/src/utils/tgadiff/Debug/*
+mp/src/utils/vtf2tga/Debug/*
+mp/src/utils/vtfdiff/Debug/*
+mp/src/utils/vvis/Debug/*
+mp/src/utils/vvis_launcher/Debug/*
+mp/src/utils/serverplugin_sample/Debug/*
+mp/src/utils/qc_eyes/Debug/*
+mp/src/utils/phonemeextractor/Debug/*
+mp/src/utils/motionmapper/Debug/*
+mp/src/utils/height2normal/Debug/*
+mp/src/utils/glview/Debug/*
+mp/src/utils/captioncompiler/Debug/*
+mp/src/materialsystem/stdshaders/Debug_dx9_mod_hl2mp/*
+mp/src/game/client/Debug_mod_hl2mp/*
+mp/src/game/server/Debug_mod_hl2mp/*
+*.pdb
+
+
 # Visual Studio 
 *.suo
 *.user

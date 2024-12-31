@@ -2555,6 +2555,10 @@ void CHudCloseCaption::Flush()
 
 void CHudCloseCaption::InitCaptionDictionary( const char *dbfile )
 {
+	if (true) {// Added for Anarchy Arcade
+		return;
+	}
+
 	if ( m_CurrentLanguage.IsValid() && !Q_stricmp( m_CurrentLanguage.String(), dbfile ) )
 		return;
 

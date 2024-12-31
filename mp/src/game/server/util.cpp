@@ -1898,7 +1898,7 @@ int DispatchSpawn( CBaseEntity *pEntity )
 		if (!Q_strcmp(pEntity->GetClassname(), "team_control_point") || !Q_strcmp(pEntity->GetClassname(), "team_round_timer") || !Q_strcmp(pEntity->GetClassname(), "team_control_point_master"))
 		{
 			pEntity->Remove();
-			return-1;
+			return -1;
 		}
 		// End added for Anarchy Arcade.
 

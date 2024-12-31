@@ -1665,6 +1665,15 @@ void CBasePlayer::Event_Killed( const CTakeDamageInfo &info )
 
 	g_pGameRules->PlayerKilled( this, info );
 
+	// Added for Anarchy Arcade
+	CBasePlayer *pPlayer = UTIL_GetLocalPlayer();
+	if (pPlayer)
+	{
+		edict_t *pClient = engine->PEntityOfEntIndex(pPlayer->entindex());
+		engine->ClientCommand(pClient, "local_player_died");
+	}
+	// End Added for Anarchy Arcade
+
 	gamestats->Event_PlayerKilled( this, info );
 
 	RumbleEffect( RUMBLE_STOP_ALL, 0, RUMBLE_FLAGS_NONE );

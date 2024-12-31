@@ -716,6 +716,11 @@ void C_QuestManager::QuestSuccess(std::string questId)
 #include <algorithm>
 bool C_QuestManager::IsObjectUsedByAnyEZQuests(object_t* object)
 {
+	if (m_EZQuests.size() <= 0)
+	{
+		return false;
+	}
+
 	// Alright. This function is going to be a bit of a cluster fuck.
 	// First of all, EZ Quests are not the native, strictly defined internal format of quests.
 	// EZ Quests are more like quest generators. Instead of saying what object IDs are associated, they often just say a MDL to use instead.
@@ -1603,6 +1608,7 @@ bool C_QuestManager::OnPlayerUse()
 
 	C_BasePlayer* pPlayer = null;
 	Vector playerOrigin;
+	Vector testOrigin;
 
 	std::vector<object_t*> validObjects;
 	std::vector<quest_t*> validQuests;
@@ -1655,7 +1661,17 @@ bool C_QuestManager::OnPlayerUse()
 					}
 
 					// Check the distance of the object to the player.
-					if (pCollectibleObject->entityIndex >= 0 && playerOrigin.DistTo(pCollectibleObject->origin) < pQuest->flCollectRadius)
+					testOrigin = pCollectibleObject->origin;
+
+					// Does the object exist? If so, use it's current pos instead of object pos.
+					if (pCollectibleObject->entityIndex >= 0) {
+						C_BaseEntity* pBaseEntity = C_BaseEntity::Instance(pCollectibleObject->entityIndex);
+						if (pBaseEntity) {
+							testOrigin = pBaseEntity->GetAbsOrigin();
+						}
+					}
+
+					if (pCollectibleObject->entityIndex >= 0 && playerOrigin.DistTo(testOrigin) < pQuest->flCollectRadius)	// Might be useful if quests could work even w/o their objects spawned - to avoid the need to spawn all quest-related objects prior to running quests.
 					{
 						// collect the object for the quest.
 

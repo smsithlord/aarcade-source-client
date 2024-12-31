@@ -1942,6 +1942,11 @@ void CViewRender::RenderView( const CViewSetup &view, int nClearFlags, int whatT
 
 	m_CurrentView = view;
 
+	// Added for Anarchy Arcade https://developer.valvesoftware.com/wiki/General_SDK_Snippets_%26_Fixes#Seamless_cubemaps_hack
+	if (building_cubemaps.GetBool())
+		m_CurrentView.fov = RAD2DEG(2.0f * atanf(64.0f / (64 - 0.5f)));
+	// End Added for Anarchy Arcade
+
 	C_BaseAnimating::AutoAllowBoneAccess boneaccess( true, true );
 	VPROF( "CViewRender::RenderView" );
 	tmZone( TELEMETRY_LEVEL0, TMZF_NONE, "%s", __FUNCTION__ );

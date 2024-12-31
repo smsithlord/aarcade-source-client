@@ -6303,11 +6303,30 @@ bool UTIL_CreateScaledPhysObject( CBaseAnimating *pInstance, float flScale )
 	// Scale the base model as well
 	pInstance->SetModelScale( flScale );
 
-	if ( pInstance->GetParent() )
+	// Added for Anarchy Arcade
+	/*if ( pInstance->GetParent() )
 	{
 		pNewObject->SetShadow( 1e4, 1e4, false, false );
 		pNewObject->UpdateShadow( pInstance->GetAbsOrigin(), pInstance->GetAbsAngles(), false, 0 );
+	}*/
+
+	if (pInstance->GetParent())
+	{
+		float scaledShadowDist = 1e4 * flScale; // Scale shadow parameters
+		pNewObject->SetShadow(scaledShadowDist, scaledShadowDist, false, false);
+
+		// Update shadow to match the new scale and position
+		Vector shadowMins, shadowMaxs;
+		pInstance->CollisionProp()->WorldSpaceSurroundingBounds(&shadowMins, &shadowMaxs);
+		shadowMins *= flScale;
+		shadowMaxs *= flScale;
+		pNewObject->UpdateShadow(pInstance->GetAbsOrigin(), pInstance->GetAbsAngles(), false, 0);
+
+		// Optionally adjust bounds if shadows need more explicit scaling
+		pInstance->CollisionProp()->SetSurroundingBoundsType(USE_GAME_CODE);
+		pInstance->SetCollisionBounds(shadowMins, shadowMaxs);
 	}
+	// End Added for Anarchy Arcade
 
 	if ( bWasMotionDisabled )
 	{

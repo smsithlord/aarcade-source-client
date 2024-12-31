@@ -666,6 +666,8 @@ void CPropShortcutEntity::AnimFinished()
 	{
 		//if (currentAnimName != "inactiveidle")
 		//{
+			//int currentSequence = this->GetSequence();
+			//this->ResetSequence(currentSequence);
 			this->SetCycle(0);
 			this->ResetClientsideFrame();
 			//this->NetworkStateChanged();

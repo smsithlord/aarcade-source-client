@@ -102,6 +102,8 @@ C_AnarchyManager::C_AnarchyManager() : CAutoGameSystemPerFrame("C_AnarchyManager
 	m_flInspectGoodScale = 1.0f;
 	m_flInspectOffsetScale = 1.0f;
 	m_flInspectPreviousScale = 0.0f;
+	m_pPlayAsPet = null;
+	m_pPendingPetsRestoreKV = null;
 
 	//m_pTalkerSteamBrowserInstance = null;
 
@@ -288,6 +290,10 @@ C_AnarchyManager::C_AnarchyManager() : CAutoGameSystemPerFrame("C_AnarchyManager
 	m_uValidProcessedModelCount = 0;
 	m_uProcessBatchSize = 100;
 	m_uProcessCurrentCycle = 0;
+
+	m_iLookspotIndex = -1;
+	m_iLookspotHaloIndex = -1;
+	m_iDirIndex = -1;
 
 	m_flOldZNear = 7;
 	m_pInspectModelIdConVar = null;
@@ -947,6 +953,10 @@ void C_AnarchyManager::FetchGlobalStats()
 
 	SteamAPICall_t hAPICall = steamapicontext->SteamUserStats()->RequestGlobalStats(2);	// we ain't really ready yet, but global stats aren't **too** important
 	m_RequestGlobalStatsHelper.Set(hAPICall, this, &C_AnarchyManager::RequestGlobalStatsResponse);
+}
+
+C_PropShortcutEntity* C_AnarchyManager::GetInspectShortcut() {
+	return m_pInspectShortcut;
 }
 
 void C_AnarchyManager::ActivateInspectObject(C_PropShortcutEntity* pShortcut) {
@@ -1769,6 +1779,61 @@ void C_AnarchyManager::ApplyCarryData(std::string origin)
 	}
 }
 
+void C_AnarchyManager::PlaySequenceRegularOnProp(C_DynamicProp* pProp, const char* sequenceTitle)
+{
+
+	std::string realSequenceTitle = sequenceTitle;
+
+	int index = pProp->LookupSequence(realSequenceTitle.c_str());
+
+	if (index == ACT_INVALID)
+	{
+		if (!Q_strcmp(sequenceTitle, "activated"))
+		{
+			realSequenceTitle = "activeidle";
+			index = pProp->LookupSequence(realSequenceTitle.c_str());
+		}
+		else if (!Q_strcmp(sequenceTitle, "deactivated"))
+		{
+			realSequenceTitle = "inactiveidle";
+			index = pProp->LookupSequence(realSequenceTitle.c_str());
+		}
+	}
+
+	if (index != ACT_INVALID)
+	{
+		//		DevMsg("Playing sequence %s on the client.\n", sequenceTitle);
+
+		//		this->SetModelScale(2.0);	// WORKING WORKING WORKING ITEM SCALING!  JUST LEAVE LAST PARAM AS ZERO!
+		//		DevMsg("here sequenceis: %i with index %i\n", this->GetSequence(), index);
+
+		if (pProp->GetSequence() > 0 )//|| bHandleModelChange)
+			pProp->SetSequence(index);
+
+		pProp->SetCycle(0.0f);
+
+		engine->ClientCmd(VarArgs("playsequence %i \"%s\";\n", pProp->entindex(), realSequenceTitle.c_str()));	// servercmdfix , false);
+		//engine->ServerCmd(VarArgs("playsequence %i \"%s\";\n", this->entindex(), realSequenceTitle.c_str()), false);
+		//engine->ServerCmd(VarArgs("playsequence %i \"%s\";\n", this->entindex(), realSequenceTitle.c_str()), true);
+	}
+}
+
+void C_AnarchyManager::OnHotlinkDraw(C_BaseAnimating* pBaseAnimating, bool bWasDrawn)
+{
+	if (!bWasDrawn)
+	{
+		return;
+	}
+
+	C_BaseEntity* pBaseEntity = pBaseAnimating->GetBaseEntity();
+	C_PropShortcutEntity* pPropShortcutEntity = dynamic_cast<C_PropShortcutEntity*>(pBaseEntity);
+	object_t* pObject = m_pInstanceManager->GetInstanceObject(pPropShortcutEntity->GetObjectId());
+	if (pObject)
+	{
+		pObject->_lastVisibleFrame = gpGlobals->framecount;
+	}
+}
+
 /*
 void C_AnarchyManager::SetForegroundShortcut(C_PropShortcutEntity* pShortcut)
 {
@@ -1779,6 +1844,31 @@ void C_AnarchyManager::StartQuestsSoon()
 {
 	m_pQuestManager->SetQuestsInitializing(true);
 	m_flStartQuestsSoon = engine->Time() + 3.0f;
+}
+
+void C_AnarchyManager::LocalPlayerSpawned()
+{
+	//DevMsg("figure out pet follow state here.");
+	//engine->ClientCmd("petplaystop");
+
+	pet_t* pPlayAsPet = g_pAnarchyManager->GetPlayAsPet();
+	if (pPlayAsPet)
+	{
+		engine->ClientCmd("set_prop_vis -1 0;");
+		engine->ClientCmd(VarArgs("set_prop_vis %i 1;", pPlayAsPet->iEntityIndex));
+	}
+}
+
+void C_AnarchyManager::LocalPlayerDied()
+{
+	//engine->ClientCmd("petplaystop");
+	// make sure the player/pet is hidden (if it's supposed to be.)
+	pet_t* pPlayAsPet = g_pAnarchyManager->GetPlayAsPet();
+	if (pPlayAsPet && !C_BasePlayer::LocalPlayerInFirstPersonView() )
+	{
+		engine->ClientCmd("set_prop_vis -1 0;");
+		engine->ClientCmd(VarArgs("set_prop_vis %i 0;", pPlayAsPet->iEntityIndex));
+	}
 }
 
 void C_AnarchyManager::OnAccountantReady()
@@ -1794,7 +1884,12 @@ void C_AnarchyManager::OnAccountantReady()
 
 void C_AnarchyManager::OnStartup()
 {
-	engine->ClientCmd("bind f4 task_menu; bind f8 players_menu;");	// TEMPORARY. You can delete this line on June 2019.
+	engine->ClientCmd("bind f4 task_menu; bind f6 favorites_menu; bind f7 commands_menu; bind f8 paint_menu; bind f9 pets_tab; bind 7 slot7; bind 8 slot8; bind 9 slot9; bind 0 slot10;");	// TEMPORARY. You can delete this line on June 2019.	// bind f8 players_menu;
+
+	// Automatically force numpad to be cinematic camera controls.
+	engine->ClientCmd("bind kp_ins \"camcut 0\"; bind kp_end \"camcut 1\"; bind kp_downarrow \"camcut 2\"; bind kp_pgdn \"camcut 3\"; bind kp_leftarrow \"camcut 4\"; bind kp_5 \"camcut 5\"; bind kp_rightarrow \"camcut 6\"; bind kp_home \"camcut 7\"; bind kp_uparrow \"camcut 8\"; bind kp_pgup \"camcut 9\";");
+
+	engine->ClientCmd("r_eyemove 0; lightcache_maxmiss 99999;");	// NOTE: Probably not ideal to override these values in C++, it makes users unable to prevent the override.
 
 #ifdef VR_ALLOWED
 	engine->ClientCmd("mat_queue_mode 0;");
@@ -2462,7 +2557,7 @@ void C_AnarchyManager::LevelInitPostEntity()
 
 	m_bSuspendEmbedded = false;
 
-	engine->ClientCmd("sv_infinite_aux_power 1; mp_timelimit 0; sv_timeout 300; cl_timeout 300;\n");
+	engine->ClientCmd("sv_infinite_aux_power 1; mp_timelimit 0; sv_timeout 300; cl_timeout 300;\n");//play_as_next_pet 0; 
 
 	if (cvar->FindVar("crosshair_color")->GetInt() != 0)
 		engine->ClientCmd("hide_arcade_crosshair; show_arcade_crosshair;");
@@ -2498,6 +2593,16 @@ void C_AnarchyManager::LevelInitPostEntity()
 		steamapicontext->SteamFriends()->SetRichPresence("connect", null);
 
 	steamapicontext->SteamFriends()->SetRichPresence("steam_display", status.c_str());
+
+	// Restore ALL pets
+	if (cvar->FindVar("pet_persistence")->GetBool())
+	{
+		this->RestorePetStates();
+	}
+	else
+	{
+		this->AfterPendingPetsRestore();
+	}
 }
 
 void C_AnarchyManager::LevelShutdownPreClearSteamAPIContext()
@@ -2506,6 +2611,211 @@ void C_AnarchyManager::LevelShutdownPreClearSteamAPIContext()
 		return;
 
 	DevMsg("AnarchyManager: LevelShutdownPreClearSteamAPIContext\n");
+}
+
+void C_AnarchyManager::SaveCurrentPetInfo()
+{
+	if (m_pPlayAsPet)
+	{
+		// FIXME: This code is mostly redundant with the SavePetStates method.
+		//C_BaseEntity* pPetEntity = C_BaseEntity::Instance(m_pPlayAsPet->iEntityIndex);
+		//std::string petModelFilename = modelinfo->GetModelName(pPetEntity->GetModel());
+		//petModelFilename = g_pAnarchyManager->NormalizeModelFilename(petModelFilename);
+		//std::string modelFileHash = g_pAnarchyManager->GenerateLegacyHash(petModelFilename.c_str());
+
+		g_pFullFileSystem->CreateDirHierarchy("pets", "DEFAULT_WRITE_PATH");
+
+		// save the tmp states into the KV
+		m_pPlayAsPet->pConfigKV->SetString("tmp_outfit", m_pPlayAsPet->outfitId.c_str());
+		m_pPlayAsPet->pConfigKV->SetInt("tmp_behavior", m_pPlayAsPet->iBehavior);
+		m_pPlayAsPet->pConfigKV->SetInt("tmp_sequence", m_pPlayAsPet->iCurSequence);
+
+		m_pPlayAsPet->pConfigKV->SaveToFile(g_pFullFileSystem, "pets/current_pet.txt", "DEFAULT_WRITE_PATH");
+	}
+	else
+	{
+		if (g_pFullFileSystem->FileExists("pets/current_pet.txt", "DEFAULT_WRITE_PATH"))
+		{
+			g_pFullFileSystem->RemoveFile("pets/current_pet.txt", "DEFAULT_WRITE_PATH");
+		}
+	}
+}
+
+void C_AnarchyManager::RestoreCurrentPetInfo(bool bPlayAsNext)
+{
+	// load the current_pet.txt KV
+	KeyValues* pConfigKV = new KeyValues("pet");
+	if (pConfigKV->LoadFromFile(g_pFullFileSystem, "pets/current_pet.txt", "DEFAULT_WRITE_PATH"))
+	{
+		std::string model = pConfigKV->GetString("model");
+		model = g_pAnarchyManager->NormalizeModelFilename(model);
+		//std::string modelHash = g_pAnarchyManager->GenerateLegacyHash(model.c_str());
+
+		pet_t* pPet = this->FindPetByModel(model);
+		if (pPet)
+		{
+			// Just play as this pet instead of spawning a new one.
+
+			if (cvar->FindVar("pet_resume_at")->GetBool())
+			{
+				engine->ClientCmd(VarArgs("petplay %i;", pPet->iEntityIndex));
+				engine->ClientCmd(VarArgs("teleport_entity_to_player %i;", pPet->iEntityIndex));
+			}
+			else
+			{
+				engine->ClientCmd(VarArgs("teleport_entity_to_player %i;", pPet->iEntityIndex));
+				engine->ClientCmd(VarArgs("petplay %i;", pPet->iEntityIndex));
+			}
+		}
+		else
+		{
+			// otherwise, we are gonna spawn our pet in
+			//std::string cmd = bPlayAsNext ? "play_as_next_pet 1; " : "";
+			cvar->FindVar("play_as_next_pet")->SetValue(1);
+
+			std::string scale = pConfigKV->GetString("scale");
+			std::string pos = pConfigKV->GetString("pos");
+			std::string rot = pConfigKV->GetString("rot");
+			float flNear = pConfigKV->GetFloat("near");
+			float flFar = pConfigKV->GetFloat("far");
+			float flRunSpeed = pConfigKV->GetFloat("runspeed");
+			float flWalkSpeed = pConfigKV->GetFloat("walkspeed");
+			std::string idle = pConfigKV->GetString("idle");
+			std::string run = pConfigKV->GetString("run");
+			std::string walk = pConfigKV->GetString("walk");
+			std::string fall = pConfigKV->GetString("fall");
+
+			std::string outfit = pConfigKV->GetString("tmp_outfit");
+			std::string behavior = pConfigKV->GetString("tmp_behavior");
+			int iSequence = pConfigKV->GetInt("tmp_sequence");
+
+			engine->ClientCmd(VarArgs("spawn_pet \"%s\" \"%s\" \"%s\" \"%s\" \"%s\" \"%s\" \"%s\" \"%s\" %f %f %f %f \"%s\" \"%s\" %i;", model.c_str(), run.c_str(), walk.c_str(), idle.c_str(), fall.c_str(), scale.c_str(), rot.c_str(), pos.c_str(), flNear, flFar, flRunSpeed, flWalkSpeed, outfit.c_str(), behavior.c_str(), iSequence));
+		}
+	}
+	pConfigKV->deleteThis();
+	pConfigKV = null;
+}
+
+
+#include "iclientmode.h"
+void C_AnarchyManager::SavePetStates()
+{
+	DevMsg("Saving pet states...\n");
+
+	std::string instanceId = this->GetInstanceId();
+	std::string filename = VarArgs("pets/pets_%s.txt", instanceId.c_str());
+
+	KeyValues* pPets = new KeyValues("pets");
+
+	// step through all living pets & save them into the KV
+	pet_t* pPet = null;
+	KeyValues* pConfigKV = null;
+	KeyValues* pPetKV = null;
+	C_BaseEntity* pPetEntity = null;
+	std::string pos;
+	std::string rot;
+	for (unsigned int u = 0; u < m_pets.size(); u++)
+	{
+		pPet = m_pets[u];
+
+		// make a copy of the pet's KV into our big save KV.
+		pConfigKV = pPet->pConfigKV;
+		pPetKV = pPets->CreateNewKey();
+		pConfigKV->CopySubkeys(pPetKV);
+
+		// FIXME: This is mostly redundant with the SaveCurrentPetInfo method.
+		pPetEntity = C_BaseEntity::Instance(pPet->iEntityIndex);
+
+		// TODO: Actually fetch the pos & rots & parse into strings.
+		//pos = "0 0 0";
+		//UTIL_StringToVector(testOrigin.Base(), pLastScreenshotKV->GetString("camera/position", "0 0 0"));
+		C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
+		Vector posVec = (pPet != m_pPlayAsPet || g_pClientMode->ShouldDrawLocalPlayer(pPlayer)) ? pPetEntity->GetAbsOrigin() : pPlayer->GetLocalOrigin();
+		pos = VarArgs("%02f %02f %02f", posVec.x, posVec.y, posVec.z);
+		QAngle rotAngle = (pPet != m_pPlayAsPet || g_pClientMode->ShouldDrawLocalPlayer(pPlayer)) ? pPetEntity->GetAbsAngles() : pPlayer->GetAbsAngles();
+		rot = VarArgs("%02f %02f %02f", rotAngle.x, rotAngle.y, rotAngle.z);
+
+		if (pPet == m_pPlayAsPet || pPetEntity->m_takedamage != DAMAGE_NO)	// only if we've been awaken OR we are the play-as-pet, otherwise we don't change the previously saved values.
+		{
+			// save the tmp states into the KV
+			pPetKV->SetString("tmp_outfit", pPet->outfitId.c_str());
+			pPetKV->SetInt("tmp_behavior", pPet->iBehavior);
+			pPetKV->SetInt("tmp_sequence", pPet->iCurSequence);
+			pPetKV->SetString("tmp_pos", pos.c_str());
+			pPetKV->SetString("tmp_rot", rot.c_str());
+		}
+	}
+	pPets->SaveToFile(g_pFullFileSystem, filename.c_str(), "DEFAULT_WRITE_PATH");
+	pPets->deleteThis();
+	pPets = null;
+}
+
+void C_AnarchyManager::AfterPendingPetsRestore()
+{
+	// Restore current_pet
+	this->RestoreCurrentPetInfo();
+}
+
+// Because spawning & applying outfits on a pet is an async (client/"server" code) operation,
+// we must spawn them incrementally when restoring pet states.
+void C_AnarchyManager::ProcessPendingPetsRestore()
+{
+	if (m_pPendingPetsRestoreKV)
+	{
+		KeyValues* pPetKV = m_pPendingPetsRestoreKV->GetFirstSubKey();
+		if (pPetKV)
+		{
+			std::string model = pPetKV->GetString("model");
+			model = g_pAnarchyManager->NormalizeModelFilename(model);
+
+			std::string scale = pPetKV->GetString("scale");
+			std::string pos = pPetKV->GetString("pos");
+			std::string rot = pPetKV->GetString("rot");
+			float flNear = pPetKV->GetFloat("near");
+			float flFar = pPetKV->GetFloat("far");
+			float flRunSpeed = pPetKV->GetFloat("runspeed");
+			float flWalkSpeed = pPetKV->GetFloat("walkspeed");
+			std::string idle = pPetKV->GetString("idle");
+			std::string run = pPetKV->GetString("run");
+			std::string walk = pPetKV->GetString("walk");
+			std::string fall = pPetKV->GetString("fall");
+
+			std::string outfit = pPetKV->GetString("tmp_outfit");
+			std::string behavior = pPetKV->GetString("tmp_behavior");
+			int iSequence = pPetKV->GetInt("tmp_sequence");
+
+			engine->ClientCmd(VarArgs("spawn_pet \"%s\" \"%s\" \"%s\" \"%s\" \"%s\" \"%s\" \"%s\" \"%s\" %f %f %f %f \"%s\" \"%s\" %i;", model.c_str(), run.c_str(), walk.c_str(), idle.c_str(), fall.c_str(), scale.c_str(), rot.c_str(), pos.c_str(), flNear, flFar, flRunSpeed, flWalkSpeed, outfit.c_str(), behavior.c_str(), iSequence));
+		}
+		else
+		{
+			m_pPendingPetsRestoreKV->deleteThis();
+			m_pPendingPetsRestoreKV = null;
+
+			DevMsg("WARNING: End of pets restore reached unexpectidly.\n");
+		}
+	}
+}
+
+void C_AnarchyManager::RestorePetStates()
+{
+	DevMsg("TODO: Actually restore pet states.\n");
+
+	std::string instanceId = this->GetInstanceId();
+	std::string filename = VarArgs("pets/pets_%s.txt", instanceId.c_str());
+
+	KeyValues* pPets = new KeyValues("pets");	// don't clean it up until after spawning all the pets in.
+	if (pPets->LoadFromFile(g_pFullFileSystem, filename.c_str(), "DEFAULT_WRITE_PATH"))
+	{
+		m_pPendingPetsRestoreKV = pPets;
+		this->ProcessPendingPetsRestore();
+	}
+	else
+	{
+		pPets->deleteThis();
+		pPets = null;
+
+		this->AfterPendingPetsRestore();	// if we don't have any pets to restore, then we're ready to restore the active pet right away.
+	}
 }
 
 void C_AnarchyManager::LevelShutdownPreEntity()
@@ -2521,6 +2831,10 @@ void C_AnarchyManager::LevelShutdownPreEntity()
 
 	this->DeactivateInspectObject();
 
+	m_iLookspotIndex = -1;
+	m_iLookspotHaloIndex = -1;
+	m_iDirIndex = -1;
+
 	//m_pForegroundShortcut = null;
 
 	m_flStartQuestsSoon = 0.0f;
@@ -2533,6 +2847,16 @@ void C_AnarchyManager::LevelShutdownPreEntity()
 		m_pLocalAvatarObject = null;
 	}
 
+	// SAVE PLAY-AS-PET INFO into CONVARS
+	this->SaveCurrentPetInfo();
+
+	// SAVE ALL PET INFO into pets/instance_ID_pets.txt
+	if (cvar->FindVar("pet_persistence")->GetBool())
+	{
+		this->SavePetStates();
+	}
+
+	m_pPlayAsPet = null;
 	this->DestroyAllPets();
 	m_petTargetPos.x = 0;
 	m_petTargetPos.y = 0;
@@ -4524,6 +4848,7 @@ void C_AnarchyManager::Update(float frametime)
 			this->IncrementHueShifter(frametime);
 			this->ManageAlwaysLookObjects();
 			this->ManagePets();
+			this->ProcessLookspot();
 			this->GetAAIManager()->Update();
 
 			if (m_pCanvasManager)
@@ -6608,6 +6933,11 @@ bool C_AnarchyManager::HandleUiToggle(bool bIsFromToggleHandler)
 	return false;
 }
 
+bool C_AnarchyManager::CAM_IsThirdPerson() {
+	return ::input->CAM_IsThirdPerson();
+}
+
+
 void C_AnarchyManager::ShowAdoptAssetMenu()
 {
 
@@ -6659,6 +6989,14 @@ bool C_AnarchyManager::HandleCycleToNextWeapon()
 		if (flVal < 50.0f)
 		{
 			engine->ClientCmd("cam_idealdist 50; firstperson;");
+
+			// going into 3rd person, so if we have pets & are in playAsPetMode, we need to un-hide our external pet model.
+			//if (m_pets.size() > 0 && m_petTargetPos.x == 0 && m_petTargetPos.y == 0 && m_petTargetPos.z == 0)
+			pet_t* pPet = this->GetPlayAsPet();
+			if (pPet)
+			{
+				engine->ClientCmd(VarArgs("set_prop_vis %i 0;", pPet->iEntityIndex));
+			}
 			return true;
 		}
 
@@ -6694,7 +7032,7 @@ bool C_AnarchyManager::HandleCycleToPrevWeapon()
 		this->SelectPrev();
 		return true;
 	}
-	else if (!C_BasePlayer::LocalPlayerInFirstPersonView() && C_BasePlayer::GetLocalPlayer()->GetHealth() > 0 && !cvar->FindVar("allow_weapons")->GetBool())
+	else if (!C_BasePlayer::LocalPlayerInFirstPersonView() && C_BasePlayer::GetLocalPlayer()->GetHealth() > 0 && !cvar->FindVar("allow_weapons")->GetBool())	// BUG: LocalPlayerInFirstPersonView returns flase if in auto-director mode, even if player itself IS in 1st person mode!!
 	{
 		ConVar* pConVar = cvar->FindVar("cam_idealdist");
 		float flVal = pConVar->GetFloat();
@@ -6703,11 +7041,29 @@ bool C_AnarchyManager::HandleCycleToPrevWeapon()
 			flVal = 1000.0f;
 
 		engine->ClientCmd(VarArgs("cam_idealdist %f; thirdperson;", flVal));
+
+		// going into 3rd person, so if we have pets & are in playAsPetMode, we need to un-hide our external pet model.	(even if we already are visible, becaues of the BUG noted above & below.)
+		//if (m_pets.size() > 0 && m_petTargetPos.x == 0 && m_petTargetPos.y == 0 && m_petTargetPos.z == 0)
+		pet_t* pPet = this->GetPlayAsPet();
+		if ( pPet)
+		{
+			engine->ClientCmd(VarArgs("set_prop_vis %i 1;", pPet->iEntityIndex));
+		}
+
 		return true;
 	}
-	else if (C_BasePlayer::LocalPlayerInFirstPersonView() && C_BasePlayer::GetLocalPlayer()->GetHealth() > 0 && !cvar->FindVar("allow_weapons")->GetBool())
+	else if (C_BasePlayer::LocalPlayerInFirstPersonView() && C_BasePlayer::GetLocalPlayer()->GetHealth() > 0 && !cvar->FindVar("allow_weapons")->GetBool())	// BUG: LocalPlayerInFirstPersonView returns flase if in auto-director mode, even if player itself IS in 1st person mode!!
 	{
 		engine->ClientCmd("cam_idealdist 50; thirdperson;");
+
+		// going into 3rd person, so if we have pets & are in playAsPetMode, we need to un-hide our external pet model.
+		//if (m_pets.size() > 0 && m_petTargetPos.x == 0 && m_petTargetPos.y == 0 && m_petTargetPos.z == 0)
+		pet_t* pPet = this->GetPlayAsPet();
+		if ( pPet)
+		{
+			engine->ClientCmd(VarArgs("set_prop_vis %i 1;", pPet->iEntityIndex));
+		}
+
 		return true;
 	}
 
@@ -7323,28 +7679,178 @@ void C_AnarchyManager::LocalAvatarObjectCreated(int iEntIndex)
 	m_pLocalAvatarObject = dynamic_cast<C_DynamicProp*>(C_BaseEntity::Instance(iEntIndex));
 }
 
-void C_AnarchyManager::SpawnPet(std::string model, std::string forward, std::string idle, float flScale, std::string rot, std::string pos, float flNear, float flFar, float flSpeed) {
+pet_t* C_AnarchyManager::GetPlayAsPet()
+{
+	return m_pPlayAsPet;
+}
+
+void C_AnarchyManager::SetPlayAsPet(pet_t* pPet){
+	if (pPet)
+	{
+		engine->ClientCmd(VarArgs("cur_play_as_pet %i;", pPet->iEntityIndex));
+	}
+	else
+	{
+		engine->ClientCmd("cur_play_as_pet -1;");
+	}
+
+	m_pPlayAsPet = pPet;
+}
+
+/*C_DynamicProp* C_AnarchyManager::GetPlayAsPetEntity()	// TODO: This should return a pet_t* instead - which also contains the entity pointer.
+{
+	int iPetEntityIndex = (m_pets.size() > 0) ? m_pets[0]->iEntityIndex : -1;
+	if (iPetEntityIndex >= 0 )
+	{
+		pet_t* pPet = m_pets[0];
+		// FIXME: TODO: This should be an actual setting.
+		bool bHasTarget = (m_petTargetPos.x != 0.0f || m_petTargetPos.y != 0.0f || m_petTargetPos.z != 0.0f);
+		bool bPlayAsPetMode = !bHasTarget;
+
+		if (bPlayAsPetMode)
+		{
+			return dynamic_cast<C_DynamicProp*>(C_BaseEntity::Instance(iPetEntityIndex));
+		}
+	}
+}*/
+
+pet_t* C_AnarchyManager::GetNearestPetToPlayerLook(float flMaxRange)
+{
+	C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
+	if (!pPlayer)
+		return false;
+
+	if (pPlayer->GetHealth() <= 0)
+		return false;
+
+	Vector startPos = g_pAnarchyManager->GetSelectorTraceVector();
+
+	pet_t* pNearPet = null;
+	pet_t* pTestPet = null;
+	float fMinDist = flMaxRange;	// the textDist must be LESS THAN this to be included
+	float fTestDist;
+
+	float fStartingDist = 0.0f;
+	//if (pStartingObject)
+	//	fStartingDist = pStartingObject->origin.DistTo(startPos);
+
+	C_BaseEntity* pEntity;
+	unsigned int size = m_pets.size();
+	for ( unsigned int i = 0; i < size; i++ )
+	{
+		pTestPet = m_pets[i];
+		pEntity = C_BaseEntity::Instance(pTestPet->iEntityIndex);
+		if (!pEntity)
+			continue;
+
+		fTestDist = pEntity->GetAbsOrigin().DistTo(startPos);
+		if (fTestDist > fStartingDist && (fMinDist == -1 || fTestDist < fMinDist))
+		{
+			fMinDist = fTestDist;
+			pNearPet = pTestPet;
+		}
+	}
+
+	return pNearPet;
+}
+
+void C_AnarchyManager::SpawnPet(std::string model, std::string run, std::string walk, std::string idle, std::string fall, float flScale, std::string rot, std::string pos, float flNear, float flFar, float flRunSpeed, float flWalkSpeed, std::string outfit, std::string behavior, std::string sequence) {
 	m_nextPetModel = model;
-	m_nextPetForward = forward;
+	m_nextPetRun = run;
+	m_nextPetWalk = walk;
 	m_nextPetIdle = idle;
+	m_nextPetFall = fall;
 	m_flNextPetScale = flScale;
 	m_nextPetPos = pos;
 	m_nextPetRot = rot;
 	m_flNextPetNear = flNear;
 	m_flNextPetFar = flFar;
-	m_flNextPetSpeed = flSpeed;
+	m_flNextPetRunSpeed = flRunSpeed;
+	m_flNextPetWalkSpeed = flWalkSpeed;
+	m_nextPetOutfit = outfit;
+	m_nextPetBehavior = behavior;
+	m_nextPetSequence = sequence;
 	engine->ClientCmd(VarArgs("spawn_pet_server \"%s\" %f", model.c_str(), m_flNextPetScale));
+}
+
+/*void C_AnarchyManager::UpdatePet(int iEntIndex, std::string run, std::string walk, std::string idle, std::string fall, float flScale, std::string rot, std::string pos, float flNear, float flFar, float flRunSpeed, float flWalkSpeed) {
+	pet_t* pPet = this->GetPetByEntIndex(iEntIndex);
+	if (!pPet)
+	{
+		DevMsg("Could not find pet to update.\n");
+	}
+	else
+	{
+		KeyValues* pKV = pPet->pConfigKV;
+
+		if (run != "")
+			pKV->SetString("run", run.c_str());
+
+		if (walk != "")
+			pKV->SetString("walk", run.c_str());
+
+		if (idle != "")
+			pKV->SetString("idle", idle.c_str());
+
+		if (fall != "")
+			pKV->SetString("fall", fall.c_str());
+
+		if (flScale != 0.0f) {
+			pKV->SetString("scale", VarArgs("%f %f %f", flScale, flScale, flScale));
+			engine->ClientCmd(VarArgs("setscale %i %f;\n", pPet->iEntityIndex, flScale));
+		}
+
+		if (rot != "") {
+			pKV->SetString("rot", rot.c_str());
+			UTIL_StringToVector(pPet->rot.Base(), rot.c_str());
+		}
+
+		if (pos != "") {
+			pKV->SetString("pos", pos.c_str());
+			UTIL_StringToVector(pPet->pos.Base(), pos.c_str());
+		}
+
+		if (flNear != 0.0f)
+			pKV->SetFloat("near", flNear);
+
+		if (flFar != 0.0f)
+			pKV->SetFloat("far", flFar);
+
+		if (flRunSpeed != 0.0f)
+			pKV->SetFloat("runspeed", flRunSpeed);
+
+		if (flWalkSpeed != 0.0f)
+			pKV->SetFloat("walkspeed", flWalkSpeed);
+	}
+}*/
+
+void C_AnarchyManager::LookspotCreated(int iSpotIndex, int iHaloIndex, int iDirIndex)
+{
+	m_iLookspotIndex = iSpotIndex;
+	C_DynamicProp* pProp = dynamic_cast<C_DynamicProp*>(C_BaseEntity::Instance(iSpotIndex));
+	if (pProp) {
+		pProp->SetDrawForeground(true);
+	}
+
+	m_iLookspotHaloIndex = iHaloIndex;
+	m_iDirIndex = iDirIndex;
 }
 
 void C_AnarchyManager::PetCreated(int iEntIndex)
 {
+
 	// TODO: Push this onto a pet vector the client code maintains.
 	C_DynamicProp* pDynamicProp = dynamic_cast<C_DynamicProp*>(C_BaseEntity::Instance(iEntIndex));
 	pDynamicProp->SetSolid(SOLID_NONE);
 	pDynamicProp->VPhysicsDestroyObject();
 	pDynamicProp->SetCollisionGroup(COLLISION_GROUP_NONE);
 	pet_t* pet = new pet_t();
-	pet->iState = -1;
+	pet->iBehavior = AAPETBEHAVIOR_NONE;
+	UTIL_StringToVector(pet->pos.Base(), m_nextPetPos.c_str());
+	UTIL_StringToVector(pet->rot.Base(), m_nextPetRot.c_str());
+	//pet->wanderHome = Vector(pet->pos);
+	pet->iState = AAPETSTATE_NONE;
+	pet->iWaterState = WL_NotInWater;
 	pet->iEntityIndex = iEntIndex;
 	pet->iCurSequence = -1;
 	//pet.iTargetEntityIndex
@@ -7356,7 +7862,8 @@ void C_AnarchyManager::PetCreated(int iEntIndex)
 	pConfigKV->SetString("rot", m_nextPetRot.c_str());
 	pConfigKV->SetFloat("near", m_flNextPetNear);
 	pConfigKV->SetFloat("far", m_flNextPetFar);
-	pConfigKV->SetFloat("speed", m_flNextPetSpeed);
+	pConfigKV->SetFloat("runspeed", m_flNextPetRunSpeed);
+	pConfigKV->SetFloat("walkspeed", m_flNextPetWalkSpeed);
 
 	std::string goodIdleSequence = m_nextPetIdle;
 	int iSequence = ACT_INVALID;
@@ -7373,7 +7880,7 @@ void C_AnarchyManager::PetCreated(int iEntIndex)
 		goodIdleSequence = "idle";
 	}
 
-	std::string goodForwardSequence = m_nextPetForward;
+	std::string goodForwardSequence = m_nextPetRun;
 	iSequence = ACT_INVALID;
 	// try to get one form the model
 	if (goodForwardSequence == "") {
@@ -7391,27 +7898,153 @@ void C_AnarchyManager::PetCreated(int iEntIndex)
 				if (iSequence != ACT_INVALID) {
 					goodForwardSequence = "forward";
 				}
+				else {
+					iSequence = pDynamicProp->LookupSequence("run");
+					if (iSequence != ACT_INVALID) {
+						goodForwardSequence = "run";
+					}
+					else {
+						iSequence = pDynamicProp->LookupSequence("walk");
+						if (iSequence != ACT_INVALID) {
+							goodForwardSequence = "walk";
+						}
+					}
+				}
 			}
 		}
 	}
 
 	if (goodForwardSequence == "") {
-		DevMsg("Could not find animation for forward.\n");
-		goodForwardSequence = "forward";
+		DevMsg("Could not find animation for run.\n");
+		goodForwardSequence = "run";
 	}
 
+	// FIXME: THE SWIM SEQUENCES ARE HARD-CODED ONLY AND NOT INCLUDED IN THE CONSOLE COMMANDS TO CREATE PETS.
+	// THAT MEANS THE MODELS **MUST** HAVE ONE OF THE SEQUENCE NAMES LISTED BELOW TO SWIM.
+
+	// SWIM IDLE
+	std::string goodSwimIdleSequence = "";
+	iSequence = ACT_INVALID;
+	// try to get one form the model
+	iSequence = pDynamicProp->LookupSequence("swim_idle");
+	if (iSequence != ACT_INVALID) {
+		goodSwimIdleSequence = "swim_idle";
+	}
+
+	if (goodSwimIdleSequence == "") {
+		DevMsg("Could not find animation for swim_idle.\n");
+		goodSwimIdleSequence = goodIdleSequence;
+	}
+
+	// SWIM FORWARD
+	std::string goodSwimForwardSequence = "";
+	iSequence = ACT_INVALID;
+	// try to get one form the model
+	iSequence = pDynamicProp->LookupSequence("swim_forward");
+	if (iSequence != ACT_INVALID) {
+		goodSwimForwardSequence = "swim_forward";
+	}
+	else {
+		iSequence = pDynamicProp->LookupSequence("swim_run");
+		if (iSequence != ACT_INVALID) {
+			goodSwimForwardSequence = "swim_run";
+		}
+		else {
+			iSequence = pDynamicProp->LookupSequence("swim_walk");
+			if (iSequence != ACT_INVALID) {
+				goodSwimForwardSequence = "swim_walk";
+			}
+		}
+	}
+
+	if (goodSwimForwardSequence == "") {
+		DevMsg("Could not find animation for swim_forward.\n");
+		goodSwimForwardSequence = goodForwardSequence;
+	}
+
+	pConfigKV->SetString("swim_idle", goodSwimIdleSequence.c_str());
+	pConfigKV->SetString("swim_run", goodSwimForwardSequence.c_str());
+	pConfigKV->SetString("swim_walk", goodSwimIdleSequence.c_str());
 	pConfigKV->SetString("idle", goodIdleSequence.c_str());
-	pConfigKV->SetString("forward", goodForwardSequence.c_str());
+	pConfigKV->SetString("run", goodForwardSequence.c_str());
+	pConfigKV->SetString("walk", m_nextPetWalk.c_str());
+	pConfigKV->SetString("fall", m_nextPetFall.c_str());
 
 	pet->pConfigKV = pConfigKV;
 
-	//char buf[AA_MAX_STRING];
-	//Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", origin.x, origin.y, origin.z);
-	UTIL_StringToVector(pet->pos.Base(), m_nextPetPos.c_str());
-	UTIL_StringToVector(pet->rot.Base(), m_nextPetRot.c_str());
-
 	m_pets.push_back(pet);
 	engine->ClientCmd(VarArgs("setscale %i %f;\n", iEntIndex, m_flNextPetScale));
+
+	if (m_nextPetOutfit != "")
+	{
+		engine->ClientCmd(VarArgs("petoutfitload \"%s\" %i;", m_nextPetOutfit.c_str(), iEntIndex));
+	}
+
+	ConVar* pPlayAsNextPet = cvar->FindVar("play_as_next_pet");
+	int iPlayAsNextPet = pPlayAsNextPet->GetInt();
+	if (iPlayAsNextPet == 2)
+	{
+		engine->ClientCmd(VarArgs("teleport_player_to_entity %i;", pet->iEntityIndex));
+	}
+	else if (iPlayAsNextPet == 1)
+	{
+		engine->ClientCmd(VarArgs("teleport_entity_to_player %i;", pet->iEntityIndex));
+	}
+	if ( iPlayAsNextPet > 0 )
+	{
+		// set the pet as our PlayAsPet pet.
+		g_pAnarchyManager->SetPlayAsPet(pet);
+
+		/*ConVar* pConVar = cvar->FindVar("cam_idealdist");
+		float flVal = pConVar->GetFloat();
+		flVal += 10.0f;
+		if (flVal >= 1000.0f)
+			flVal = 1000.0f;
+
+		engine->ClientCmd(VarArgs("cam_idealdist %f; thirdperson;", flVal));*/
+		engine->ClientCmd("thirdperson;"); 
+
+		//"ENTER PLAYASPET MODE"
+		engine->ClientCmd("play_as_next_pet 0; set_prop_vis -1 0;");
+		engine->ClientCmd(VarArgs("set_prop_vis %i 1;", pet->iEntityIndex));
+	}
+	pPlayAsNextPet->SetValue(0);
+
+	if (m_pPendingPetsRestoreKV)
+	{
+		KeyValues* pPetKV = m_pPendingPetsRestoreKV->GetFirstSubKey();
+
+		std::string pos = pPetKV->GetString("tmp_pos");
+		std::string rot = pPetKV->GetString("tmp_rot");
+
+		engine->ClientCmd(VarArgs("set_entity_pos_rot %i %s %s;", pet->iEntityIndex, pos.c_str(), rot.c_str()));
+
+		m_pPendingPetsRestoreKV->RemoveSubKey(pPetKV);
+
+		if (!m_pPendingPetsRestoreKV->GetFirstSubKey())
+		{
+			m_pPendingPetsRestoreKV->deleteThis();
+			m_pPendingPetsRestoreKV = null;
+
+			//DevMsg("Finished restoring pets. TODO: Restore the local pet now.\n");
+			this->AfterPendingPetsRestore();
+		}
+		else
+		{
+			this->ProcessPendingPetsRestore();
+		}
+	}
+
+	if (m_nextPetBehavior != "")
+	{
+		engine->ClientCmd(VarArgs("petbehavior %s %i;", m_nextPetBehavior.c_str(), iEntIndex));// pet->iEntityIndex));
+	}
+
+	if (m_nextPetSequence != "")
+	{
+		std::string sequence = pDynamicProp->GetSequenceName(Q_atoi(m_nextPetSequence.c_str()));
+		engine->ClientCmd(VarArgs("petplayanimraw \"%s\" %i;", sequence.c_str(), iEntIndex));
+	}
 }
 
 void C_AnarchyManager::DestroyAllPets() {
@@ -7423,6 +8056,166 @@ void C_AnarchyManager::DestroyAllPets() {
 	for (unsigned int i = 0; i < victims.size(); i++) {
 		this->DestroyPet(victims[i]);
 	}
+}
+
+void C_AnarchyManager::ToggleLookspot(int iValue)
+{
+	if (m_iLookspotIndex >= 0)
+	{
+		if (iValue != 1)
+			this->DestroyLookspot();
+	}
+	else
+	{
+		if (iValue != 0)
+			engine->ClientCmd("spawn_lookspot");
+	}
+}
+
+void C_AnarchyManager::DestroyLookspot()
+{
+	if (m_iLookspotIndex)
+	{
+		engine->ClientCmd(VarArgs("removeobject %i;", m_iLookspotIndex));
+		m_iLookspotIndex = -1;
+	}
+	if (m_iLookspotHaloIndex)
+	{
+		engine->ClientCmd(VarArgs("removeobject %i;", m_iLookspotHaloIndex));
+		m_iLookspotHaloIndex = -1;
+	}
+	if (m_iDirIndex)
+	{
+		engine->ClientCmd(VarArgs("removeobject %i;", m_iDirIndex));
+		m_iDirIndex = -1;
+	}
+}
+
+void C_AnarchyManager::ProcessLookspot()
+{
+	float flSpeedFactor = 10000.0f;
+	Vector pos = this->GetSelectorTraceVector();
+
+	if (m_iLookspotIndex >= 0)
+	{
+		C_DynamicProp* pPropLookspot = dynamic_cast<C_DynamicProp*>(C_BaseEntity::Instance(m_iLookspotIndex));
+		if (pPropLookspot)
+		{
+			QAngle angles = pPropLookspot->GetAbsAngles();
+			engine->ExecuteClientCmd(VarArgs("set_object_pos %i %f %f %f %f %f %f %f;\n", m_iLookspotIndex, pos.x, pos.y, pos.z, angles.x, angles.y, angles.z, flSpeedFactor));
+
+			color32 color = pPropLookspot->GetRenderColor();
+			C_PropShortcutEntity* pShortcut = dynamic_cast<C_PropShortcutEntity*>(C_BaseEntity::Instance(this->GetHoverEntityIndex()));
+			if (pShortcut)
+			{
+				color32 hiColor;
+				hiColor.r = 255;
+				hiColor.g = 255;
+				hiColor.b = 255;
+				if (color != hiColor)
+				{
+					pPropLookspot->SetRenderColor(hiColor.r, hiColor.g, hiColor.b);
+				}
+			}
+			else {
+				color32 lowColor;
+				lowColor.r = 180;
+				lowColor.g = 180;
+				lowColor.b = 180;
+				if (color != lowColor)
+				{
+					pPropLookspot->SetRenderColor(lowColor.r, lowColor.g, lowColor.b);
+				}
+			}
+		}
+	}
+
+	if (m_iLookspotHaloIndex >= 0)
+	{
+		C_DynamicProp* pPropLookspotHalo = dynamic_cast<C_DynamicProp*>(C_BaseEntity::Instance(m_iLookspotHaloIndex));
+		if (pPropLookspotHalo)
+		{
+			QAngle targetAngles;
+			Vector forward;
+			Vector right;
+			Vector up;
+			Vector posWithNormal(pos);
+			posWithNormal += this->GetSelectorTraceNormal();
+			Vector vView = posWithNormal - pos;// m_previousPetTargetPos;
+			C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
+			pPlayer->GetVectors(&forward, &right, &up);
+			VectorAngles(vView, up, targetAngles);
+			engine->ExecuteClientCmd(VarArgs("set_object_pos %i %f %f %f %f %f %f %f;\n", m_iLookspotHaloIndex, pos.x, pos.y, pos.z, targetAngles.x + 90, targetAngles.y, targetAngles.z, flSpeedFactor));
+
+			color32 color = pPropLookspotHalo->GetRenderColor();
+			C_PropShortcutEntity* pShortcut = dynamic_cast<C_PropShortcutEntity*>(C_BaseEntity::Instance(this->GetHoverEntityIndex()));
+			if (pShortcut)
+			{
+				color32 hiColor;
+				hiColor.r = 255;
+				hiColor.g = 255;
+				hiColor.b = 255;
+				if (color != hiColor)
+				{
+					pPropLookspotHalo->SetRenderColor(hiColor.r, hiColor.g, hiColor.b);
+				}
+			}
+			else {
+				color32 lowColor;
+				lowColor.r = 180;
+				lowColor.g = 180;
+				lowColor.b = 180;
+				if (color != lowColor)
+				{
+					pPropLookspotHalo->SetRenderColor(lowColor.r, lowColor.g, lowColor.b);
+				}
+			}
+
+			//QAngle angles = pPropLookspotHalo->GetAbsAngles();
+			//engine->ExecuteClientCmd(VarArgs("set_object_pos %i %f %f %f %f %f %f %f;\n", m_iLookspotHaloIndex, pos.x, pos.y, pos.z, angles.x, angles.y, angles.z, flSpeedFactor));
+		}
+	}
+
+	if (m_iDirIndex >= 0)
+	{
+		C_DynamicProp* pPropDir = dynamic_cast<C_DynamicProp*>(C_BaseEntity::Instance(m_iDirIndex));
+		if (pPropDir)
+		{
+			C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
+			if (pPlayer)
+			{
+				C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
+				Vector playerPos = pPlayer->GetAbsOrigin();
+				QAngle targetAngles;
+				Vector forward;
+				Vector right;
+				Vector up;
+				Vector posAtPlayerZ(pos);
+				pos.z = playerPos.z;
+				Vector vView = playerPos - pos;
+				pPlayer->GetVectors(&forward, &right, &up);
+				VectorAngles(vView, up, targetAngles);
+				engine->ExecuteClientCmd(VarArgs("set_object_pos %i %f %f %f %f %f %f %f;\n", m_iDirIndex, playerPos.x, playerPos.y, playerPos.z, targetAngles.x, targetAngles.y + 180, targetAngles.z, flSpeedFactor));
+
+				color32 color = pPropDir->GetRenderColor();
+				color32 lowColor;
+				lowColor.r = 180;
+				lowColor.g = 180;
+				lowColor.b = 180;
+				if (color != lowColor)
+				{
+					pPropDir->SetRenderColor(lowColor.r, lowColor.g, lowColor.b);
+				}
+
+
+
+				//Vector playerPos = pPlayer->GetAbsOrigin();
+				//QAngle playerAngles = pPlayer->GetAbsAngles();
+				//engine->ExecuteClientCmd(VarArgs("set_object_pos %i %f %f %f %f %f %f %f;\n", m_iDirIndex, playerPos.x, playerPos.y, playerPos.z, playerAngles.x, playerAngles.y, playerAngles.z, flSpeedFactor));
+			}
+		}
+	}
+	//DevMsg("Distance is: %f\n", selectorRay.Length());
 }
 
 void C_AnarchyManager::ProcessAllPets() {
@@ -7442,8 +8235,12 @@ void C_AnarchyManager::ProcessAllPets() {
 
 	//Vector playerEyePosition = pViewEntity->EyePosition();
 	Vector playerOrigin = pPlayer->GetAbsOrigin();
+	QAngle playerAngles = pPlayer->GetAbsAngles();
 	bool bHasTarget = (m_petTargetPos.x != 0.0f || m_petTargetPos.y != 0.0f || m_petTargetPos.z != 0.0f);
-	Vector targetPosition = (bHasTarget) ? m_petTargetPos : pPlayer->GetAbsOrigin();
+	//bool bPlayAsPetMode = !bHasTarget;
+	pet_t* pPlayAsPet = this->GetPlayAsPet();
+	Vector pPlayerOrigin = pPlayer->GetAbsOrigin();
+	Vector targetPosition = (bHasTarget) ? m_petTargetPos : Vector(pPlayerOrigin);//(bHasTarget) ? m_petTargetPos : pPlayer->GetAbsOrigin();
 	float flOriginalTargetElevation = targetPosition.z;
 
 	C_PropShortcutEntity* pShortcut;
@@ -7467,178 +8264,508 @@ void C_AnarchyManager::ProcessAllPets() {
 	//float travelDist;
 	bool bAdjustedRate;
 	Vector testVec;
+	//bool bIsAlphaPet;
+	QAngle targetAngles;
+	Vector playerForward;
+	Vector playerRight;
+	Vector playerUp;
+	float flCameBeforeAdjustment = 0.0f;
+	//int iDidProcessPlayAsPetFactor = 0;
+	bool bDidProcessPlayAsPet = false;
+	bool bDidFindAlpha = false;
+	bool bFoundFirstToChaseTarget = false;
 	for (unsigned int i = 0; i < m_pets.size(); i++) {
+		//bIsAlphaPet = (i == 0);
 		pPet = m_pets[i];
+		//bIsAlphaPet = (!bDidProcessPlayAsPet && ((i == 0 && !pPlayAsPet) || (pPlayAsPet && pPlayAsPet->iEntityIndex != pPet->iEntityIndex)));
+		//bIsAlphaPet = (!bDidFindAlpha && )
 		bNeedsMovement = false;
 		bAdjustedRate = false;
-		C_PropShortcutEntity* pProp = dynamic_cast<C_PropShortcutEntity*>(C_BaseEntity::Instance(pPet->iEntityIndex));
+		//C_PropShortcutEntity* pProp = dynamic_cast<C_PropShortcutEntity*>(C_BaseEntity::Instance(pPet->iEntityIndex));
+		C_DynamicProp* pProp = dynamic_cast<C_DynamicProp*>(C_BaseEntity::Instance(pPet->iEntityIndex));
 		if (pProp) {
-			float flSpeedFactor = pPet->pConfigKV->GetFloat("speed", 100.0f);
-			propOrigin = pProp->GetAbsOrigin();
-			currentAngles = pProp->GetAbsAngles();
-			pProp->GetVectors(&propForward, &propRight, &propUp);
-			flNear = pPet->pConfigKV->GetFloat("near", 100.0f);
-			flFar = pPet->pConfigKV->GetFloat("far", 200.0f);
-			flRealOriginalNear = flNear;
-			if (bHasTarget && i == 0) {
-				flNear = 10.0f;
-				flFar = 20.0f;
-			}
+			//if (bIsAlphaPet && bPlayAsPetMode) {
+			if (pPlayAsPet && pPlayAsPet->iEntityIndex == pPet->iEntityIndex )
+			{
+				//iDidProcessPlayAsPetFactor = -1;
+				bDidProcessPlayAsPet = true;
 
-			flMinDist = flNear * 0.75f;
+				Vector currentPetTargetPos = playerOrigin;
 
-			flOriginalNear = flNear;
-			flOriginalFar = flFar;
-
-			if (bHasTarget && i > 0) {
-				flNear *= (i * 1.0f);
-				flMinDist = flNear * 0.75f;
-				flFar *= (i * 1.0f);
-			}
-			else if (!bHasTarget) {
-				flNear *= ((i + 1) * 1.0f);
-				flFar *= ((i + 1) * 1.0f);
-			}
-
-			// get distance to player
-			testVec = targetPosition;
-			testVec.z = propOrigin.z;
-			dist = propOrigin.DistTo(testVec);
-			testVec = playerOrigin;
-			testVec.z = propOrigin.z;
-			dist2 = propOrigin.DistTo(testVec);
-			if (dist < flMinDist) {
-				// push us backwards away
-				trace_t tr;
-				Vector direction = propOrigin - targetPosition;
-				direction = direction.Normalized();
-				UTIL_TraceLine(propOrigin, propOrigin + (direction * (flNear)), MASK_ALL, NULL, COLLISION_GROUP_NONE, &tr);
-				engine->ClientCmd(VarArgs("set_object_pos %i %f %f %f %f %f %f %f;\n", pProp->entindex(), tr.endpos.x, tr.endpos.y, propOrigin.z, currentAngles.x, currentAngles.y, currentAngles.z, flSpeedFactor));
-			}
-			else if (dist2 < flRealOriginalNear * 0.75f) {
-				// push us backwards away from player
-				trace_t tr;
-				Vector direction = propOrigin - playerOrigin;
-				direction = direction.Normalized();
-				UTIL_TraceLine(propOrigin, propOrigin + (direction * (flNear)), MASK_ALL, NULL, COLLISION_GROUP_NONE, &tr);
-				engine->ClientCmd(VarArgs("set_object_pos %i %f %f %f %f %f %f %f;\n", pProp->entindex(), tr.endpos.x, tr.endpos.y, propOrigin.z, currentAngles.x, currentAngles.y, currentAngles.z, flSpeedFactor));
-
-			}
-			else {
-				if (dist < flNear) {
-					if (pPet->iState != 0) {
-						pPet->iState = 0;
-						//DevMsg("State Change: idle\n");
-						std::string realSequenceTitle = pPet->pConfigKV->GetString("idle");
-						pProp->PlaySequenceRegular(realSequenceTitle.c_str());
-						pPet->iCurSequence = pProp->LookupSequence(realSequenceTitle.c_str());
-						/*int index = pProp->LookupSequence(realSequenceTitle.c_str());
-						DevMsg("Test: %s - %i\n", realSequenceTitle.c_str(), index);
-						if (index != ACT_INVALID)
-						{
-						pProp->SetSequence(index);
-						pProp->SetCycle(0.0f);
-						engine->ClientCmd(VarArgs("playsequence %i \"%s\";\n", pProp->entindex(), realSequenceTitle.c_str()));
-						}*/
-					}
+				float flMinVel = 0.2f;
+				float flMinForwardSpeed = 0.2f;	// if moving forward, this is the minimum speed allowed (mostly for animation purposes to avoid division by 0 perhaps?)
+				float flMaxDist = 0.25f;
+				Vector playerVel = pPlayer->GetLocalVelocity();
+				float flPlayerVelLen = playerVel.Length();
+				int iOldState = pPet->iState;
+				int iOldWaterState = pPet->iWaterState;
+				pPet->iWaterState = pPlayer->GetWaterLevel();
+				if (iOldWaterState != pPet->iWaterState) {
+					iOldState = AAPETSTATE_NONE;
 				}
-				else if (dist > flFar || pPet->iState == 1) {
-					if (pPet->iState != 1) {
-						pPet->iState = 1;
-						//DevMsg("State Change: forward\n");
-						std::string realSequenceTitle = pPet->pConfigKV->GetString("forward");
-						pProp->PlaySequenceRegular(realSequenceTitle.c_str());
+				bool bPetIsOnGround = pPlayer->GetFlags() & FL_ONGROUND;
+
+				if (!bPetIsOnGround && pPet->iWaterState < WL_Waist)
+				{
+					if (iOldState != AAPETSTATE_FALL) {
+						pPet->iState = AAPETSTATE_FALL;
+						pProp->SetPlaybackRate(1.0f);
+						std::string realSequenceTitle = pPet->pConfigKV->GetString("fall");
+						this->PlaySequenceRegularOnProp(pProp, realSequenceTitle.c_str());
 						pPet->iCurSequence = pProp->LookupSequence(realSequenceTitle.c_str());
-						/*int index = pProp->LookupSequence(realSequenceTitle.c_str());
-						DevMsg("Test: %s - %i\n", realSequenceTitle.c_str(), index);
-						if (index != ACT_INVALID)
-						{
-						pProp->SetSequence(index);
-						pProp->SetCycle(0.0f);
-						engine->ClientCmd(VarArgs("playsequence %i \"%s\";\n", pProp->entindex(), realSequenceTitle.c_str()));
-						}*/
 					}
 
-					// move towards near bubble
-					trace_t tr;
-					Vector forward = (propOrigin - targetPosition).Normalized();
-					//pPlayer->EyeVectors(&forward);
-					UTIL_TraceLine(targetPosition, targetPosition + (forward * (dist - flNear)), MASK_ALL, pPlayer, COLLISION_GROUP_NONE, &tr);
-					//UTIL_TraceLine(pPlayer->EyePosition(), pPlayer->EyePosition() + (forward * (dist - flNear)), MASK_ALL, pPlayer, COLLISION_GROUP_NONE, &tr);
-					//UTIL_TraceLine(targetPosition, targetPosition + (forward * (dist - flNear)), MASK_ALL, pPlayer, COLLISION_GROUP_NONE, &tr);
-					targetPosition = tr.endpos;
-					//targetPosition.z = propOrigin.z;
-					bNeedsMovement = true;
-					//if (tr.fraction != 1.0 && tr.m_pEnt)
-					//{
-					//if (tr.DidHitWorld())
-					//{
+					bool bWasSamePos = (m_previousPetTargetPos.DistTo(currentPetTargetPos) < flMaxDist);
 
-				}
+					if (!bWasSamePos)
+					{
+						Vector previousPetTargetPosFlat;
+						previousPetTargetPosFlat.x = m_previousPetTargetPos.x;
+						previousPetTargetPosFlat.y = m_previousPetTargetPos.y;
+						previousPetTargetPosFlat.z = currentPetTargetPos.z;
 
-				// randomize where they want to stand.
-				/*if (m_pets.size() > 1){
-					float flRange = flNear * m_pets.size();
-					Vector randomized;
-					randomized.x = random->RandomFloat() * flRange;
-					randomized.x *= (random->RandomFloat() >= 0.5f) ? -1.0f : 1.0f;
-					randomized.y = random->RandomFloat() * flRange;
-					randomized.y *= (random->RandomFloat() >= 0.5f) ? -1.0f : 1.0f;
-					targetPosition += randomized;
+						Vector vView = currentPetTargetPos - previousPetTargetPosFlat;// m_previousPetTargetPos;
+						pPlayer->GetVectors(&playerForward, &playerRight, &playerUp);
+						VectorAngles(vView, playerUp, targetAngles);
+
+						// then, update the previous pet target pos.
+						m_previousPetTargetPos.x = currentPetTargetPos.x;
+						m_previousPetTargetPos.y = currentPetTargetPos.y;
+						m_previousPetTargetPos.z = currentPetTargetPos.z;
+					}
+					else{
+						QAngle petAngles = pProp->GetAbsAngles();
+						targetAngles.x = petAngles.x;
+						targetAngles.y = petAngles.y;
+						targetAngles.z = petAngles.z;
+					}
+
+					float flSpeedFactor = 10000.0f;
+					engine->ClientCmd(VarArgs("set_object_pos %i %f %f %f %f %f %f %f;\n", pProp->entindex(), currentPetTargetPos.x + pPet->pos.x, currentPetTargetPos.y + pPet->pos.y, currentPetTargetPos.z + pPet->pos.z, targetAngles.x + pPet->rot.x, targetAngles.y + pPet->rot.y, targetAngles.z + pPet->rot.z, flSpeedFactor));
+
+					/*if (!bWasSamePos)	// What is this? Was this the quick fix for riding the bus? (maybe?)
+					{
+						float flSpeedFactor = 10000.0f;
+						QAngle petAngles = pProp->GetAbsAngles();
+						engine->ClientCmd(VarArgs("set_object_pos %i %f %f %f %f %f %f %f;\n", pProp->entindex(), currentPetTargetPos.x + pPet->pos.x, currentPetTargetPos.y + pPet->pos.y, currentPetTargetPos.z + pPet->pos.z, petAngles.x + pPet->rot.x, petAngles.y + pPet->rot.y, petAngles.z + pPet->rot.z, flSpeedFactor));
 					}*/
+				}
+				else if (flPlayerVelLen >= flMinVel || currentPetTargetPos.DistTo(m_previousPetTargetPos) >= flMaxDist) {
+					// determine the forward speed so we know if we're walking or "forwarding". (run is the default forward.)
+					float flPetRunSpeed = pPet->pConfigKV->GetFloat("runspeed", 100.0f);
+					if (flPetRunSpeed <= 0) {	// just keep it non-zero, but extremely low pet speeds r probably useless.
+						flPetRunSpeed = flMinVel;
+					}
 
-				targetPosition.z = propOrigin.z;
+					float flPetWalkSpeed = pPet->pConfigKV->GetFloat("walkspeed", 50.0f);
+					if (flPetWalkSpeed <= 0) {	// just keep it non-zero, but extremely low pet speeds r probably useless.
+						flPetWalkSpeed = flMinVel * 0.5;
+					}
 
+					float flSpeed = (flPlayerVelLen / (flPetRunSpeed * 0.75));	// FIXME: This is NOT consistent with how speed is calculated for non-"play-as-pet" pets. This is bad.  Pet speeds are essentially broken. Fix this.. but fine for now?
+					if (flSpeed < flMinForwardSpeed)
+						flSpeed = flMinForwardSpeed;
+
+					float flWalkSpeed = (flPlayerVelLen / (flPetWalkSpeed * 0.75));	// FIXME: Oh great - let's calculate 2 speeds off of an incorrect algo. SeemsGood... NOT!
+					if (flWalkSpeed < flMinForwardSpeed)
+						flWalkSpeed = flMinForwardSpeed;
+
+					// determine if we are in WALK or RUN speed...
+					// Which one is nearest 1.0 animation speed?
+					bool bUseWalk = (fabsf(1.0f - flWalkSpeed) < fabsf(1.0f - flSpeed));
+					if (bUseWalk && iOldState != AAPETSTATE_WALK)// || iOldWaterState != pPet->iWaterState))
+					{
+						pPet->iState = AAPETSTATE_WALK;
+						//std::string realSequenceTitle = (pPet->iWaterState >= WL_Waist && !bPetIsOnGround) ? pPet->pConfigKV->GetString("swim_walk") : pPet->pConfigKV->GetString("walk");
+						//if (realSequenceTitle == "" && pPet->iWaterState >= WL_Waist && !bPetIsOnGround)
+						std::string realSequenceTitle = (pPet->iWaterState >= WL_Waist) ? pPet->pConfigKV->GetString("swim_walk") : pPet->pConfigKV->GetString("walk");
+						if (realSequenceTitle == "" && pPet->iWaterState >= WL_Waist)
+						{
+							realSequenceTitle = pPet->pConfigKV->GetString("walk");	// just try to walk if the pet doesn't have a swim
+						}
+						this->PlaySequenceRegularOnProp(pProp, realSequenceTitle.c_str());
+						pPet->iCurSequence = pProp->LookupSequence(realSequenceTitle.c_str());
+					}
+					else if (!bUseWalk && iOldState != AAPETSTATE_RUN)// || iOldWaterState != pPet->iWaterState))
+					{
+						pPet->iState = AAPETSTATE_RUN;
+						std::string realSequenceTitle = (pPet->iWaterState >= WL_Waist) ? pPet->pConfigKV->GetString("swim_run") : pPet->pConfigKV->GetString("run");
+						if (realSequenceTitle == "" && pPet->iWaterState >= WL_Waist)
+						{
+							realSequenceTitle = pPet->pConfigKV->GetString("run");	// just try to run if the pet doesn't have a swim
+						}
+						this->PlaySequenceRegularOnProp(pProp, realSequenceTitle.c_str());
+						pPet->iCurSequence = pProp->LookupSequence(realSequenceTitle.c_str());
+					}
+
+					// get look angles from previous pos to current pos.
+					// TODO: Add some handling in here to better animate pets that have NO falling animation - as it'd be best if they kept the behavior of just running forward still, but don't spaz out w/ direction anymore plz.
+
+
+					bool bWasSamePos = (m_previousPetTargetPos.DistTo(currentPetTargetPos) < flMaxDist);
+
+					//if (!bWasSamePos)
+					if (m_previousPetTargetPos.DistTo(currentPetTargetPos) > 0 )
+					{
+						Vector previousPetTargetPosFlat;
+						previousPetTargetPosFlat.x = m_previousPetTargetPos.x;
+						previousPetTargetPosFlat.y = m_previousPetTargetPos.y;
+						previousPetTargetPosFlat.z = currentPetTargetPos.z;
+
+						Vector vView = currentPetTargetPos - previousPetTargetPosFlat;// m_previousPetTargetPos;
+						pPlayer->GetVectors(&playerForward, &playerRight, &playerUp);
+						VectorAngles(vView, playerUp, targetAngles);
+					}
+					else {
+						QAngle petAngles = pProp->GetAbsAngles();
+						targetAngles.x = petAngles.x;
+						targetAngles.y = petAngles.y;
+						targetAngles.z = petAngles.z;
+					}
+
+					//if (true) {
+					//	targetAngles = playerAngles;
+					//}
+
+					//pProp->SetPlaybackRate(0.5f);
+					//DevMsg("Speed: %02f\tVel: %02f\n", pPet->pConfigKV->GetFloat("speed", 100.0f), playerVel.Length());
+					//if (flPlayerVelLen < flMinVel)
+					//{
+					//	flPlayerVelLen = flMinVel;
+					//}
+
+					/*float flPetSpeed = pPet->pConfigKV->GetFloat("speed", 100.0f);
+					if (flPetSpeed <= 0) {
+					flPetSpeed = flMinVel;
+					}
+
+					float flSpeed = (flPlayerVelLen / (flPetSpeed * 0.75));
+					if (flSpeed < 0.2)
+					flSpeed = 0.2;*/
+
+					//DevMsg("SpeedFactor: %02f\n", flSpeed);
+					if (bUseWalk)
+					{
+						pProp->SetPlaybackRate(flWalkSpeed);
+					}
+					else
+					{
+						pProp->SetPlaybackRate(flSpeed);
+					}
+
+					// apply pos & rot
+					float flSpeedFactor = 10000.0f;
+					engine->ClientCmd(VarArgs("set_object_pos %i %f %f %f %f %f %f %f;\n", pProp->entindex(), currentPetTargetPos.x + pPet->pos.x, currentPetTargetPos.y + pPet->pos.y, currentPetTargetPos.z + pPet->pos.z, targetAngles.x + pPet->rot.x, targetAngles.y + pPet->rot.y, targetAngles.z + pPet->rot.z, flSpeedFactor));
+
+					// then, update the previous pet target pos.
+					if (!bWasSamePos)
+					{
+						m_previousPetTargetPos.x = currentPetTargetPos.x;
+						m_previousPetTargetPos.y = currentPetTargetPos.y;
+						m_previousPetTargetPos.z = currentPetTargetPos.z;
+					}
+				}
+				else {
+					if (iOldState != AAPETSTATE_IDLE) {// || iOldWaterState != pPet->iWaterState) {
+						pPet->iState = AAPETSTATE_IDLE;
+						pProp->SetPlaybackRate(1.0f);
+						std::string realSequenceTitle = (pPet->iWaterState >= WL_Waist && !bPetIsOnGround) ? pPet->pConfigKV->GetString("swim_idle") : pPet->pConfigKV->GetString("idle");
+						if (realSequenceTitle == "" && pPet->iWaterState >= WL_Waist && !bPetIsOnGround)
+						{
+							realSequenceTitle = pPet->pConfigKV->GetString("idle");	// just try to idle if the pet doesn't have a swim
+						}
+						this->PlaySequenceRegularOnProp(pProp, realSequenceTitle.c_str());
+						pPet->iCurSequence = pProp->LookupSequence(realSequenceTitle.c_str());
+					}
+
+					bool bWasSamePos = (m_previousPetTargetPos.DistTo(currentPetTargetPos) < 0.25);
+
+					// then, update the previous pet target pos.
+					m_previousPetTargetPos.x = currentPetTargetPos.x;
+					m_previousPetTargetPos.y = currentPetTargetPos.y;
+					m_previousPetTargetPos.z = currentPetTargetPos.z;
+
+					if (!bWasSamePos)	// What is this? Was this the quick fix for riding the bus? (maybe?)
+					{
+						float flSpeedFactor = 10000.0f;
+						QAngle petAngles = pProp->GetAbsAngles();
+						engine->ClientCmd(VarArgs("set_object_pos %i %f %f %f %f %f %f %f;\n", pProp->entindex(), currentPetTargetPos.x + pPet->pos.x, currentPetTargetPos.y + pPet->pos.y, currentPetTargetPos.z + pPet->pos.z, petAngles.x + pPet->rot.x, petAngles.y + pPet->rot.y, petAngles.z + pPet->rot.z, flSpeedFactor));
+					}
+				}
+			}	// if ~NOT alpha pet or~ NOT PlayAsPet mode...
+			else if (pPet->iBehavior == AAPETBEHAVIOR_FOLLOW )//|| pPet->iBehavior == AAPETBEHAVIOR_WANDER)
+			{
+				int iOldWaterState = pPet->iWaterState;
+				pPet->iWaterState = pProp->GetWaterLevel();
+
+				float flSpeedFactor = pPet->pConfigKV->GetFloat("runspeed", 100.0f);
+				//flSpeedFactor *= 0.5;
+
+				propOrigin = pProp->GetAbsOrigin();
+				currentAngles = pProp->GetAbsAngles();
+				pProp->GetVectors(&propForward, &propRight, &propUp);
+				//flNear = (pPlayAsPet && bIsAlphaPet) ? 10.0f : pPet->pConfigKV->GetFloat("near", 100.0f);
+				//flFar = (pPlayAsPet && bIsAlphaPet) ? 15.0f : pPet->pConfigKV->GetFloat("far", 200.0f);
+
+				flNear = pPet->pConfigKV->GetFloat("near", 100.0f);
+				flFar = pPet->pConfigKV->GetFloat("far", 200.0f);
+				flRealOriginalNear = flNear;
+				/*if (bHasTarget && bIsAlphaPet) {
+					flNear = 10.0f;
+					flFar = 20.0f;
+				}*/
+
+				if (bHasTarget && !bFoundFirstToChaseTarget)
+				{
+					bFoundFirstToChaseTarget = true;
+					flNear = 10.0f;
+					flFar = 20.0f;
+				}
+
+				flMinDist = flNear * 0.75f;
+				flOriginalNear = flNear;
+				flOriginalFar = flFar;
+
+				/*if (bHasTarget && (i + iDidProcessPlayAsPetFactor) > 0) {
+					flNear *= ((i + iDidProcessPlayAsPetFactor * 1.5) * 1.0f);
+					flMinDist = flNear * 0.75f;
+					flFar *= ((i + iDidProcessPlayAsPetFactor * 1.5) * 1.0f);
+				}
+				else if (!bHasTarget) {
+					flNear *= (((i + iDidProcessPlayAsPetFactor * 1.5) + 1) * 1.0f);
+					flFar *= (((i + iDidProcessPlayAsPetFactor * 1.5) + 1) * 1.0f);
+				}*/
+
+
+
+
+
+
+				/*int iDidProcessPlayAsPetAdjustment = (bDidProcessPlayAsPet) ? 0 : 1;
+				if (bHasTarget && (i + iDidProcessPlayAsPetAdjustment) > 0) {
+					flNear *= ((i + iDidProcessPlayAsPetAdjustment) * 1.0f);
+					flMinDist = flNear * 0.75f;
+					flFar *= ((i + iDidProcessPlayAsPetAdjustment) * 1.0f);
+				}
+				else if (!bHasTarget) {
+					flNear *= ((i + iDidProcessPlayAsPetAdjustment + 1) * 1.0f);
+					flFar *= ((i + iDidProcessPlayAsPetAdjustment + 1) * 1.0f);
+				}*/
+
+				//int iDidProcessPlayAsPetAdjustment = (bDidProcessPlayAsPet) ? 0 : 1;
+				//if (bHasTarget && i > 0) {
+					//flNear *= (i * 1.0f);
+					//flMinDist = flNear * 0.75f;
+					//flFar *= (i * 1.0f);
+					flNear += flCameBeforeAdjustment;
+					flFar += flCameBeforeAdjustment;
+					//flMinDist = flNear * 0.75f;
+					flMinDist = flRealOriginalNear * 0.75f;
+				//}
+				//else if (!bHasTarget) {
+				//	flNear += flCameBeforeAdjustment;
+				//	flFar += flCameBeforeAdjustment;
+				//}
+
+					//////flOriginalNear = flNear;
+					///////flOriginalFar = flFar;
+
+				flCameBeforeAdjustment += (flRealOriginalNear * 0.5);
+				
+
+
+
+
+				// get distance to player
+				testVec = targetPosition;
+				testVec.z = propOrigin.z;
+				dist = propOrigin.DistTo(testVec);
+				testVec = playerOrigin;
+				testVec.z = propOrigin.z;
+				dist2 = propOrigin.DistTo(testVec);
+				if (!bHasTarget && dist < flMinDist) {
+					// push us backwards away
+					trace_t tr;
+					Vector direction = propOrigin - targetPosition;
+					direction = direction.Normalized();
+					UTIL_TraceLine(propOrigin, propOrigin + (direction * (flNear)), MASK_ALL, NULL, COLLISION_GROUP_NONE, &tr);
+					engine->ClientCmd(VarArgs("set_object_pos %i %f %f %f %f %f %f %f;\n", pProp->entindex(), tr.endpos.x, tr.endpos.y, propOrigin.z, currentAngles.x, currentAngles.y, currentAngles.z, flSpeedFactor));
+				}
+				else if (bHasTarget && dist2 < flRealOriginalNear * 0.75f) {
+					// push us backwards away from player
+					trace_t tr;
+					Vector direction = propOrigin - playerOrigin;
+					direction = direction.Normalized();
+					UTIL_TraceLine(propOrigin, propOrigin + (direction * (flNear)), MASK_ALL, NULL, COLLISION_GROUP_NONE, &tr);
+					engine->ClientCmd(VarArgs("set_object_pos %i %f %f %f %f %f %f %f;\n", pProp->entindex(), tr.endpos.x, tr.endpos.y, propOrigin.z, currentAngles.x, currentAngles.y, currentAngles.z, flSpeedFactor));
+				}
+				else {
+					if (dist < flNear) {
+						if (pPet->iState != AAPETSTATE_IDLE || iOldWaterState != pPet->iWaterState) {
+							pPet->iState = AAPETSTATE_IDLE;
+							//DevMsg("State Change: idle\n");
+							//std::string realSequenceTitle = (pPet->iWaterState >= WL_Waist && !(pProp->GetFlags() & FL_ONGROUND)) ? pPet->pConfigKV->GetString("swim_idle") : pPet->pConfigKV->GetString("idle");
+							//if (realSequenceTitle == "" && pPet->iWaterState >= WL_Waist && !(pProp->GetFlags() & FL_ONGROUND))
+							std::string realSequenceTitle = (pPet->iWaterState >= WL_Waist) ? pPet->pConfigKV->GetString("swim_idle") : pPet->pConfigKV->GetString("idle");
+							if (realSequenceTitle == "" && pPet->iWaterState >= WL_Waist)
+							{
+								realSequenceTitle = pPet->pConfigKV->GetString("idle");	// just try to idle if the pet doesn't have a swim
+							}
+							//pProp->PlaySequenceRegular(realSequenceTitle.c_str());
+							this->PlaySequenceRegularOnProp(pProp, realSequenceTitle.c_str());
+							pPet->iCurSequence = pProp->LookupSequence(realSequenceTitle.c_str());
+							/*int index = pProp->LookupSequence(realSequenceTitle.c_str());
+							DevMsg("Test: %s - %i\n", realSequenceTitle.c_str(), index);
+							if (index != ACT_INVALID)
+							{
+							pProp->SetSequence(index);
+							pProp->SetCycle(0.0f);
+							engine->ClientCmd(VarArgs("playsequence %i \"%s\";\n", pProp->entindex(), realSequenceTitle.c_str()));
+							}*/
+						}
+					}
+					else if (dist > flFar || pPet->iState == AAPETSTATE_RUN || pPet->iState == AAPETSTATE_WALK) {
+						// determine the forward speed so we know if we're walking or "forwarding". (run is the default forward.)
+						float flPetRunSpeed = pPet->pConfigKV->GetFloat("runspeed", 100.0f);
+
+						if (pPet->iState != AAPETSTATE_RUN || iOldWaterState != pPet->iWaterState)
+						{
+							pPet->iState = AAPETSTATE_RUN;
+							//std::string realSequenceTitle = (pPet->iWaterState >= WL_Waist && !(pProp->GetFlags() & FL_ONGROUND)) ? pPet->pConfigKV->GetString("swim_run") : pPet->pConfigKV->GetString("run");
+							//if (realSequenceTitle == "" && pPet->iWaterState >= WL_Waist && !(pProp->GetFlags() & FL_ONGROUND))
+							std::string realSequenceTitle = (pPet->iWaterState >= WL_Waist) ? pPet->pConfigKV->GetString("swim_run") : pPet->pConfigKV->GetString("run");
+							if (realSequenceTitle == "" && pPet->iWaterState >= WL_Waist)
+							{
+								realSequenceTitle = pPet->pConfigKV->GetString("run");	// just try to run if the pet doesn't have a swim
+							}
+							this->PlaySequenceRegularOnProp(pProp, realSequenceTitle.c_str());
+							pPet->iCurSequence = pProp->LookupSequence(realSequenceTitle.c_str());
+						}
+
+						if (dist > flNear)
+						{
+							bNeedsMovement = true;
+						}
+
+						// move towards near bubble
+						trace_t tr;
+						Vector forward = (propOrigin - targetPosition).Normalized();
+						//if (pPlayAsPet) {
+						//	UTIL_TraceLine(targetPosition, targetPosition + (forward * flFar * 0.75), MASK_ALL, pPlayer, COLLISION_GROUP_NONE, &tr);
+						//}
+						//else {
+							UTIL_TraceLine(targetPosition, targetPosition + (forward * (dist - flNear)), MASK_ALL, pPlayer, COLLISION_GROUP_NONE, &tr);
+						//}
+						targetPosition = tr.endpos;
+
+						//targetPosition.z = propOrigin.z;
+					}
+
+					// randomize where they want to stand.
+					/*if (m_pets.size() > 1){
+						float flRange = flNear * m_pets.size();
+						Vector randomized;
+						randomized.x = random->RandomFloat() * flRange;
+						randomized.x *= (random->RandomFloat() >= 0.5f) ? -1.0f : 1.0f;
+						randomized.y = random->RandomFloat() * flRange;
+						randomized.y *= (random->RandomFloat() >= 0.5f) ? -1.0f : 1.0f;
+						targetPosition += randomized;
+						}*/
+
+					targetPosition.z = propOrigin.z;
+
+					Vector vView = targetPosition - propOrigin;
+					VectorAngles(vView, propUp, propAngles);
+					if (!bNeedsMovement) {
+						flSpeedFactor *= 0.5;
+					}
+
+					//if (propAngles.x != currentAngles.x || propAngles.y != currentAngles.y)
+
+					if (abs(UTIL_AngleDiff(propAngles.x, currentAngles.x)) > 7 || abs(UTIL_AngleDiff(propAngles.y + pPet->rot.y, currentAngles.y)) > 7)
+					{
+						if (!bNeedsMovement && dist < flOriginalNear * 1.5f) {
+							//std::string realSequenceTitle = (pPet->iWaterState >= WL_Waist && !(pProp->GetFlags() & FL_ONGROUND)) ? pPet->pConfigKV->GetString("swim_run") : pPet->pConfigKV->GetString("run");
+							//if (realSequenceTitle == "" && pPet->iWaterState >= WL_Waist && !(pProp->GetFlags() & FL_ONGROUND))
+							std::string realSequenceTitle = (pPet->iWaterState >= WL_Waist) ? pPet->pConfigKV->GetString("swim_run") : pPet->pConfigKV->GetString("run");
+							if (realSequenceTitle == "" && pPet->iWaterState >= WL_Waist)
+							{
+								realSequenceTitle = pPet->pConfigKV->GetString("run");	// just try to run if the pet doesn't have a swim
+							}
+							iSequence = pProp->LookupSequence(realSequenceTitle.c_str());
+							if (pPet->iCurSequence != iSequence) {
+								//pProp->PlaySequenceRegular(realSequenceTitle.c_str());
+								this->PlaySequenceRegularOnProp(pProp, realSequenceTitle.c_str());
+								pPet->iCurSequence = iSequence;
+							}
+							pProp->SetPlaybackRate(0.5f);
+							bAdjustedRate = true;
+							propOrigin.z = flOriginalTargetElevation + pPet->pos.z;
+						}
+					}
+					else {
+						if (!bNeedsMovement) {
+							//std::string realSequenceTitle = (pPet->iWaterState >= WL_Waist && !(pProp->GetFlags() & FL_ONGROUND)) ? pPet->pConfigKV->GetString("swim_idle") : pPet->pConfigKV->GetString("idle");
+							//if (realSequenceTitle == "" && pPet->iWaterState >= WL_Waist && !(pProp->GetFlags() & FL_ONGROUND))
+							std::string realSequenceTitle = (pPet->iWaterState >= WL_Waist) ? pPet->pConfigKV->GetString("swim_idle") : pPet->pConfigKV->GetString("idle");
+							if (realSequenceTitle == "" && pPet->iWaterState >= WL_Waist)
+							{
+								realSequenceTitle = pPet->pConfigKV->GetString("idle");	// just try to idle if the pet doesn't have a swim
+							}
+							iSequence = pProp->LookupSequence(realSequenceTitle.c_str());
+							if (pPet->iCurSequence != iSequence) {
+								this->PlaySequenceRegularOnProp(pProp, realSequenceTitle.c_str());
+								pPet->iCurSequence = iSequence;
+							}
+						}
+					}
+
+					if (!bAdjustedRate) {
+						pProp->SetPlaybackRate(1.0f);
+					}
+
+					//if (pPlayAsPet) {
+					//	Vector playerVel = pPlayer->GetLocalVelocity();
+						//DevMsg("Vel: %02f %02f %02f\n", playerVel.x, playerVel.y, playerVel.z);
+					//}
+					//engine->ClientCmd(VarArgs("set_object_pos %
+					//float flSpeedFactor = pPet->pConfigKV->GetFloat("speed", 100.0f);
+					if (bNeedsMovement) {
+						engine->ClientCmd(VarArgs("set_object_pos %i %f %f %f %f %f %f %f;\n", pProp->entindex(), targetPosition.x, targetPosition.y, flOriginalTargetElevation + pPet->pos.z, propAngles.x, propAngles.y + pPet->rot.y, propAngles.z, flSpeedFactor));
+					}
+					else {
+						engine->ClientCmd(VarArgs("set_object_pos %i %f %f %f %f %f %f %f;\n", pProp->entindex(), propOrigin.x, propOrigin.y, propOrigin.z, propAngles.x, propAngles.y + pPet->rot.y, propAngles.z, flSpeedFactor));
+					}
+				}
+			}
+			else if (pPet->iBehavior == AAPETBEHAVIOR_LOOK) {
+				int iOldWaterState = pPet->iWaterState;
+				pPet->iWaterState = pProp->GetWaterLevel();
+
+				if (pPet->iState == AAPETSTATE_NONE || iOldWaterState != pPet->iWaterState)
+				{
+					pPet->iState = AAPETSTATE_IDLE;
+					//std::string realSequenceTitle = (pPet->iWaterState >= WL_Waist && !(pProp->GetFlags() & FL_ONGROUND)) ? pPet->pConfigKV->GetString("swim_idle") : pPet->pConfigKV->GetString("idle");
+					//if (realSequenceTitle == "" && pPet->iWaterState >= WL_Waist && !(pProp->GetFlags() & FL_ONGROUND))
+					std::string realSequenceTitle = (pPet->iWaterState >= WL_Waist) ? pPet->pConfigKV->GetString("swim_idle") : pPet->pConfigKV->GetString("idle");
+					if (realSequenceTitle == "" && pPet->iWaterState >= WL_Waist)
+					{
+						realSequenceTitle = pPet->pConfigKV->GetString("idle");	// just try to idle if the pet doesn't have a swim
+					}
+					this->PlaySequenceRegularOnProp(pProp, realSequenceTitle.c_str());
+					pPet->iCurSequence = pProp->LookupSequence(realSequenceTitle.c_str());
+				}
+
+				propOrigin = pProp->GetAbsOrigin();
+				propOrigin.z = targetPosition.z;
+
+				//currentAngles = pProp->GetAbsAngles();
+				pProp->GetVectors(&propForward, &propRight, &propUp);
 				Vector vView = targetPosition - propOrigin;
 				VectorAngles(vView, propUp, propAngles);
-				if (!bNeedsMovement) {
-					flSpeedFactor *= 0.5;
-				}
-
-				//if (propAngles.x != currentAngles.x || propAngles.y != currentAngles.y)
-				if (abs(UTIL_AngleDiff(propAngles.x, currentAngles.x)) > 7 || abs(UTIL_AngleDiff(propAngles.y + pPet->rot.y, currentAngles.y)) > 7)
-				{
-					if (!bNeedsMovement && dist < flOriginalNear * 1.5f) {
-						std::string realSequenceTitle = pPet->pConfigKV->GetString("forward");
-						iSequence = pProp->LookupSequence(realSequenceTitle.c_str());
-						if (pPet->iCurSequence != iSequence) {
-							pProp->PlaySequenceRegular(realSequenceTitle.c_str());
-							pPet->iCurSequence = iSequence;
-						}
-						pProp->SetPlaybackRate(0.5f);
-						bAdjustedRate = true;
-						propOrigin.z = flOriginalTargetElevation + pPet->pos.z;
-					}
-					/*std::string realSequenceTitle = pPet->pConfigKV->GetString("forward");
-					pProp->PlaySequenceRegular(realSequenceTitle.c_str());
-					iSequence = pProp->LookupSequence(realSequenceTitle.c_str());
-					if (pPet->iCurSequence != iSequence) {
-					pProp->PlaySequenceRegular(realSequenceTitle.c_str());
-					}*/
-				}
-				else {
-					if (!bNeedsMovement) {
-						std::string realSequenceTitle = pPet->pConfigKV->GetString("idle");
-						iSequence = pProp->LookupSequence(realSequenceTitle.c_str());
-						if (pPet->iCurSequence != iSequence) {
-							pProp->PlaySequenceRegular(realSequenceTitle.c_str());
-							pPet->iCurSequence = iSequence;
-						}
-					}
-				}
-
-				if (!bAdjustedRate) {
-					pProp->SetPlaybackRate(1.0f);
-				}
-
-				//engine->ClientCmd(VarArgs("set_object_pos %
-				//float flSpeedFactor = pPet->pConfigKV->GetFloat("speed", 100.0f);
-				if (bNeedsMovement) {
-					engine->ClientCmd(VarArgs("set_object_pos %i %f %f %f %f %f %f %f;\n", pProp->entindex(), targetPosition.x, targetPosition.y, flOriginalTargetElevation + pPet->pos.z, propAngles.x, propAngles.y + pPet->rot.y, propAngles.z, flSpeedFactor));
-				}
-				else {
-					engine->ClientCmd(VarArgs("set_object_pos %i %f %f %f %f %f %f %f;\n", pProp->entindex(), propOrigin.x, propOrigin.y, propOrigin.z, propAngles.x, propAngles.y + pPet->rot.y, propAngles.z, flSpeedFactor));
-				}
+				float flSpeedFactor = pPet->pConfigKV->GetFloat("runspeed", 100.0f);
+				flSpeedFactor *= 0.5;
+				engine->ClientCmd(VarArgs("set_object_pos %i %f %f %f %f %f %f %f;\n", pProp->entindex(), propOrigin.x, propOrigin.y, propOrigin.z, propAngles.x, propAngles.y + pPet->rot.y, propAngles.z, flSpeedFactor));
 			}
 		}
 	}
@@ -7658,6 +8785,15 @@ void C_AnarchyManager::DestroyPet(int iEntIndex)
 	pet_t* pPet = this->GetPetByEntIndex(iEntIndex);
 	if (!pPet)
 		return;
+
+	if (pPet == this->GetPlayAsPet())
+	{
+		this->SetPlayAsPet(null);
+
+		//"EXIT PLAYASPETMODE"	// also might happen from petplaystop w/o destroying the pet!
+		engine->ClientCmd("set_prop_vis -1 1;");
+		engine->ClientCmd(VarArgs("set_prop_vis %i 1;", pPet->iEntityIndex));
+	}
 
 	// remove us from pet bookkeeping
 	for (unsigned int i = 0; i < m_pets.size(); i++) {
@@ -9066,13 +10202,13 @@ void C_AnarchyManager::RunAArcade()
 	cvar->FindVar("throttle_embedded_render")->SetValue(0);	// force threaded rendering to be off.
 
 	ConVar* pCvar = cvar->FindVar("avatar_url");
-	pCvar->SetValue("https://avatars.akamai.steamstatic.com/fef49e7fa7e1997310d705b2a6158ff8dc1cdfeb_full.jpg");
-	if (!Q_strcmp(pCvar->GetString(), ""))
+	pCvar->SetValue("http://anarchyarcade.com/default_avatar.jpg");
+	/*if (!Q_strcmp(pCvar->GetString(), ""))
 	{
 		pCvar->SetValue("http://aarcade.tv/anarchybot/avatars/default0.jpg");	// to prevent us doing this in an infinite loop due to failure.
 		m_pMetaverseManager->FetchUserInfo();
 		return;
-	}
+	}*/
 
 	if (!this->IsInitialized())
 	{
@@ -10072,6 +11208,16 @@ void C_AnarchyManager::ShowPaintMenu()
 	m_pInputManager->ActivateInputMode(true, false);	// pausing the game due to a menu is now obsolete!
 }
 
+void C_AnarchyManager::ShowPetsMenu()
+{
+	if (g_pAnarchyManager->GetSelectedEntity())
+		g_pAnarchyManager->TaskRemember();
+
+	C_AwesomiumBrowserInstance* pHudBrowserInstance = m_pAwesomiumBrowserManager->FindAwesomiumBrowserInstance("hud");
+	pHudBrowserInstance->SetUrl("asset://ui/tabMenu.html?tab=pets");
+	m_pInputManager->ActivateInputMode(true, false);	// pausing the game due to a menu is now obsolete!
+}
+
 void C_AnarchyManager::ShowPlayersMenu()
 {
 	if (g_pAnarchyManager->GetSelectedEntity())
@@ -10872,6 +12018,48 @@ inline int Floor2Int(float a)
 	return RetVal;
 }
 */
+
+
+void C_AnarchyManager::OnAIChatBotResponse(std::string responseText)
+{
+	DevMsg("AI Chat Bot Response:\n\t%s\n", responseText.c_str());
+
+	C_AwesomiumBrowserInstance* pHudInstance = g_pAnarchyManager->GetAwesomiumBrowserManager()->FindAwesomiumBrowserInstance("hud");
+
+	std::vector<std::string> params;
+	params.push_back(responseText);
+
+	pHudInstance->DispatchJavaScriptMethod("arcadeHud", "onAIChatBotResponse", params);
+}
+
+
+void C_AnarchyManager::OnAIChatBotSpeakStart(std::string botType)
+{
+	C_AwesomiumBrowserInstance* pHudInstance = g_pAnarchyManager->GetAwesomiumBrowserManager()->FindAwesomiumBrowserInstance("hud");
+	std::vector<std::string> params;
+	params.push_back(botType);
+	pHudInstance->DispatchJavaScriptMethod("arcadeHud", "onAIChatBotSpeakStart", params);
+
+	/*C_SteamBrowserInstance* pSteamBrowserInstance = this->GetSteamBrowserManager()->FindSteamBrowserInstance("SteamTalker");
+	if (pSteamBrowserInstance)
+	{
+		pSteamBrowserInstance->InjectJavaScript(VarArgs("speakStart(\"%s\");", botType.c_str()));
+	}*/
+}
+
+void C_AnarchyManager::OnAIChatBotSpeakEnd(std::string botType)
+{
+	C_AwesomiumBrowserInstance* pHudInstance = g_pAnarchyManager->GetAwesomiumBrowserManager()->FindAwesomiumBrowserInstance("hud");
+	std::vector<std::string> params;
+	params.push_back(botType);
+	pHudInstance->DispatchJavaScriptMethod("arcadeHud", "onAIChatBotSpeakEnd", params);
+
+	/*C_SteamBrowserInstance* pSteamBrowserInstance = this->GetSteamBrowserManager()->FindSteamBrowserInstance("SteamTalker");
+	if (pSteamBrowserInstance)
+	{
+		pSteamBrowserInstance->InjectJavaScript(VarArgs("speakEnd(\"%s\");", botType.c_str()));
+	}*/
+}
 
 void C_AnarchyManager::SteamTalker(std::string text, std::string voice, float flPitch, float flRate, float flVolume)
 {
@@ -14270,6 +15458,15 @@ void C_AnarchyManager::TogglePetTargetPos(Vector pos){
 		m_petTargetPos.x = 0;
 		m_petTargetPos.y = 0;
 		m_petTargetPos.z = 0;
+
+		/*"ENTER PLAYASPET MODE"
+		engine->ClientCmd("set_prop_vis -1 0;");
+
+		if (m_pets.size() > 0)
+		{
+			pet_t* pPet = m_pets[0];
+			engine->ClientCmd(VarArgs("set_prop_vis %i 1;", pPet->iEntityIndex));
+		}*/
 	}
 	/*if (m_petTargetPos.x != 0.0f || m_petTargetPos.y != 0.0f || m_petTargetPos.z != 0.0f) {
 		// clear us instead
@@ -14279,6 +15476,15 @@ void C_AnarchyManager::TogglePetTargetPos(Vector pos){
 	}*/
 	else {
 		this->SetPetTargetPos(pos);
+
+		/*"EXIT PLAYASPETMODE"
+		engine->ClientCmd("set_prop_vis -1 1;");
+
+		if (m_pets.size() > 0 )
+		{
+			pet_t* pPet = m_pets[0];
+			engine->ClientCmd(VarArgs("set_prop_vis %i 1;", pPet->iEntityIndex));
+		}*/
 	}
 }
 
@@ -14899,7 +16105,6 @@ void C_AnarchyManager::OnRebuildSoundCacheCallback()
 
 	// force some F6-9 binds, for now.
 	engine->ClientCmd("r_drawvgui 1");
-	engine->ClientCmd("bind f6 favorites_menu; bind f7 commands_menu; bind f8 paint_menu; bind f9 players_menu; bind 7 slot7; bind 8 slot8; bind 9 slot9; bind 0 slot10;");
 
 	C_AwesomiumBrowserInstance* pHudBrowserInstance = m_pAwesomiumBrowserManager->GetSelectedAwesomiumBrowserInstance();
 	//pHudBrowserInstance->SetUrl("asset://ui/welcome.html");
@@ -15405,6 +16610,79 @@ void C_AnarchyManager::BotCheer(std::string text)
 		else
 			engine->ClientCmd(VarArgs("chat_ball \"%s\"\n", paramValue.c_str()));
 	}
+}
+
+pet_t* C_AnarchyManager::FindPetByModel(std::string modelFile)
+{
+	std::vector<pet_t*> pets = g_pAnarchyManager->GetAllLivingPets();
+	std::string modelFileNormalized = g_pAnarchyManager->NormalizeModelFilename(modelFile);
+	std::string petModelFilename;
+	bool bFoundPet = false;
+	pet_t* pPet;
+	for (unsigned int i = 0; i < pets.size(); i++)
+	{
+		pPet = pets[i];
+		petModelFilename = pPet->pConfigKV->GetString("model");
+		if (petModelFilename == modelFileNormalized)
+		{
+			return pPet;
+		}
+	}
+	return null;
+}
+
+std::vector<std::string> C_AnarchyManager::GetAllPetOutfits(std::string modelFile)
+{
+	// search for any file in arcade_user/pets/outfit_%s_%id.txt where %s = normalized modelFile, and %id is the ID we are trying to extract.
+	std::string modelFileHash = this->GenerateLegacyHash(this->NormalizeModelFilename(modelFile).c_str());
+
+	std::string searchPath = VarArgs("pets/%s/outfits/*.txt", modelFileHash.c_str());
+	////std::string fileBase = searchPath.substr(5);
+	//std::string fileNameBase = "outfit_";
+	FileFindHandle_t findHandle;
+
+	std::vector<std::string> results;
+	//const char* foundFile = g_pFullFileSystem->FindFirst(searchPath.c_str(), &findHandle);
+	const char* foundFile = g_pFullFileSystem->FindFirstEx(searchPath.c_str(), "DEFAULT_WRITE_PATH", &findHandle);
+	while (foundFile != NULL)
+	{
+		// Check if the found file is not a directory
+		if (!g_pFullFileSystem->FindIsDirectory(findHandle))
+		{
+			// Extract the part after "outfit_" and before the file extension, if needed
+			std::string filename(foundFile);
+			//filename = filename.substr(fileNameBase.length());
+			filename = filename.substr(0, filename.length() - 4);
+
+			/*size_t startPos = filename.find("_");
+			if ( startPos != std::string::npos )
+			{
+				// Output the extracted part
+				std::string match = filename.substr(startPos+1);
+				results.push_back(match);
+			}*/
+			results.push_back(filename);
+		}
+		foundFile = g_pFullFileSystem->FindNext(findHandle);
+	}
+	g_pFullFileSystem->FindClose(findHandle);
+	return results;
+}
+
+std::string C_AnarchyManager::NormalizeModelFilename(std::string modelFile)
+{
+	// normalize the model filename
+	int iMaxString = modelFile.length() + 1;
+	char* modelFilenameFixed = new char[iMaxString];
+	Q_strncpy(modelFilenameFixed, modelFile.c_str(), iMaxString);
+	V_FixSlashes(modelFilenameFixed);
+	V_FixDoubleSlashes(modelFilenameFixed);
+	return modelFilenameFixed;
+}
+
+std::vector<pet_t*> C_AnarchyManager::GetAllLivingPets()
+{
+	return m_pets;
 }
 
 void C_AnarchyManager::UpdateItemTextOnObjects(std::string itemId, std::string text)

@@ -32,6 +32,7 @@ struct object_t
 	int parentEntityIndex;
 	int state;
 	std::string twitchChannel;
+	int _lastVisibleFrame;
 	//C_BaseEntity* entity;
 };
 
@@ -117,7 +118,10 @@ public:
 	object_t* GetInstanceObject(std::string objectId);
 	unsigned int GetInstanceObjectCount();
 	void RemoveEntity(C_PropShortcutEntity* pShortcutEntity, bool bBulkRemove = false, std::string objectOverrideId = "");
-	bool SpawnNearestObject();
+	int SpawnNearestObject(bool bAutoSpawnerMode = false);
+	bool UnspawnObject(std::string objectId);
+	int UnspawnAllObjects(int minSkippedFrames = 0);
+	void ProcessAutoUnspawnUpdate();
 	//void SetNearestSpawnDist(double maxDist) { m_fNearestSpawnDist = (float)m_fNearestSpawnDist = maxDist; }
 
 	void SetNearestSpawnDistFast(float flMaxDist);
@@ -173,6 +177,12 @@ private:
 	ConVar* m_pSpawnObjectsDoubleTapConVar;
 	ConVar* m_pNearestSpawnDistConVar;
 	bool m_bHadDebugText;
+
+	int m_iAutoUnspawnFramesSkipped;
+	ConVar* m_pAutoUnspawnModeConVar;
+	ConVar* m_pAutoUnspawnEntityFrameSkipConVar;
+	ConVar* m_pAutoUnspawnIntervalFrameSkipConVar;
+
 	ConVar* m_pReShadeConVar;
 	ConVar* m_pReShadeDepthConVar;
 	ConVar* m_pVGUIConVar;

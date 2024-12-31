@@ -29,6 +29,7 @@ public:
 	~C_DynamicProp(void);
 
 	virtual int DrawModel(int flags);	// Added for Anarchy Arcade
+	virtual void SetDrawForeground(bool bValue);	// Added for Anarchy Arcade
 
 	void GetRenderBounds( Vector& theMins, Vector& theMaxs );
 	unsigned int ComputeClientSideAnimationFlags();
@@ -40,6 +41,7 @@ private:
 
 	bool	m_bUseHitboxesForRenderBox;
 	int		m_iCachedFrameCount;
+	bool m_bDrawForeground;	// Added for Anarchy Arcade
 	Vector	m_vecCachedRenderMins;
 	Vector	m_vecCachedRenderMaxs;
 };

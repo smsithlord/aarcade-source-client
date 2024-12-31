@@ -194,6 +194,24 @@ void CAnarchyManager::RemoveJunkEntities()
 	this->ClearJunkEntities();
 }
 
+void CAnarchyManager::SetTorch(CBaseEntity* pEntity)
+{
+	if (m_pTorchEntity)
+		this->DestroyTorch();
+
+	m_pTorchEntity = pEntity;
+}
+
+void CAnarchyManager::DestroyTorch()
+{
+	if (m_pTorchEntity)
+	{
+		inputdata_t emptyDummy;
+		m_pTorchEntity->InputKillHierarchy(emptyDummy);
+		m_pTorchEntity = NULL;
+	}
+}
+
 void CAnarchyManager::ClearJunkEntities()
 {
 	m_junkEntities.Purge();

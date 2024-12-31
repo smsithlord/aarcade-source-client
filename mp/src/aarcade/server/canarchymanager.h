@@ -37,6 +37,9 @@ public:
 	void ClearJunkEntities();
 	void RemoveJunkEntities();
 
+	void SetTorch(CBaseEntity* pEntity);
+	void DestroyTorch();
+
 private:
 	CUtlVector<CBaseEntity*> m_junkEntities;
 	ConVar* pAttractModeDriftConVar;
@@ -45,6 +48,7 @@ private:
 	CTriggerCamera* m_pAttractCameraEntity;
 	Vector m_attractCameraOrigin;
 	QAngle m_attractCameraAngles;
+	CBaseEntity* m_pTorchEntity;
 
 	bool m_bIsMapLoaded;
 };

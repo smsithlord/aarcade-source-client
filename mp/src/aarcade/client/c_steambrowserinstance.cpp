@@ -808,6 +808,34 @@ void C_SteamBrowserInstance::OnBrowserInstanceStartRequest(const char* pchURL, c
 		C_AwesomiumBrowserInstance* pHudInstance = g_pAnarchyManager->GetAwesomiumBrowserManager()->FindAwesomiumBrowserInstance("hud");
 		pHudInstance->DispatchJavaScriptMethod("arcadeHud", "onDOMGot", params);
 	}
+	/*else if (urlBuf.find("http://www.aarcadeapicall.com.net.org/?aichatbotresponse=") == 0)
+	{
+		steamapicontext->SteamHTMLSurface()->AllowStartRequest(m_unHandle, false);
+
+		std::string stuff = urlBuf.substr(57, std::string::npos);
+		g_pAnarchyManager->OnAIChatBotResponse(stuff);
+	}*/
+	else if (urlBuf.find("http://www.aarcadeapicall.com.net.org/") == 0)
+	{
+		steamapicontext->SteamHTMLSurface()->AllowStartRequest(m_unHandle, false);
+
+		std::string params = urlBuf.substr(38);
+		if (params.find("?aichatbotresponse=") == 0)
+		{
+			std::string responseText = params.substr(19, std::string::npos);
+			g_pAnarchyManager->OnAIChatBotResponse(responseText);
+		}
+		else if (params.find("?aichatbotspeakstart=") == 0)
+		{
+			std::string botType = params.substr(21, std::string::npos);
+			g_pAnarchyManager->OnAIChatBotSpeakStart(botType);
+		}
+		else if (params.find("?aichatbotspeakend=") == 0)
+		{
+			std::string botType = params.substr(19, std::string::npos);
+			g_pAnarchyManager->OnAIChatBotSpeakEnd(botType);
+		}
+	}
 	else
 	{
 		if (!m_unHandle)

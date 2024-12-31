@@ -3501,6 +3501,11 @@ void JSHandler::OnMethodCall(WebView* caller, unsigned int remote_object_id, con
 			pLibretroInstance->GoNext();
 		}
 	}
+	else if (methodName == "setFullscreenMode")
+	{
+		bool bValue = (args.size() - iArgOffset > 0) ? args[iArgOffset + 0].ToBoolean() : true;
+		g_pAnarchyManager->GetInputManager()->SetFullscreenMode(bValue);
+	}
 	//else if (methodName == "convertAndPaint")
 	//{
 	//	std::string fileLocation = (args.size() - iArgOffset > 0) ? Awesomium::ToString(args[iArgOffset + 0].ToString()) : "";
@@ -10106,6 +10111,237 @@ JSValue JSHandler::OnMethodCallWithReturnValue(WebView* caller, unsigned int rem
 		bool bOnlySpawned = args[iArgOffset + 1].ToBoolean();
 		std::string objectId = g_pAnarchyManager->GetInstanceManager()->GetObjectWithItemId(itemId, bOnlySpawned);
 		return WSLit(objectId.c_str());
+	}
+	else if (methodName == "getAllPetOutfits")
+	{
+		JSArray results;
+		std::string modelFile = (args.size() - iArgOffset > 0) ? Awesomium::ToString(args[iArgOffset + 0].ToString()) : "";
+		if (modelFile == "")	// if no modelFile is given...
+		{
+			// get the playAsPet
+			pet_t* pPet = g_pAnarchyManager->GetPlayAsPet();
+			if (!pPet) {
+				// get the nearest pet to the look
+				g_pAnarchyManager->GetNearestPetToPlayerLook();
+			}
+
+			if (pPet) {
+				C_BaseEntity* pEntity = C_BaseEntity::Instance(pPet->iEntityIndex);
+				const model_t* TheModel = pEntity->GetModel();
+				modelFile = modelinfo->GetModelName(TheModel);// g_pAnarchyManager->NormalizeModelFilename(modelinfo->GetModelName(TheModel));
+			}
+		}
+
+		std::vector<std::string> outfitIds = g_pAnarchyManager->GetAllPetOutfits(modelFile);
+		for (unsigned int i = 0; i < outfitIds.size(); i++)
+		{
+			results.Push(WSLit(outfitIds[i].c_str()));
+		}
+		return results;
+	}
+	else if (methodName == "getPlayAsPetEntityIndex")
+	{
+		//C_DynamicProp* pProp = g_pAnarchyManager->GetPlayAsPetEntity();
+		pet_t* pPet = g_pAnarchyManager->GetPlayAsPet();
+		if (pPet)
+		{
+			return JSValue(pPet->iEntityIndex);
+		}
+		return JSValue(-1);
+	}
+	else if (methodName == "getPetByEntityIndex")
+	{
+		int iEntityIndex = (args.size() - iArgOffset > 0) ? args[iArgOffset + 0].ToInteger() : -1;
+		if (iEntityIndex >= 0)
+		{
+			pet_t* pPet = g_pAnarchyManager->GetPetByEntIndex(iEntityIndex);
+			std::string petOutfitId = pPet->outfitId;
+			std::string petModelFilename = pPet->pConfigKV->GetString("model");
+
+			JSObject pet;
+			pet.SetProperty(WSLit("entityIndex"), JSValue(iEntityIndex));
+			pet.SetProperty(WSLit("outfitId"), WSLit(petOutfitId.c_str()));
+			pet.SetProperty(WSLit("behavior"), JSValue(pPet->iBehavior));
+			pet.SetProperty(WSLit("model"), WSLit(petModelFilename.c_str()));
+
+			C_DynamicProp* pProp = dynamic_cast<C_DynamicProp*>(C_BaseEntity::Instance(iEntityIndex));
+			if (pProp)
+			{
+				pet.SetProperty(WSLit("sequence"), WSLit(VarArgs("%s", pProp->GetSequenceName(pPet->iCurSequence))));
+			}
+			return pet;
+		}
+		return JSValue(0);
+	}
+	else if (methodName == "getAllPets")
+	{
+		JSArray results;
+
+		bool bIncludeModelEntry = (args.size() - iArgOffset > 0) ? args[iArgOffset + 0].ToBoolean() : true;
+		bool bCreateModelEntriesIfMissing = (args.size() - iArgOffset > 1) ? args[iArgOffset + 1].ToBoolean() : false;
+		std::vector<pet_t*> pets = g_pAnarchyManager->GetAllLivingPets();
+
+		int iPetEntityIndex;
+		//std::string petName;
+		std::string petOutfitId;
+		std::string petModelFilename;
+		std::string petModelId;
+		pet_t* pPet;
+		KeyValues* pSearchInfo;
+		KeyValues* pModel;
+
+		for (unsigned int i = 0; i < pets.size(); i++)
+		{
+			pPet = pets[i];
+			iPetEntityIndex = pPet->iEntityIndex;
+			petOutfitId = pPet->outfitId;
+			petModelFilename = pPet->pConfigKV->GetString("model");
+
+			JSObject pet;
+
+			if (bIncludeModelEntry)
+			{
+				// build the search info
+				pSearchInfo = new KeyValues("search");	// this gets deleted by the metaverse manager!!
+				pSearchInfo->SetString("file", petModelFilename.c_str());
+
+				// start the search
+				pModel = g_pAnarchyManager->GetMetaverseManager()->GetActiveKeyValues(g_pAnarchyManager->GetMetaverseManager()->FindLibraryModel(pSearchInfo));
+				if (!pModel && bCreateModelEntriesIfMissing) {
+					pModel = g_pAnarchyManager->GetMetaverseManager()->CreateModelFromFileTarget(petModelFilename);
+					if (pModel)
+					{
+						g_pAnarchyManager->GetMetaverseManager()->AddModel(pModel);
+						g_pAnarchyManager->GetMetaverseManager()->SaveSQL(null, "models", pModel->GetString("local/info/id"), pModel);
+
+						pModel = g_pAnarchyManager->GetMetaverseManager()->GetActiveKeyValues(pModel);
+					}
+				}
+				petModelId = pModel ? pModel->GetString("info/id") : "";
+				pet.SetProperty(WSLit("modelId"), WSLit(petModelId.c_str()));
+
+				JSObject modelEntry;
+				AddSubKeys(pModel, modelEntry);
+				pet.SetProperty(WSLit("modelEntry"), modelEntry);
+			}
+
+			pet.SetProperty(WSLit("entityIndex"), JSValue(iPetEntityIndex));
+			pet.SetProperty(WSLit("outfitId"), WSLit(petOutfitId.c_str()));
+			pet.SetProperty(WSLit("behavior"), JSValue(pPet->iBehavior));
+			
+			pet.SetProperty(WSLit("model"), WSLit(petModelFilename.c_str()));
+
+			C_DynamicProp* pProp = dynamic_cast<C_DynamicProp*>(C_BaseEntity::Instance(iPetEntityIndex));
+			if (pProp)
+			{
+				pet.SetProperty(WSLit("sequence"), WSLit(VarArgs("%s", pProp->GetSequenceName(pPet->iCurSequence))));
+			}
+
+			results.Push(pet);
+		}
+		return results;
+	}
+	else if (methodName == "getEntityModelAttachmentNames")
+	{
+		int iEntityIndex = (args.size() - iArgOffset > 0) ? args[iArgOffset + 0].ToInteger() : -1;
+		C_BaseEntity* pBaseEntity = C_BaseEntity::Instance(iEntityIndex);
+		if (!pBaseEntity) {
+			return JSValue(0);
+		}
+
+		C_DynamicProp* pEntity = dynamic_cast<C_DynamicProp*>(pBaseEntity);
+		if (pEntity)
+		{
+			CStudioHdr *hdr = pEntity->GetModelPtr();
+			if (hdr)
+			{
+				int iNumAttachments = hdr->GetNumAttachments();
+				if (iNumAttachments > 0)
+				{
+					JSArray response;
+					for (int i = 0; i < iNumAttachments; ++i)
+					{
+						const mstudioattachment_t &pattachment = hdr->pAttachment(i);
+						char* name = pattachment.pszName();
+						//std::string name = pAttachment.pszName();
+						//DevMsg("Attachment %i: %s\n", i, name);
+						response.Push(WSLit(name));
+					}
+					return response;
+				}
+			}
+		}
+		return JSValue(0);
+	}
+	else if (methodName == "getEntityModelSequenceNames")
+	{
+		/*
+		// This lagged with very long sequence lists, so instead let's output it into a .js file.
+		JSArray response;
+
+		C_PropShortcutEntity* pEntity = g_pAnarchyManager->GetMetaverseManager()->GetSpawningObjectEntity();
+		if (pEntity)
+		{
+		CStudioHdr *hdr = pEntity->GetModelPtr();
+		if (hdr)
+		{
+		// NOTE: This block only ever gets dropped into if the object is spawned AFTER initial map load.  hdr is always NULL on objects that already exist in the arcade upon map load.
+		int numseq = hdr->GetNumSeq();
+		for (unsigned int i = 0; i < numseq; i++)
+		response.Push(WSLit(pEntity->GetSequenceName(i)));
+		}
+		}
+
+		return response;
+		*/
+
+		int iEntityIndex = args[iArgOffset + 0].ToInteger();
+		C_BaseEntity* pBaseEntity = C_BaseEntity::Instance(iEntityIndex);
+		if (!pBaseEntity) {
+			return JSValue(0);
+		}
+
+		std::string js = "var aa_fetched_model_sequences = [";
+		int iCount = 0;
+
+		C_DynamicProp* pEntity = dynamic_cast<C_DynamicProp*>(pBaseEntity);
+		if (pEntity)
+		{
+			CStudioHdr *hdr = pEntity->GetModelPtr();
+			if (hdr)
+			{
+				int numseq = hdr->GetNumSeq();
+				for (unsigned int i = 0; i < numseq; i++)
+				{
+					if (iCount > 0)
+						js += ", ";
+
+					js += "\"";
+					js += pEntity->GetSequenceName(i);
+					js += "\"";
+					iCount++;
+				}
+			}
+		}
+
+		js += "];";
+
+		if (iCount <= 0)
+			return JSValue(false);
+
+		g_pFullFileSystem->CreateDirHierarchy("screenshots", "DEFAULT_WRITE_PATH");
+		FileHandle_t fh = g_pFullFileSystem->Open("screenshots\\model_info.js", "w", "DEFAULT_WRITE_PATH");
+		if (fh)
+		{
+			g_pFullFileSystem->Write(js.c_str(), js.length(), fh);
+			g_pFullFileSystem->Close(fh);
+			return JSValue(true);
+		}
+		else
+		{
+			DevMsg("Error writing model info!\n");
+			return JSValue(false);
+		}
 	}
 	/*else if (methodName == "setSpawningObjectModelBodyGroupState")
 	{

@@ -145,6 +145,10 @@ ConVar workshop("workshop", "1", FCVAR_NONE, "Internal. Read-only. Set with laun
 ConVar mounts("mounts", "1", FCVAR_NONE, "Internal. Read-only. Set with launcher.");
 ConVar inspect_object_showui("inspect_object_showui", "0", FCVAR_ARCHIVE, "Bool. Determines if the UI is shown during inspect mode or not.");
 ConVar reshade("reshade", "0", FCVAR_NONE, "Internal. Read-only. Set with launcher.");
+ConVar manualSpawnMode("manual_spawn_mode", "0", FCVAR_ARCHIVE, "Bool. Set to 1, objects will not automatically spawn in until you press the Spawn Nearby Objects button.");
+ConVar autoUnspawnMode("auto_unspawn_mode", "0", FCVAR_ARCHIVE, "Bool. Set to 1 to automatically unspawn entities (to potentially make maps larger than the Source engine limit of 2048.)");
+ConVar autoUnspawnEntityFrameSkip("auto_unspawn_entity_frameskip", "250", FCVAR_ARCHIVE, "Number of frames an entity needs to have missed before it is considered for auto-unspawning.");
+ConVar autoUnspawnIntervalFrameSkip("auto_unspawn_interval_frameskip", "500", FCVAR_ARCHIVE, "Number of frames AArcade skips between attempting to detect entities to auto-unspawn.");
 ConVar reshadedepth("reshadedepth", "0", FCVAR_NONE, "Internal. Read-only. Set with launcher.");
 ConVar play_everywhere("play_everywhere", "0", FCVAR_NONE, "Bool. Causes ALL screens to temporarily behave as video mirrors.");
 ConVar attempted_quick_load("attempted_quick_load", "0", FCVAR_HIDDEN, "Internal.");
@@ -201,6 +205,10 @@ ConVar projector_fix("projector_fix", "1", FCVAR_ARCHIVE);
 ConVar autoplay_enabled("autoplay_enabled", "1", FCVAR_ARCHIVE);
 
 ConVar paint_texture("paint_texture", "shantzplacecss/zoeywhite", FCVAR_NONE);
+
+ConVar play_as_next_pet("play_as_next_pet", "0", FCVAR_HIDDEN);
+ConVar pet_persistence("pet_persistence", "1", FCVAR_ARCHIVE, "Bool. When true, all pet states will be saved/restored in each instance.");
+ConVar pet_resume_at("pet_resume_at", "1", FCVAR_ARCHIVE, "Bool. When true, resuming from wherever the current play-as-pet was in the instance - if it exists - is preferred over the targeted spawn point.");
 
 ConVar disable_multiplayer("disable_multiplayer", "0", FCVAR_NONE);
 ConVar avatarUrl("avatar_url", "", FCVAR_HIDDEN, "");
@@ -482,6 +490,19 @@ void DestroyAllPets(const CCommand &args)
 }
 ConCommand destroy_all_pets("destroy_all_pets", DestroyAllPets, "Usage: Destroy all pets that are live in the current world.");
 
+void ToggleLookspot(const CCommand &args)
+{
+	int iValue = (args.ArgC() > 1) ? Q_atoi(args[1]) : -1;
+	g_pAnarchyManager->ToggleLookspot(iValue);
+}
+ConCommand toggle_lookspot("toggle_lookspot", ToggleLookspot, "Usage: Toggles lookspot UI. -1 (or no param) for toggle, 0 for off, 1 for on.");
+
+void DestroyLookspot(const CCommand &args)
+{
+	g_pAnarchyManager->DestroyLookspot();
+}
+ConCommand destroy_lookspot("destroy_lookspot", DestroyLookspot, "Usage: Interal use only (eventually.) It destroys the lookspots, if they exist.");
+
 void PetTarget(const CCommand &args)
 {
 	g_pAnarchyManager->TogglePetTargetPos(g_pAnarchyManager->GetSelectorTraceVector());
@@ -495,6 +516,11 @@ void PetCreated(const CCommand &args)
 }
 ConCommand pet_created("pet_created", PetCreated, "Usage: Internal use only.", FCVAR_HIDDEN);
 
+void LookSpotCreaated(const CCommand &args)
+{
+	g_pAnarchyManager->LookspotCreated(Q_atoi(args[1]), Q_atoi(args[2]), Q_atoi(args[3]));
+}
+ConCommand lookspot_created("lookspot_created", LookSpotCreaated, "Usage: Internal use only.", FCVAR_HIDDEN);
 
 void SpawnPet(const CCommand &args)
 {
@@ -536,18 +562,98 @@ void SpawnPet(const CCommand &args)
 		return;
 	}
 
-	std::string forward = (args.ArgC() > 2) ? args.Arg(2) : "";
-	std::string idle = (args.ArgC() > 3) ? args.Arg(3) : "";
-	float flScale = (args.ArgC() > 4) ? Q_atof(args.Arg(4)) : 1.0f;
-	std::string rot = (args.ArgC() > 5) ? args.Arg(5) : "";
-	std::string pos = (args.ArgC() > 6) ? args.Arg(6) : "";
-	float flNear = (args.ArgC() > 7) ? Q_atof(args.Arg(7)) : 100.0f;
-	float flFar = (args.ArgC() > 8) ? Q_atof(args.Arg(8)) : 200.0f;
-	float flSpeed = (args.ArgC() > 9) ? Q_atof(args.Arg(9)) : 100.0f;
+	std::string run = (args.ArgC() > 2) ? args.Arg(2) : "";
+	std::string walk = (args.ArgC() > 3) ? args.Arg(3) : "";
+	std::string idle = (args.ArgC() > 4) ? args.Arg(4) : "";
+	std::string fall = (args.ArgC() > 5) ? args.Arg(5) : "";
+	float flScale = (args.ArgC() > 6) ? Q_atof(args.Arg(6)) : 1.0f;
+	std::string rot = (args.ArgC() > 7) ? args.Arg(7) : "";
+	std::string pos = (args.ArgC() > 8) ? args.Arg(8) : "";
+	float flNear = (args.ArgC() > 9) ? Q_atof(args.Arg(9)) : 100.0f;
+	float flFar = (args.ArgC() > 10) ? Q_atof(args.Arg(10)) : 200.0f;
+	float flRunSpeed = (args.ArgC() > 11) ? Q_atof(args.Arg(11)) : 100.0f;
+	float flWalkSpeed = (args.ArgC() > 12) ? Q_atof(args.Arg(12)) : 50.0f;
+	std::string outfit = (args.ArgC() > 13) ? args.Arg(13) : "";
+	std::string behavior = (args.ArgC() > 14) ? args.Arg(14) : "";
+	std::string sequence = (args.ArgC() > 15) ? args.Arg(15) : "";
 
-	g_pAnarchyManager->SpawnPet(model, forward, idle, flScale, rot, pos, flNear, flFar, flSpeed);
+	g_pAnarchyManager->SpawnPet(model, run, walk, idle, fall, flScale, rot, pos, flNear, flFar, flRunSpeed, flWalkSpeed, outfit, behavior, sequence);
 }
 ConCommand spawn_pet("spawn_pet", SpawnPet, "For internal use only, for now.");
+
+void AnimalityByTargetnameClient(const CCommand &args)
+{
+	if (args.ArgC() > 1) {
+		C_BaseEntity* pBaseEntity = C_BaseEntity::Instance(Q_atoi(args[1]));
+		//C_BaseEntity* pBaseEntity2 = C_BaseEntity::Instance(Q_atoi(args[2]));
+
+		if (pBaseEntity ){//&& pBaseEntity2) {
+			const model_t* pModel = pBaseEntity->GetModel();
+			if (pModel)
+			{
+				std::string modelFilename = modelinfo->GetModelName(pModel);
+				DevMsg("Detected pet model: %s\n", modelFilename.c_str());
+				modelFilename = g_pAnarchyManager->NormalizeModelFilename(modelFilename);
+
+				/*Vector origin = pBaseEntity2->GetAbsOrigin();
+				std::string position = VarArgs("%.10f %.10f %.10f", origin.x, origin.y, origin.z);
+
+				QAngle angles = pBaseEntity2->GetAbsAngles();
+				std::string rotation = VarArgs("%.10f %.10f %.10f", angles.x, angles.y, angles.z);*/
+
+				Vector origin;
+				UTIL_StringToVector(origin.Base(), args.Arg(3));
+
+				QAngle angles;
+				UTIL_StringToVector(angles.Base(), args.Arg(4));
+
+				// determine if pet already exists
+				pet_t* pPet = g_pAnarchyManager->FindPetByModel(modelFilename);
+				if (!pPet )
+				{
+					// create our pet
+					//g_pAnarchyManager->SpawnPet(model, run, walk, idle, fall, flScale, rot, pos, flNear, flFar, flRunSpeed, flWalkSpeed);
+
+					int iOffset = 1;	// so we know where the rest of the regular pet options begin.
+					std::string run = (args.ArgC() > 2 + iOffset) ? args.Arg(2 + iOffset) : "";
+					std::string walk = (args.ArgC() > 3 + iOffset) ? args.Arg(3 + iOffset) : "";
+					std::string idle = (args.ArgC() > 4 + iOffset) ? args.Arg(4 + iOffset) : "";
+					std::string fall = (args.ArgC() > 5 + iOffset) ? args.Arg(5 + iOffset) : "";
+					//float flScale = (args.ArgC() > 6) ? Q_atof(args.Arg(6)) : 1.0f;
+					std::string flScale = (args.ArgC() > 6 + iOffset) ? args.Arg(6 + iOffset) : "";
+					std::string rot = (args.ArgC() > 7 + iOffset) ? args.Arg(7 + iOffset) : "";
+					std::string pos = (args.ArgC() > 8 + iOffset) ? args.Arg(8 + iOffset) : "";
+					std::string flNear = args.Arg(9 + iOffset);
+					std::string flFar = args.Arg(10 + iOffset);
+					std::string flRunSpeed = args.Arg(11 + iOffset);
+					std::string flWalkSpeed = args.Arg(12 + iOffset);
+
+					//g_pAnarchyManager->SpawnPet(modelFilename, run, walk, idle, fall, flScale, rot, pos, flNear, flFar, flRunSpeed, flWalkSpeed);
+					
+					// teleport us to the destination
+					//engine->ClientCmd(VarArgs("teleport_player_to_entity %i;", pBaseEntity2->entindex()));
+					engine->ClientCmd(VarArgs("play_as_next_pet 1; spawn_pet \"%s\" \"%s\" \"%s\" \"%s\" \"%s\" \"%s\" \"%s\" \"%s\" \"%s\" \"%s\" \"%s\" \"%s\";", modelFilename.c_str(), run.c_str(), walk.c_str(), idle.c_str(), fall.c_str(), flScale.c_str(), rot.c_str(), pos.c_str(), flNear.c_str(), flFar.c_str(), flRunSpeed.c_str(), flWalkSpeed.c_str()));
+					//pPet = g_pAnarchyManager->FindPetByModel(modelFilename);
+				}
+
+				/*if (pPet)
+				{
+					// set the pet as our PlayAsPet pet.
+					g_pAnarchyManager->SetPlayAsPet(pPet);
+
+					//"ENTER PLAYASPET MODE"
+					engine->ClientCmd("set_prop_vis -1 0;");
+					engine->ClientCmd(VarArgs("set_prop_vis %i 1;", pPet->iEntityIndex));
+				}
+				else
+				{
+					DevMsg("No pet found.\n");
+				}*/
+			}
+		}
+	}
+}
+ConCommand animality_by_targetname_client("animality_by_targetname_client", AnimalityByTargetnameClient, "For internal use only.");
 
 void ArcadeHud(const CCommand &args)
 {
@@ -1099,6 +1205,66 @@ void RadialMenu(const CCommand &args)
 }
 ConCommand radial_menu("radial_menu", RadialMenu, "Usage: show the radial menu.");
 
+void ChatbotOutputOverlay(const CCommand &args)
+{
+	if (g_pAnarchyManager->GetSelectedEntity())
+		g_pAnarchyManager->TaskRemember();
+
+	C_AwesomiumBrowserInstance* pHudBrowserInstance = g_pAnarchyManager->GetAwesomiumBrowserManager()->FindAwesomiumBrowserInstance("hud");
+	pHudBrowserInstance->SetUrl("asset://ui/chatbot_output_overlay.html");
+	g_pAnarchyManager->GetInputManager()->ActivateInputMode(true, false, pHudBrowserInstance, false);
+}
+ConCommand chatbot_output_overlay("chatbot_output_overlay", ChatbotOutputOverlay, "Usage: show the chatbot output overlay.");
+
+void ChatbotMenu(const CCommand &args)
+{
+	if (g_pAnarchyManager->GetSelectedEntity())
+		g_pAnarchyManager->TaskRemember();
+
+	C_AwesomiumBrowserInstance* pHudBrowserInstance = g_pAnarchyManager->GetAwesomiumBrowserManager()->FindAwesomiumBrowserInstance("hud");
+	pHudBrowserInstance->SetUrl("asset://ui/chatbot_menu.html");
+	g_pAnarchyManager->GetInputManager()->ActivateInputMode(true, false, pHudBrowserInstance);
+}
+ConCommand chatbot_menu("chatbot_menu", ChatbotMenu, "Usage: show the chatbot menu.");
+
+void PetMenu(const CCommand &args)
+{
+	//if (g_pAnarchyManager->GetSelectedEntity())
+	//	g_pAnarchyManager->TaskRemember();
+
+	C_AwesomiumBrowserInstance* pHudBrowserInstance = g_pAnarchyManager->GetAwesomiumBrowserManager()->FindAwesomiumBrowserInstance("hud");
+	if (args.ArgC() > 1)
+	{
+		pHudBrowserInstance->SetUrl(VarArgs("asset://ui/petMenu.html?petEntity=%i", Q_atoi(args[1])));
+	}
+	else
+	{
+		pHudBrowserInstance->SetUrl("asset://ui/petMenu.html");
+	}
+	g_pAnarchyManager->GetInputManager()->ActivateInputMode(true, false, pHudBrowserInstance);
+}
+ConCommand pet_menu("pet_menu", PetMenu, "Usage: show the pet context menu. INTERNAL USE ONLY. Needs an entity index as the parameter.", FCVAR_HIDDEN);
+
+void PetsTab(const CCommand &args)
+{
+	if (g_pAnarchyManager->GetInputManager()->GetInputMode() && g_pAnarchyManager->GetMetaverseManager()->GetSpawningObjectEntity())
+		g_pAnarchyManager->HandleUiToggle();
+
+	g_pAnarchyManager->ShowPetsMenu();
+}
+ConCommand pets_tab("pets_tab", PetsTab, "Usage: Show the pets tab.");
+
+void OnPetUsed(const CCommand &args)
+{
+	//C_DynamicProp* pProp = NULL;
+	//C_BaseEntity* pBaseEntity = C_BaseEntity::Instance(Q_atoi(args[1]));
+	//if (pBaseEntity)
+		//pProp = dynamic_cast<C_PropShortcutEntity*>(pBaseEntity);
+
+	engine->ClientCmd(VarArgs("pet_menu %i;", Q_atoi(args[1])));
+}
+ConCommand on_pet_used("on_pet_used", OnPetUsed, "Usage: a pet has been USED by the local player");
+
 void AvatarMenu(const CCommand &args)
 {
 	if (g_pAnarchyManager->GetSelectedEntity())
@@ -1164,6 +1330,18 @@ void LocalAvatarObjectCreated(const CCommand &args)
 	g_pAnarchyManager->LocalAvatarObjectCreated(iEntIndex);
 }
 ConCommand local_avatar_object_created("local_avatar_object_created", LocalAvatarObjectCreated, "Usage: interal use only.");
+
+void LocalPlayerDied(const CCommand &args)
+{
+	g_pAnarchyManager->LocalPlayerDied();
+}
+ConCommand local_player_died("local_player_died", LocalPlayerDied, "Usage: interal use only.");
+
+void LocalPlayerSpawned(const CCommand &args)
+{
+	g_pAnarchyManager->LocalPlayerSpawned();
+}
+ConCommand local_player_spawned("local_player_spawned", LocalPlayerSpawned, "Usage: interal use only.");
 
 void VRHandCreated(const CCommand &args)
 {
@@ -1918,7 +2096,7 @@ void ApplyCarryData(const CCommand &args)
 	std::string originOffset = args[1];
 	g_pAnarchyManager->ApplyCarryData(originOffset);
 }
-ConCommand applyCarryData("apply_carry_cata", ApplyCarryData, "Internal. Applies an override to the carry origin offset for inspect mode.", FCVAR_HIDDEN);
+ConCommand applyCarryData("apply_carry_cata", ApplyCarryData, "Internal. Applies an override to the carry origin offset for inspect mode.", FCVAR_HIDDEN); // IFXME: There is a type, it says cata. this con function is most likely OBSOLETE!
 
 
 #include "../openvr/openvr.h"
@@ -2116,9 +2294,1371 @@ void TesterJoint(const CCommand &args)
 	delete pAITests;
 */
 	//g_pAnarchyManager->GetMetaverseManager()->TesterJoint();
-DevMsg("Client values for:\n\tMAX_EDICT_BITS\t%i\n\tMAX_EDICTS\t%i\n\tNUM_ENT_ENTRY_BITS\t%i\n\tNUM_ENT_ENTRIES\t%i\n", MAX_EDICT_BITS, MAX_EDICTS, NUM_ENT_ENTRY_BITS, NUM_ENT_ENTRIES);
+//DevMsg("Client values for:\n\tMAX_EDICT_BITS\t%i\n\tMAX_EDICTS\t%i\n\tNUM_ENT_ENTRY_BITS\t%i\n\tNUM_ENT_ENTRIES\t%i\n", MAX_EDICT_BITS, MAX_EDICTS, NUM_ENT_ENTRY_BITS, NUM_ENT_ENTRIES);
+
+	//g_pAnarchyManager->GetInstanceManager()->ProcessAutoUnspawnUpdate();	// This object unspawning system ACTUALLY WORKS!!!!!! But there is such a performance stutter loading in new assets still, that it needs to find a proper implementation.  (Also note stuff like item texture cleanup is probably not implemented, it's still an unfinished feature.)
+
+	//C_BaseEntity* pPet = null;
+	pet_t* pPet = g_pAnarchyManager->GetPlayAsPet();
+	//if (pPlayAsPet)
+		//pPet = C_BaseEntity::Instance(pPlayAsPet->iEntityIndex);
+
+	if (pPet)
+	{
+		C_PropShortcutEntity* pShortcut = NULL;
+		C_BaseEntity* pBaseEntity = C_BaseEntity::Instance(g_pAnarchyManager->GetSelectorTraceEntityIndex());
+		if (pBaseEntity)
+			pShortcut = dynamic_cast<C_PropShortcutEntity*>(pBaseEntity);
+
+		if (!pShortcut)
+		{
+			float flMaxRange = -1;
+			object_t* pObject = g_pAnarchyManager->GetInstanceManager()->GetNearestObjectToPlayerLook(NULL, flMaxRange);
+			if (pObject->spawned)
+			{
+				pBaseEntity = C_BaseEntity::Instance(pObject->entityIndex);
+				if (pBaseEntity)
+					pShortcut = dynamic_cast<C_PropShortcutEntity*>(pBaseEntity);
+			}
+		}
+
+		if (pShortcut)
+		{
+			//std::string attachment_name = "head";
+			std::string attachment_name = "rhand";
+			//int iAttachment = pPet->LookupAttachment(attachment_name.c_str());
+			engine->ClientCmd(VarArgs("setpetattach %i %i \"%s\";\n", pShortcut->entindex(), pPet->iEntityIndex, attachment_name.c_str()));
+			//engine->ServerCmd(VarArgs("snap_object_pos %i %f %f %f %f %f %f;\n", pShortcut->entindex(), origin.x, origin.y, origin.z, angles.x, angles.y, angles.z));
+		}
+	}
 }
 ConCommand testerjoint("testerjoint", TesterJoint, "Usage: ");
+
+// Console command to display the number of mount paths
+void CC_CountMountPaths()
+{
+	// Declare a buffer to hold the search paths
+	const int bufferSize = 4096 * 20;  // Adjust the size as needed 
+	//					  17995
+	char searchPaths[bufferSize];
+
+	// Retrieve the search paths (search paths are separated by a semicolon)
+	g_pFullFileSystem->GetSearchPath(nullptr, false, searchPaths, bufferSize);
+
+	// Split the search paths by semicolons
+	CUtlVector<char*> pathList;
+	char* token = strtok(searchPaths, ";");
+	while (token != nullptr)
+	{
+		pathList.AddToTail(token);
+		token = strtok(nullptr, ";");
+	}
+
+	// Output the number of mount paths
+	Msg("Number of mount paths: %d\n", pathList.Count());
+
+	// Optionally, print each mount path
+	for (int i = 0; i < pathList.Count(); i++)
+	{
+		Msg("Mount path %d: %s\n", i + 1, pathList[i]);
+	}
+}
+
+// Register the console command
+static ConCommand count_mount_paths("count_mount_paths", CC_CountMountPaths, "Outputs the number of currently loaded mount paths", FCVAR_CHEAT);
+
+void _PetAddAttachment(pet_t* pPet, const std::string& attachmentName, const std::string& attachmentModelFilename) {
+	pPet->attachments[attachmentName].push_back(attachmentModelFilename);
+}
+
+C_BaseEntity* HasChildModel(C_DynamicProp* pParent, std::string modelName)
+{
+	if (!pParent || modelName == "")
+		return null;
+
+	// Get the first child of the parent entity
+	C_BaseEntity* pChild = pParent->FirstMoveChild();
+	while (pChild)
+	{
+		const model_t* pModel = pChild->GetModel();
+		if (pModel)
+		{
+			std::string attachmentModelFilename = modelinfo->GetModelName(pModel);	// this has nothing to do with attachment. bad var names.
+			attachmentModelFilename = g_pAnarchyManager->NormalizeModelFilename(attachmentModelFilename);
+
+			if (attachmentModelFilename == modelName)
+			{
+				return pChild; // Found a child with the matching model
+			}
+		}
+
+		// Move to the next sibling
+		pChild = pChild->NextMovePeer();
+	}
+
+	return null; // No child with the specified model found
+}
+
+void _PetRemoveAttachedModel(pet_t* pPet, const std::string& attachmentName, const std::string& attachmentModelFilename) {
+	if (attachmentName.empty()) {
+		// If attachmentName is blank, remove the model filename from all vectors
+		for (auto& pair : pPet->attachments) {
+			// Get the vector of filenames
+			std::vector<std::string>& filenames = pair.second;
+
+			// Remove the specified model filename from the vector
+			auto newEnd = std::remove(filenames.begin(), filenames.end(), attachmentModelFilename);
+
+			// Resize the vector to remove the undefined elements
+			filenames.erase(newEnd, filenames.end());
+
+			// Optional: Remove the key if no attachments are left
+			//if (filenames.empty()) {
+			//	pPet->attachments.erase(pair.first);
+			//}
+		}
+	}
+	else {
+		// Search for the attachment name in the map
+		auto it = pPet->attachments.find(attachmentName);
+
+		if (it != pPet->attachments.end()) {
+			// Get the vector of filenames
+			std::vector<std::string>& filenames = it->second;
+
+			// Remove the specified model filename from the vector
+			auto newEnd = std::remove(filenames.begin(), filenames.end(), attachmentModelFilename);
+
+			// Resize the vector to remove the undefined elements
+			filenames.erase(newEnd, filenames.end());
+
+			// Optional: Remove the key if no attachments are left
+			//if (filenames.empty()) {
+			//	pPet->attachments.erase(it);
+			//}
+		}
+		else {
+			//std::cout << "Attachment name not found." << std::endl;
+		}
+	}
+}
+
+/*void _PetRemoveAllAttachments(bool bAlsoRemoveEntities) {
+	C_BaseEntity* pPetEntity = (C_BaseEntity*)g_pAnarchyManager->GetPlayAsPetEntity();
+	if (pPetEntity)
+	{
+		int iPetEntityIndex = pPetEntity->entindex();
+		pet_t* pPet = g_pAnarchyManager->GetPetByEntIndex(iPetEntityIndex);
+
+		// Iterate over each attachment name
+		for (auto& pair : pPet->attachments) {
+			// Reverse iterate over the vector of filenames
+			for (auto rit = pair.second.rbegin(); rit != pair.second.rend(); ++rit) {
+				// Call removeAttachment for each filename, using reverse iterators to avoid affecting iteration
+
+				if (bAlsoRemoveEntities)
+				{
+					bool bDidRemove = false;
+					C_DynamicProp* pDPet = dynamic_cast<C_DynamicProp*>(pPetEntity);
+					C_BaseEntity* pExistingProp = HasChildModel(pDPet, *rit);
+					while (pExistingProp)
+					{
+						// remove it...
+						bDidRemove = true;
+						engine->ClientCmd(VarArgs("removeobject %i;\n", pExistingProp->entindex()));	// servercmdfix , false);
+						DevMsg("Removed existing attached prop.\n");
+						pExistingProp = NULL;// HasChildModel(pDPet, attachmentModelFilename);// removing objects is not syncronous. :(
+					}
+				}
+
+				_PetRemoveAttachedModel(pPet, pair.first, *rit);
+			}
+		}
+	}
+}*/
+
+
+
+void TestDoPetAttach(const CCommand &args)
+{
+	pet_t* pPet = g_pAnarchyManager->GetPlayAsPet();
+	if (pPet)
+	{
+		std::string attachment_name = (args.ArgC() > 1) ? args[1] : "head";
+
+		//C_PropShortcutEntity* pShortcut = g_pAnarchyManager->GetMetaverseManager()->GetSpawningObjectEntity();
+
+		C_PropShortcutEntity* pShortcut = NULL;
+		C_BaseEntity* pBaseEntity = C_BaseEntity::Instance(g_pAnarchyManager->GetSelectorTraceEntityIndex());
+		if (pBaseEntity)
+			pShortcut = dynamic_cast<C_PropShortcutEntity*>(pBaseEntity);
+
+		if (!pShortcut)
+		{
+			float flMaxRange = -1;
+			object_t* pObject = g_pAnarchyManager->GetInstanceManager()->GetNearestObjectToPlayerLook(NULL, flMaxRange);
+			if (pObject->spawned)
+			{
+				pBaseEntity = C_BaseEntity::Instance(pObject->entityIndex);
+				if (pBaseEntity)
+					pShortcut = dynamic_cast<C_PropShortcutEntity*>(pBaseEntity);
+			}
+		}
+
+		if (pShortcut)
+		{
+			//std::string attachmentModelFilename = modelinfo->GetModelName(pShortcut->GetModel());
+			//attachmentModelFilename = g_pAnarchyManager->NormalizeModelFilename(attachmentModelFilename);
+
+			/*
+			// PLAN B (for now)
+			// If model exists ANYWHERE on the model, remove ALL instances of it.
+			bool bDidRemove = false;
+			C_DynamicProp* pDPet = dynamic_cast<C_DynamicProp*>(C_BaseEntity::Instance(pPet->iEntityIndex));
+			C_BaseEntity* pExistingProp = HasChildModel(pDPet, attachmentModelFilename);
+			while (pExistingProp)
+			{
+				// remove it...
+				bDidRemove = true;
+				engine->ClientCmd(VarArgs("removeobject %i;\n", pExistingProp->entindex()));	// servercmdfix , false);
+				DevMsg("Removed existing attached prop.\n");
+				pExistingProp = NULL;// HasChildModel(pDPet, attachmentModelFilename);// removing objects is not syncronous. :(
+			}
+
+			// Now remove ALL instances of it from all bookeeping
+			if (bDidRemove)
+			{
+				_PetRemoveAttachedModel(pPet, "", attachmentModelFilename);
+			}
+
+			_PetAddAttachment(pPet, attachment_name, attachmentModelFilename);	// bookeeping
+			*/
+
+			engine->ClientCmd(VarArgs("testsetpetattach %i %i \"%s\";\n", pShortcut->entindex(), pPet->iEntityIndex, attachment_name.c_str()));
+		}
+	}
+}
+ConCommand testdopetattach("testdopetattach", TestDoPetAttach, "TEST Usage: internal use only. Attaches the current model you are moving to your PET avatar. Should only be used from the buildmode menu.", FCVAR_HIDDEN);
+
+
+void TestPetOutfitStrip(const CCommand &args)
+{
+	bool bAlsoRemoveEntities = false;
+	pet_t* pPet = g_pAnarchyManager->GetPlayAsPet();
+	if (pPet)
+	{
+		pPet->outfitId = "";
+		C_DynamicProp* pParent = dynamic_cast<C_DynamicProp*>(C_BaseEntity::Instance(pPet->iEntityIndex));
+
+		std::vector<C_BaseEntity*> victims;
+
+		// Get the first child of the parent entity
+		C_BaseEntity* pChild = pParent->FirstMoveChild();
+		while (pChild)
+		{
+			const model_t* pModel = pChild->GetModel();
+			if (pModel)
+			{
+				victims.push_back(pChild);
+			}
+
+			// Move to the next sibling
+			pChild = pChild->NextMovePeer();
+		}
+
+		for (unsigned int i = 0; i < victims.size(); i++ )
+		{
+			// remove it...
+			//engine->ClientCmd(VarArgs("removeobject %i;\n", victims[i]->entindex()));
+			engine->ClientCmd(VarArgs("setparent %i;\n", victims[i]->entindex()));
+		}
+	}
+}
+ConCommand testpetoutfitstrip("testpetoutfitstrip", TestPetOutfitStrip, "TESTJust for testing for now. Removes all of the attachments on the play-as-pet.", FCVAR_HIDDEN);
+
+
+
+void DoPetAttach(const CCommand &args)
+{
+	//C_BaseEntity* pPetEntity = (C_BaseEntity*)g_pAnarchyManager->GetPlayAsPetEntity();
+
+	pet_t* pPet = g_pAnarchyManager->GetPlayAsPet();
+	if (pPet)
+	{
+		std::string attachment_name = (args.ArgC() > 1) ? args[1] : "rhand";//"head";
+		bool bIsToggle = (args.ArgC() > 2) ? (Q_atoi(args[2]) != 0) : false;
+
+		C_PropShortcutEntity* pShortcut = g_pAnarchyManager->GetMetaverseManager()->GetSpawningObjectEntity();
+
+		// check if this model is already attached. if it is, then detatch it instead.
+		//const model_t* pModel = pShortcut->GetModel();
+		//if (pModel)
+		if (pShortcut)
+		{
+			//std::string attachmentModelFilename = modelinfo->GetModelName(pModel);
+			//std::string attachmentModelFilename = STRING(pShortcut->GetModelName());
+			std::string attachmentModelFilename = modelinfo->GetModelName(pShortcut->GetModel());
+			//std::string attachmentModelFilename = STRING(((C_BaseEntity*)pShortcut)->GetModelName());
+			attachmentModelFilename = g_pAnarchyManager->NormalizeModelFilename(attachmentModelFilename);
+
+			// PLAN B (for now)
+			// If model exists ANYWHERE on the model, remove ALL instances of it.
+			bool bDidRemove = false;
+			C_DynamicProp* pDPet = dynamic_cast<C_DynamicProp*>(C_BaseEntity::Instance(pPet->iEntityIndex));
+			C_BaseEntity* pExistingProp = HasChildModel(pDPet, attachmentModelFilename);
+			while (pExistingProp)
+			{
+				// remove it...
+				bDidRemove = true;
+				engine->ClientCmd(VarArgs("removeobject %i;\n", pExistingProp->entindex()));	// servercmdfix , false);
+				DevMsg("Removed existing attached prop.\n");
+				pExistingProp = NULL;// HasChildModel(pDPet, attachmentModelFilename);// removing objects is not syncronous. :(
+			}
+
+			// Now remove ALL instances of it from all bookeeping
+			if (bDidRemove)
+			{
+				_PetRemoveAttachedModel(pPet, "", attachmentModelFilename);
+			}
+
+			if (!bDidRemove || !bIsToggle)
+			{
+				_PetAddAttachment(pPet, attachment_name, attachmentModelFilename);	// bookeeping
+
+				engine->ClientCmd(VarArgs("setpetattach %i %i \"%s\";\n", pShortcut->entindex(), pPet->iEntityIndex, attachment_name.c_str()));
+			}
+		}
+	}
+}
+ConCommand dopetattach("dopetattach", DoPetAttach, "Usage: internal use only. Attaches the current model you are moving to your PET avatar. Should only be used from the buildmode menu.", FCVAR_HIDDEN);
+
+KeyValues* getPetAttachment(KeyValues* models, const std::string& petModelFilename, const std::string& attachmentName, const std::string& attachmentModelFilename)
+{
+	for (KeyValues *model = models->GetFirstSubKey(); model; model = model->GetNextKey())
+	{
+		if (model->GetString("file") == petModelFilename)
+		{
+			KeyValues* attachments = model->FindKey("attachments");
+			for (KeyValues *attachment = attachments->GetFirstSubKey(); attachment; attachment = attachment->GetNextKey())
+			{
+				if (attachment->GetString("name") == attachmentName)
+				{
+					KeyValues* modelsSubKey = attachment->FindKey("models");
+					for (KeyValues *modelSub = modelsSubKey->GetFirstSubKey(); modelSub; modelSub = modelSub->GetNextKey())
+					{
+						if (modelSub->GetString("file") == attachmentModelFilename)
+						{
+							return modelSub;
+						}
+					}
+				}
+			}
+		}
+	}
+	return NULL;
+}
+
+std::map<std::string, KeyValues*> findAllPetAttachments(KeyValues* models, const std::string& petModelFilename, const std::string& attachmentModelFilename)
+{
+	std::map<std::string, KeyValues*> matches;
+	for (KeyValues *model = models->GetFirstSubKey(); model; model = model->GetNextKey())
+	{
+		if (model->GetString("file") == petModelFilename)
+		{
+			KeyValues* attachments = model->FindKey("attachments");
+			for (KeyValues *attachment = attachments->GetFirstSubKey(); attachment; attachment = attachment->GetNextKey())
+			{
+				KeyValues* modelsSubKey = attachment->FindKey("models");
+				for (KeyValues *modelSub = modelsSubKey->GetFirstSubKey(); modelSub; modelSub = modelSub->GetNextKey())
+				{
+					if (modelSub->GetString("file") == attachmentModelFilename)
+					{
+						matches[std::string(attachment->GetString("name"))] = modelSub;
+					}
+				}
+			}
+		}
+	}
+
+	return matches;
+}
+
+void PetFlag(const CCommand &args)
+{
+	C_PropShortcutEntity* pShortcut = NULL;
+	C_BaseEntity* pBaseEntity = C_BaseEntity::Instance(g_pAnarchyManager->GetSelectorTraceEntityIndex());
+	if (pBaseEntity)
+		pShortcut = dynamic_cast<C_PropShortcutEntity*>(pBaseEntity);
+
+	if (!pShortcut)
+	{
+		float flMaxRange = -1;
+		object_t* pObject = g_pAnarchyManager->GetInstanceManager()->GetNearestObjectToPlayerLook(NULL, flMaxRange);
+		if (pObject->spawned)
+		{
+			pBaseEntity = C_BaseEntity::Instance(pObject->entityIndex);
+			if (pBaseEntity)
+				pShortcut = dynamic_cast<C_PropShortcutEntity*>(pBaseEntity);
+		}
+	}
+
+	if (pShortcut)
+	{
+		DevMsg("TODO: Write to arcade_user/pet_library.txt\n");
+	}
+}
+ConCommand petflag("petflag", PetFlag, "Flag the object under your crosshair as a pet.");
+
+void DoPetOutfitStrip(pet_t* pPet)
+{
+
+	//_PetRemoveAllAttachments(true);
+	bool bAlsoRemoveEntities = true;
+
+	//C_BaseEntity* pPetEntity = (C_BaseEntity*)g_pAnarchyManager->GetPlayAsPetEntity();
+	//pet_t* pPet = g_pAnarchyManager->GetPlayAsPet();
+	if (pPet)
+	{
+		pPet->outfitId = "";
+		C_DynamicProp* pDPet = dynamic_cast<C_DynamicProp*>(C_BaseEntity::Instance(pPet->iEntityIndex));
+
+		// Iterate over each attachment name
+		for (auto& pair : pPet->attachments) {
+			// Reverse iterate over the vector of filenames
+			for (auto rit = pair.second.rbegin(); rit != pair.second.rend(); ++rit) {
+				// Call removeAttachment for each filename, using reverse iterators to avoid affecting iteration
+
+				std::string attachmentModelFilename = *rit;
+				if (bAlsoRemoveEntities)
+				{
+					bool bDidRemove = false;
+					DevMsg("attachment: %s\n", attachmentModelFilename.c_str());
+					C_BaseEntity* pExistingProp = HasChildModel(pDPet, *rit);
+					while (pExistingProp)
+					{
+						// remove it...
+						bDidRemove = true;
+						engine->ClientCmd(VarArgs("removeobject %i;\n", pExistingProp->entindex()));	// servercmdfix , false);
+						DevMsg("Removed existing attached prop.\n");
+						pExistingProp = NULL;// HasChildModel(pDPet, attachmentModelFilename);// removing objects is not syncronous. :(
+					}
+				}
+
+				_PetRemoveAttachedModel(pPet, pair.first, attachmentModelFilename);
+			}
+		}
+	}
+}
+
+void PetOutfitStrip(const CCommand &args)
+{
+	pet_t* pPet = g_pAnarchyManager->GetPlayAsPet();
+	if (pPet)
+	{
+		DoPetOutfitStrip(pPet);
+	}
+}
+ConCommand petoutfitstrip("petoutfitstrip", PetOutfitStrip, "Just for testing for now. Removes all of the attachments on the play-as-pet.");
+
+void PetOutfitSave(const CCommand &args)
+{
+	//C_BaseEntity* pPetEntity = (C_BaseEntity*)g_pAnarchyManager->GetPlayAsPetEntity();
+	pet_t* pPet = g_pAnarchyManager->GetPlayAsPet();
+	if (pPet)
+	{
+		C_BaseEntity* pPetEntity = C_BaseEntity::Instance(pPet->iEntityIndex);
+		//const model_t* pPetModel = pPetEntity->GetModel();
+		//if (pPetModel)
+		//{
+			//std::string petModelFilename = g_pAnarchyManager->NormalizeModelFilename(modelinfo->GetModelName(pPetModel));
+			//std::string petModelFilename = g_pAnarchyManager->NormalizeModelFilename(STRING(pPetEntity->GetModelName()));
+			std::string petModelFilename = g_pAnarchyManager->NormalizeModelFilename(modelinfo->GetModelName(pPetEntity->GetModel()));
+			//std::string petModelFilename = g_pAnarchyManager->NormalizeModelFilename(STRING(((C_BaseEntity*)pPetEntity)->GetModelName()));
+			//pet_t* pPet = g_pAnarchyManager->GetPetByEntIndex(pPetEntity->entindex());
+			std::string outfitId = (args.ArgC() > 1) ? args[1] : pPet->outfitId;
+			// FIXME: Validate outfitId here.
+			if (outfitId == "")
+			{
+				return;
+			}
+
+			pPet->outfitId = outfitId;
+
+			//void MapToKeyValues(const std::map<std::string, std::vector<std::string>>& attachments, KeyValues* pRoot) {
+			KeyValues* pFile;
+			KeyValues* pAttachment;
+			KeyValues* pModels;
+			KeyValues* pOutfit = new KeyValues("outfit");
+			KeyValues* pAttachments = pOutfit->FindKey("attachments", true);
+			// Iterate over the map
+			for (const auto& pair : pPet->attachments) {
+				// Create a new KeyValues node for this attachment name
+				pAttachment = pAttachments->CreateNewKey();//new KeyValues(pair.first.c_str());
+				pAttachment->SetString("name", pair.first.c_str());
+				pModels = pAttachment->FindKey("models", true);
+				// Iterate over the vector associated with this attachment name
+				for (const std::string& filename : pair.second) {
+					// Add each filename as a child KeyValues node under the current attachment node
+					pFile = pModels->CreateNewKey();
+					pFile->SetString("file", filename.c_str());
+				}
+			}
+
+			//std::string outfitId = pPet->outfitId;//(args.ArgC() > 1) ? args[1] : pPet->outfitId;
+			//if (outfitId == "")
+				//outfitId = "default";
+			//pPet->outfitId = outfitId;
+
+			std::string petModelHash = g_pAnarchyManager->GenerateLegacyHash(petModelFilename.c_str());
+			std::string filename = VarArgs("pets/%s/outfits/%s.txt", petModelHash.c_str(), outfitId.c_str());
+
+			g_pFullFileSystem->CreateDirHierarchy(VarArgs("pets/%s/outfits", petModelHash.c_str()), "DEFAULT_WRITE_PATH");
+
+			if (pOutfit->SaveToFile(g_pFullFileSystem, filename.c_str(), "DEFAULT_WRITE_PATH"))
+			{
+				DevMsg("Saved %s\n", filename.c_str());
+			}
+		//}
+	}
+}
+ConCommand petoutfitsave("petoutfitsave", PetOutfitSave, "Saves the outfit on the current play-as-pet. (Generates a new outfitid if one is not given.)");
+
+void PetOutfitDelete(const CCommand&args)
+{
+	if (args.ArgC() < 2)	// we MUST be given an outfit ID
+		return;
+
+	// Get the filename (under DEFAULT_WRITE_PATH) we are removing...
+	//C_BaseEntity* pPetEntity = (C_BaseEntity*)g_pAnarchyManager->GetPlayAsPetEntity();
+	pet_t* pPet = g_pAnarchyManager->GetPlayAsPet();
+	if (pPet)
+	{
+		C_BaseEntity* pPetEntity = C_BaseEntity::Instance(pPet->iEntityIndex);
+		//const model_t* pPetModel = pPetEntity->GetModel();
+		//if (pPetModel)
+		//{
+			//std::string petModelFilename = g_pAnarchyManager->NormalizeModelFilename(modelinfo->GetModelName(pPetModel));
+			//std::string petModelFilename = g_pAnarchyManager->NormalizeModelFilename(STRING(pPetEntity->GetModelName()));
+			std::string petModelFilename = g_pAnarchyManager->NormalizeModelFilename(modelinfo->GetModelName(pPetEntity->GetModel()));
+			//std::string petModelFilename = g_pAnarchyManager->NormalizeModelFilename(STRING(((C_BaseEntity*)pPetEntity)->GetModelName()));
+
+			std::string petModelHash = g_pAnarchyManager->GenerateLegacyHash(petModelFilename.c_str());
+			std::string outfitId = args[1];
+
+			if (pPet->outfitId == outfitId)
+			{
+				pPet->outfitId = "";
+			}
+
+			std::string petFile = VarArgs("%s/outfits/%s.txt", petModelHash.c_str(), outfitId.c_str());
+
+			// Make sure the filename isn't jumping folders...
+			if (petFile == "" || petFile.find("..") != std::string::npos)	// only if a file is found and do **not** allow jumping up from here, as we are about to delete a file.
+				return;
+			
+			// Confirm that the BSP is in aarcade_user/download/maps/[mapFile].bsp
+			if (!g_pFullFileSystem->FileExists(VarArgs("pets/%s", petFile.c_str()), "DEFAULT_WRITE_PATH"))
+				return;
+
+			// FIXME: TODO: Explicity confirm that the file exists in the **absolute** path that aligns with the DEFAULT_WRITE_PATH. (The above check *might* be doing that already.)
+
+			// Remove the TXT file
+			g_pFullFileSystem->RemoveFile(VarArgs("pets/%s", petFile.c_str()), "DEFAULT_WRITE_PATH");
+			g_pAnarchyManager->AddToastMessage(VarArgs("Removed pet outfit pets/%s", petFile.c_str()));
+		//}
+	}
+}
+ConCommand petoutfitdelete("petoutfitdelete", PetOutfitDelete, "Interal use only. Removes the specified outfit.", FCVAR_HIDDEN);
+
+void PetOutfitLoad(const CCommand &args)
+{
+	if (args.ArgC() < 2)
+	{
+		return;
+	}
+
+	//DoPetOutfitStrip();
+
+	//pet_t* pPet = g_pAnarchyManager->GetPlayAsPet();
+	bool bWasGivenIndex = (args.ArgC() > 2);
+	pet_t* pPet = (bWasGivenIndex) ? g_pAnarchyManager->GetPetByEntIndex(Q_atoi(args[2])) : g_pAnarchyManager->GetPlayAsPet();
+
+	if (pPet)
+	{
+		DoPetOutfitStrip(pPet);
+
+		C_BaseEntity* pPetEntity = C_BaseEntity::Instance(pPet->iEntityIndex);
+		std::string petModelFilename = modelinfo->GetModelName(pPetEntity->GetModel());
+		petModelFilename = g_pAnarchyManager->NormalizeModelFilename(petModelFilename);
+		std::string attachmentName;
+		std::string petModelHash = g_pAnarchyManager->GenerateLegacyHash(petModelFilename.c_str());
+
+		std::string outfitId = args[1];
+		pPet->outfitId = outfitId;
+
+		KeyValues* kv = new KeyValues("outfit");
+		if (kv->LoadFromFile(g_pFullFileSystem, VarArgs("pets/%s/outfits/%s.txt", petModelHash.c_str(), outfitId.c_str()), "DEFAULT_WRITE_PATH"))
+		{
+			for (KeyValues *subKey = kv->GetFirstSubKey(); subKey != nullptr; subKey = subKey->GetNextKey())
+			{
+				if (!Q_stricmp(subKey->GetName(), "attachments"))
+				{
+					for (KeyValues *attachment = subKey->GetFirstSubKey(); attachment != nullptr; attachment = attachment->GetNextKey())
+					{
+						attachmentName = attachment->GetString("name");
+						KeyValues *models = attachment->FindKey("models");
+						if (models)
+						{
+							for (KeyValues *model = models->GetFirstSubKey(); model != nullptr; model = model->GetNextKey())
+							{
+								engine->ClientCmd(VarArgs("petattach \"%s\" %i;", model->GetString("file"), pPet->iEntityIndex));
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+ConCommand petoutfitload("petoutfitload", PetOutfitLoad, "Saves the outfit on the current play-as-pet. (Generates a new outfitid if one is not given.)");
+
+void PetPlayAnimRaw(const CCommand &args)
+{
+	if (args.ArgC() < 2)
+		return;
+
+	std::string sequenceName = args[1];
+
+	/*
+	pet_t* pPet = (args.ArgC()>2) ? g_pAnarchyManager->GetPetByEntIndex(Q_atoi(args[2])) : g_pAnarchyManager->GetPlayAsPet();
+	if (!pPet) {
+		pPet = g_pAnarchyManager->GetNearestPetToPlayerLook();
+	}
+
+	if (!pPet) {
+		return;
+	}*/
+
+	bool bWasGivenIndex = (args.ArgC() > 2);
+	pet_t* pPet = (bWasGivenIndex) ? g_pAnarchyManager->GetPetByEntIndex(Q_atoi(args[2])) : g_pAnarchyManager->GetPlayAsPet();
+	if (!pPet) {
+		pPet = g_pAnarchyManager->GetNearestPetToPlayerLook();
+	}
+
+	if (!pPet) {
+		return;
+	}
+
+	//pPet->iState = AAPETSTATE_RUN;
+	//std::string realSequenceTitle = sequenceName;//pPet->pConfigKV->GetString("run");
+	C_DynamicProp* pProp = dynamic_cast<C_DynamicProp*>(C_BaseEntity::Instance(pPet->iEntityIndex));
+	if (pProp)
+	{
+		g_pAnarchyManager->PlaySequenceRegularOnProp(pProp, sequenceName.c_str());
+		pPet->iCurSequence = pProp->LookupSequence(sequenceName.c_str());
+	}
+}
+ConCommand petplayanimraw("petplayanimraw", PetPlayAnimRaw, "Plays the exact sequence on the pet using the entity index. (Or nearest pet if -1 index specified. Or the play-as pet if index NOT specified.)"); //(Or the play-as pet if no pet index specified. Or nearest pet if neither.)");
+
+void PetBehavior(const CCommand &args)
+{
+	if (args.ArgC() < 2)
+		return;
+
+	int iBehavior = Q_atoi(args[1]);
+
+	bool bWasGivenIndex = (args.ArgC() > 2);
+	pet_t* pPet = (bWasGivenIndex) ? g_pAnarchyManager->GetPetByEntIndex(Q_atoi(args[2])) : g_pAnarchyManager->GetPlayAsPet();
+	if (!pPet) {
+		pPet = g_pAnarchyManager->GetNearestPetToPlayerLook();
+	}
+
+	if (!pPet) {
+		return;
+	}
+
+	pPet->iBehavior = iBehavior;
+}
+ConCommand petbehavior("petbehavior", PetBehavior, "Sets the behavior on the pet using the entity index. (Or nearest pet if -1 index specified. Or the play-as pet if index NOT specified.)");
+
+void PetUpdate(const CCommand &args)
+{
+	//if (args.ArgC() < 4)
+	//	return;
+
+	//bool bWasGivenIndex = (args.ArgC() > 2);
+	int iEntityIndex = Q_atoi(args[1]);
+	pet_t* pPet = (iEntityIndex >= 0) ? g_pAnarchyManager->GetPetByEntIndex(iEntityIndex) : g_pAnarchyManager->GetPlayAsPet();
+
+	if (!pPet) {
+		return;
+	}
+
+	KeyValues* pConfigKV = pPet->pConfigKV;
+
+	std::string fieldName = args[2];
+	if (fieldName == "pos")
+	{
+		// pos
+		UTIL_StringToVector(pPet->pos.Base(), args[3]);
+		pConfigKV->SetString("pos", args[3]);
+	}
+	else if (fieldName == "rot")
+	{
+		// rot
+		UTIL_StringToVector(pPet->rot.Base(), args[3]);
+		pConfigKV->SetString("rot", args[3]);
+	}
+	else if (fieldName == "scale")
+	{
+		// scale
+		float flScale = Q_atof(args[3]);
+		pConfigKV->SetString("scale", VarArgs("%f %f %f", flScale, flScale, flScale));
+		engine->ClientCmd(VarArgs("setscale %i %f;\n", pPet->iEntityIndex, flScale));
+	}
+	else if (fieldName == "idle")
+	{
+		// idle
+		pConfigKV->SetString("idle", args[3]);
+	}
+	else if (fieldName == "run")
+	{
+		// run
+		pConfigKV->SetString("run", args[3]);
+	}
+	else if (fieldName == "walk")
+	{
+		// walk
+		pConfigKV->SetString("walk", args[3]);
+	}
+	else if (fieldName == "fall")
+	{
+		// fall
+		pConfigKV->SetString("fall", args[3]);
+	}
+	else if (fieldName == "runspeed")
+	{
+		// runspeed
+		pConfigKV->SetString("runspeed", args[3]);
+	}
+	else if (fieldName == "walkspeed")
+	{
+		// walkspeed
+		pConfigKV->SetString("walkspeed", args[3]);
+	}
+	else if (fieldName == "near")
+	{
+		// near
+		pConfigKV->SetString("near", args[3]);
+	}
+	else if (fieldName == "far")
+	{
+		// far
+		pConfigKV->SetString("far", args[3]);
+	}
+}
+ConCommand petupdate("petupdate", PetUpdate, "Updates the specified attribute on the pet using the entity index. petupdate INDEX FIELDNAME VALUE");
+
+void PetPlay(const CCommand &args)
+{
+	pet_t* pPlayAsPet = g_pAnarchyManager->GetPlayAsPet();
+	if (pPlayAsPet)
+	{
+		g_pAnarchyManager->SetPlayAsPet(null);
+
+		//"EXIT PLAYASPETMODE"	// also when you destroy the pet w/o calling petplaystop, and now also in PetPlay
+		engine->ClientCmd("set_prop_vis -1 1;");
+		engine->ClientCmd(VarArgs("set_prop_vis %i 1;", pPlayAsPet->iEntityIndex));
+	}
+
+	pet_t* pPet = null;
+	int iEntityIndex = (args.ArgC() > 1) ? Q_atoi(args[1]) : -1;
+	if (iEntityIndex >= 0)
+	{
+		pPet = g_pAnarchyManager->GetPetByEntIndex(iEntityIndex);
+	}
+
+	if (!pPet)
+	{
+		pPet = g_pAnarchyManager->GetNearestPetToPlayerLook();
+	}
+
+	if (pPet)// && !g_pAnarchyManager->GetPlayAsPet())
+	{
+		// Teleport us to the pet
+		engine->ClientCmd(VarArgs("teleport_player_to_entity %i %f %f %f;", pPet->iEntityIndex, pPet->pos.x, pPet->pos.y, pPet->pos.z));
+
+		/*C_BaseEntity* pPetEntity = C_BaseEntity::Instance(pPet->iEntityIndex);
+		// Get the target entity's origin and angles
+		Vector targetOrigin = pPetEntity->GetAbsOrigin();
+		QAngle targetAngles = pPetEntity->GetAbsAngles();
+
+		// Prepare a teleportation structure
+		Vector vecVelocity(0, 0, 0);  // Stop all motion
+		QAngle vecAngles = targetAngles;  // Optionally keep target entity's angles
+
+		// Use the Teleport method from the CBaseEntity class
+		C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
+		pPlayer->Teleport(&targetOrigin, &vecAngles, &vecVelocity);*/
+		
+		// Set the pet as our PlayAsPet pet.
+
+
+		/*ConVar* pConVar = cvar->FindVar("cam_idealdist");
+		float flVal = pConVar->GetFloat();
+		flVal += 10.0f;
+		if (flVal >= 1000.0f)
+			flVal = 1000.0f;
+
+		engine->ClientCmd(VarArgs("cam_idealdist %f; thirdperson;", flVal));*/
+		engine->ClientCmd("thirdperson;");
+
+
+
+
+		g_pAnarchyManager->SetPlayAsPet(pPet);
+
+		//"ENTER PLAYASPET MODE"
+		engine->ClientCmd("set_prop_vis -1 0;");
+		engine->ClientCmd(VarArgs("set_prop_vis %i 1;", pPet->iEntityIndex));
+
+		// TODO: Other stuff, like make sure we're 3rd person? Turn on toggle_lookspot?? Not sure yet.
+		DevMsg("System ready...\n");
+	}
+}
+ConCommand petplay("petplay", PetPlay, "Teleports you to the specified pet (or nearest pet to your aim) and starts playing as it.", FCVAR_NONE);
+
+void PetPlayAsNext(const CCommand &args)
+{
+	pet_t* pPlayAsPet = g_pAnarchyManager->GetPlayAsPet();
+	std::vector<pet_t*> pets = g_pAnarchyManager->GetAllLivingPets();
+	pet_t* pPetTest = null;
+	bool bDidFind = false;
+
+	if (!pPlayAsPet) {
+		if (pets.size() > 0)
+		{
+			bDidFind = true;
+			pPetTest = pets[0];
+		}
+	}
+	else
+	{
+		unsigned int uFoundAt = 0;
+		for (unsigned int u = 0; u < pets.size(); u++) {
+			pPetTest = pets[u];
+			if (bDidFind) {
+				break;
+			}
+			else if (pPlayAsPet && pPetTest == pPlayAsPet) {
+				// pointers match.
+				bDidFind = true;
+				uFoundAt = u;
+				pPetTest = null;
+			}
+		}
+
+		if (bDidFind && !pPetTest && pets.size() > 1)
+		{
+			pPetTest = pets[0];
+		}
+	}
+
+	if (!bDidFind || !pPetTest)
+	{
+		DevMsg("Could not find a pet to change to.\n");
+		return;
+	}
+
+	// The next pet has been found.
+	engine->ClientCmd(VarArgs("petplay %i;", pPetTest->iEntityIndex));
+}
+ConCommand petplayasnext("petplayasnext", PetPlayAsNext, "Switches to play as the NEXT pet.", FCVAR_NONE);
+
+void PetPlayAsPrev(const CCommand &args)
+{
+	pet_t* pPlayAsPet = g_pAnarchyManager->GetPlayAsPet();
+	std::vector<pet_t*> pets = g_pAnarchyManager->GetAllLivingPets();
+	pet_t* pPetTest = null;
+	bool bDidFind = false;
+
+	if (!pPlayAsPet) {
+		if (pets.size() > 0)
+		{
+			bDidFind = true;
+			pPetTest = pets[pets.size()-1];
+		}
+	}
+	else
+	{
+		for (unsigned int u = 0; u < pets.size(); u++) {
+			pPetTest = pets[u];
+			if (pPlayAsPet && pPetTest == pPlayAsPet) {
+				// pointers match.
+				// get the previous index.
+				if (u > 0)
+				{
+					pPetTest = pets[u - 1];
+				}
+				else if (pets.size() > 1)
+				{
+					pPetTest = pets[pets.size() - 1];
+				}
+				bDidFind = true;
+				break;
+			}
+		}
+	}
+
+	if (!bDidFind || !pPetTest)
+	{
+		DevMsg("Could not find a pet to change to.\n");
+		return;
+	}
+
+	// The next pet has been found.
+	engine->ClientCmd(VarArgs("petplay %i;", pPetTest->iEntityIndex));
+}
+ConCommand petplayasprev("petplayasprev", PetPlayAsPrev, "Switches to play as the PREVIOUS pet.", FCVAR_NONE);
+
+void PetRemove(const CCommand &args)
+{
+	pet_t* pPet = null;
+	int iEntityIndex = (args.ArgC() > 1) ? Q_atoi(args[1]) : -1;
+	if (iEntityIndex >= 0)
+	{
+		pPet = g_pAnarchyManager->GetPetByEntIndex(iEntityIndex);
+	}
+
+	if (!pPet)
+	{
+		pPet = g_pAnarchyManager->GetNearestPetToPlayerLook();
+	}
+
+	if (pPet)
+	{
+		g_pAnarchyManager->DestroyPet(pPet->iEntityIndex);
+	}
+}
+ConCommand petremove("petremove", PetRemove, "Removes the pet w/ the specified entity index (or the one nearest your crosshair.)", FCVAR_NONE);
+
+void PetPlayStop(const CCommand &args)
+{
+	pet_t* pPet = g_pAnarchyManager->GetPlayAsPet();
+	if (pPet)
+	{
+		g_pAnarchyManager->SetPlayAsPet(null);
+
+		//"EXIT PLAYASPETMODE"	// also when you destroy the pet w/o calling petplaystop
+		engine->ClientCmd("set_prop_vis -1 1;");
+		engine->ClientCmd(VarArgs("set_prop_vis %i 1;", pPet->iEntityIndex));
+	}
+}
+ConCommand petplaystop("petplaystop", PetPlayStop, "Exits play-as-pet mode.", FCVAR_NONE);
+
+/*
+bool PetRemoveAttachedModel(std::string attachmentName, std::string attachmentModelFilename)
+{
+	C_BaseEntity* pPet = (C_BaseEntity*)g_pAnarchyManager->GetPlayAsPetEntity();
+	if (pPet)
+	{
+		int iPetEntityIndex = pPet->entindex();
+		pet_t* pet = g_pAnarchyManager->GetPetByEntIndex(iPetEntityIndex);
+
+		auto it = pet->attachments.find(attachmentName);
+		if (it != pet->attachments.end()) {
+			std::vector<std::string>& filenames = it->second;
+			auto newEnd = std::remove(filenames.begin(), filenames.end(), attachmentModelFilename);
+
+			// Resize the vector to remove the undefined elements
+			filenames.erase(newEnd, filenames.end());
+
+			// Optional: Remove the key if no attachments are left
+			if (filenames.empty()) {
+				pet->attachments.erase(it);
+			}
+			return true;
+		}
+		else {
+			// Attachment name not found.
+		}
+	}
+	return false;
+}
+bool PetRemoveAllAttachedModels()
+{
+}*/
+
+/*
+bool _PetHasAttachment(pet_t* pPet, const std::string& attachmentName, const std::string& attachmentModelFilename) {
+	// Search for the attachment name in the map
+	auto it = pPet->attachments.find(attachmentName);
+	if (it != pPet->attachments.end()) {
+		// Get the vector of filenames
+		const std::vector<std::string>& filenames = it->second;
+
+		// Check if the model filename exists in the vector
+		if (std::find(filenames.begin(), filenames.end(), attachmentModelFilename) != filenames.end()) {
+			return true;
+		}
+	}
+
+	return false;
+}*/
+
+// This is the one that should be bound to a key instead of pet attach. It always is about the play-as pet too.
+void PetWear(const CCommand &args)
+{
+	pet_t* pPet = g_pAnarchyManager->GetPlayAsPet();
+	if (!pPet)
+	{
+		DevMsg("Must be playing as a pet to use this command.\n");
+		g_pAnarchyManager->AddToastMessage("Must be playing as a pet to use this command.");
+		return;
+	}
+
+	C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
+	if (pPlayer)
+	{
+		bool bIsThirdPerson = g_pAnarchyManager->CAM_IsThirdPerson();
+		if (!bIsThirdPerson)
+		{
+			DevMsg("Must be 3rd person to attach to play-as pet.\n");
+			g_pAnarchyManager->AddToastMessage("Must be 3rd person to attach to play-as pet.");
+			engine->ClientCmd(VarArgs("thirdperson; set_prop_vis -1 0; set_prop_vis %i 1;", pPet->iEntityIndex));
+			return;
+		}
+
+		engine->ClientCmd("petattach");
+	}
+}
+ConCommand petwear("pet_wear", PetWear, "Attaches/detaches the object you're looking at to your current play-as pet.");
+
+void PetAttach(const CCommand &args)
+{
+	//pet_t* pPet = g_pAnarchyManager->GetPlayAsPet();
+
+	bool bWasGivenIndex = (args.ArgC() > 2);
+	pet_t* pPet = (bWasGivenIndex) ? g_pAnarchyManager->GetPetByEntIndex(Q_atoi(args[2])) : g_pAnarchyManager->GetPlayAsPet();
+
+	if (!pPet)
+		return;
+
+	std::string attachmentModelFilename = (args.ArgC() > 1) ? args[1] : "";
+	if (attachmentModelFilename == "")
+	{
+		C_BaseEntity* pBaseEntity = C_BaseEntity::Instance(g_pAnarchyManager->GetSelectorTraceEntityIndex());
+		C_PropShortcutEntity* pShortcut = dynamic_cast<C_PropShortcutEntity*>(pBaseEntity);
+		if (!pShortcut)
+		{
+			float flMaxRange = -1;
+			object_t* pObject = g_pAnarchyManager->GetInstanceManager()->GetNearestObjectToPlayerLook(NULL, flMaxRange);
+			if (pObject->spawned)
+			{
+				pBaseEntity = C_BaseEntity::Instance(pObject->entityIndex);
+				if (pBaseEntity)
+					pShortcut = dynamic_cast<C_PropShortcutEntity*>(pBaseEntity);
+			}
+		}
+
+		if (pShortcut)
+		{
+			//const model_t* TheModel = pShortcut->GetModel();
+			//attachmentModelFilename = g_pAnarchyManager->NormalizeModelFilename(modelinfo->GetModelName(TheModel));
+			attachmentModelFilename = modelinfo->GetModelName(pShortcut->GetModel());
+			//attachmentModelFilename = STRING(((C_BaseEntity*)pShortcut)->GetModel());
+		}
+	}
+	attachmentModelFilename = g_pAnarchyManager->NormalizeModelFilename(attachmentModelFilename);
+
+	//DevMsg("Pet Attachment Model Filename: %s\n", attachmentModelFilename.c_str());
+
+	// get a reference to the current pet & to the object under the crosshair
+	//C_BaseEntity* pPet = (C_BaseEntity*)g_pAnarchyManager->GetPlayAsPetEntity();
+	if (attachmentModelFilename != "")
+	{
+		//int iPetEntityIndex = pPet->iEntityIndex;
+		//pet_t* pet = g_pAnarchyManager->GetPetByEntIndex(iPetEntityIndex);
+
+		C_BaseEntity* pPetEntity = C_BaseEntity::Instance(pPet->iEntityIndex);
+		//const model_t* TheModel = pPetEntity->GetModel();
+		//std::string petModelFilename = modelinfo->GetModelName(TheModel);
+		//std::string petModelFilename = STRING(pPetEntity->GetModelName());
+		std::string petModelFilename = modelinfo->GetModelName(pPetEntity->GetModel());
+		//std::string petModelFilename = STRING(pPetEntity->GetModelName());
+		petModelFilename = g_pAnarchyManager->NormalizeModelFilename(petModelFilename);
+
+
+
+
+
+
+		/* In order to do dupe removal per-bone, we need to store actual ENTITY references to the models attached to each bone.
+		We CANNOT determine which attachment a model belongs to by traversing the game object, because the same model could be attached multiple times but to different bones. :(
+
+		// DUPE (mostly) with "dopetattach"
+		// check if this model is already attached. if it is, then detatch it instead.
+		C_BaseEntity* pExistingProp = HasChildModel(dynamic_cast<C_DynamicProp*>(pPet), attachmentModelFilename);
+		if (pExistingProp)
+		{
+			// remove it...
+			engine->ClientCmd(VarArgs("removeobject %i;\n", pExistingProp->entindex()));	// servercmdfix , false);
+			DevMsg("Removed existing attached prop.\n");
+
+			_PetRemoveAttachedModel(pet, )
+
+			auto it = pet->attachments.find(attachmentModelFilename);
+			if (it != pet->attachments.end()) {
+				pet->attachments.erase(it);
+			}
+
+			//auto it = std::find(pet->attachments.begin(), pet->attachments.end(), attachmentModelFilename);
+			//if (it != pet->attachments.end()) {
+				pet->attachments.erase(it);
+			//}
+			return;
+		}
+	*/
+
+		// PLAN B (for now)
+		// If model exists ANYWHERE on the model, remove ALL instances of it.
+		bool bDidRemove = false;
+		C_DynamicProp* pDPet = dynamic_cast<C_DynamicProp*>(pPetEntity);
+		C_BaseEntity* pExistingProp = HasChildModel(pDPet, attachmentModelFilename);
+		while (pExistingProp)
+		{
+			// remove it...
+			bDidRemove = true;
+			engine->ClientCmd(VarArgs("removeobject %i;\n", pExistingProp->entindex()));	// servercmdfix , false);
+			DevMsg("Removed existing attached prop.\n");
+			pExistingProp = NULL;// HasChildModel(pDPet, attachmentModelFilename);// removing objects is not syncronous. :(
+		}
+
+		// Now remove ALL instances of it from all bookeeping
+		if (bDidRemove)
+		{
+			_PetRemoveAttachedModel(pPet, "", attachmentModelFilename);
+			return;
+		}
+
+
+
+
+
+		// we will likely perform checks for saved attachments...
+		KeyValues* models = new KeyValues("attachments");
+		if (!models->LoadFromFile(g_pFullFileSystem, "pet_attachments.txt", "DEFAULT_WRITE_PATH"))
+		{
+			models = NULL;
+		}
+
+		// Are we given an attachment name? If so, search for a saved attachment that is bound to it.
+		//bool bChangedAttachmentName = false;
+		KeyValues* pAttachmentKV = NULL;
+		std::string attachmentName = (args.ArgC() > 1) ? args[1] : "";
+		if (attachmentName != "")
+		{
+			if (models)
+			{
+				//KeyValues* models, const std::string& petModelFilename, const std::string& attachmentName, const std::string& attachmentModelFilename)
+				pAttachmentKV = getPetAttachment(models, petModelFilename, attachmentName, attachmentModelFilename);
+			}
+		}
+
+		if (!pAttachmentKV)
+		{
+			// otherwise, find ANY attachments for us that match our pet & model.
+			if (models)
+			{
+				//std::map<std::string, KeyValues*> attachments = findAllPetAttachments(models, petModelFilename, attachmentModelFilename);
+				auto attachments = findAllPetAttachments(models, petModelFilename, attachmentModelFilename);
+				for (auto& pair : attachments) {
+					//bChangedAttachmentName = true;
+					attachmentName = pair.first;
+					pAttachmentKV = pair.second;
+					break;
+				}
+			}
+		}
+
+		if (attachmentName != "" && pAttachmentKV)
+		{
+			_PetAddAttachment(pPet, attachmentName, attachmentModelFilename);	// bookeeping
+
+			Vector pos;
+			UTIL_StringToVector(pos.Base(), pAttachmentKV->GetString("pos", "0 0 0"));
+			QAngle rot;
+			UTIL_StringToVector(rot.Base(), pAttachmentKV->GetString("rot", "0 0 0"));
+			float flScale = pAttachmentKV->GetFloat("scale", 1.0f);
+			engine->ClientCmd(VarArgs("loadpetattach %i \"%s\" \"%s\" %f %f %f %f %f %f %f;", pPet->iEntityIndex, attachmentModelFilename.c_str(), attachmentName.c_str(), pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, flScale));
+		}
+		else
+		{
+			Msg("Attaching models w/o first setting an attachment position in the MOVE OBJECT menu is not yet supported!\n");
+			g_pAnarchyManager->AddToastMessage("Need to manually attach this prop at least once first.");
+		}
+
+		if (models)
+		{
+			models->deleteThis();
+		}
+	}
+}
+ConCommand petattach("petattach", PetAttach, "Attaches the object you're looking at to your Play As Pet pet. Only works if you're playing as a pet.");
+
+void TesterJoint2(const CCommand &args)
+{
+	//C_BaseEntity* pPet = (C_BaseEntity*)g_pAnarchyManager->GetPlayAsPetEntity();
+	pet_t* pPet = g_pAnarchyManager->GetPlayAsPet();
+	if (pPet)
+	{
+		// load the pet attachment save KV.
+		// FIXME: Cache the loading of the pet attachment save KV.
+		KeyValues* pModelAttachments = new KeyValues("attachments");
+		if (pModelAttachments->LoadFromFile(g_pFullFileSystem, "pet_attachments.txt", "DEFAULT_WRITE_PATH"))
+		{
+			std::string petFilename = "models/pets/hackerhaley/pet_hackerhaley.mdl";
+			std::string attachmentFilename = "models\\props\\sithlord\\beer.mdl";
+			std::string attachmentName = "rhand";
+			KeyValues* pAttachmentKV = getPetAttachment(pModelAttachments, petFilename.c_str(), attachmentName, attachmentFilename);
+			if (pAttachmentKV)
+			{
+				Vector pos;
+				UTIL_StringToVector(pos.Base(), pAttachmentKV->GetString("pos", "0 0 0"));
+				QAngle rot;
+				UTIL_StringToVector(rot.Base(), pAttachmentKV->GetString("rot", "0 0 0"));
+				float flScale = pAttachmentKV->GetFloat("scale", 1.0f);
+				pModelAttachments->deleteThis();
+				engine->ClientCmd(VarArgs("loadpetattach %i \"%s\" \"%s\" %f %f %f %f %f %f %f;", pPet->iEntityIndex, attachmentFilename.c_str(), attachmentName.c_str(), pos.x, pos.y, pos.z, rot.x, rot.y, rot.z, flScale));
+			}
+		}
+	}
+}
+ConCommand testerjoint2("testerjoint2", TesterJoint2, "Usage: ");
+
+bool savePetAttachment(const std::string& petModelFilename, const std::string& attachmentName, const std::string& attachmentModelFilename, const std::string& posVector, const std::string& rotQAngle, float flScale)
+{
+	// load the pet attachment save KV.
+	// FIXME: Cache the loading of the pet attachment save KV.
+	KeyValues* models = new KeyValues("attachments");
+	if (!models->LoadFromFile(g_pFullFileSystem, "pet_attachments.txt", "DEFAULT_WRITE_PATH"))
+	{
+		models = new KeyValues("attachments");
+	}
+
+	KeyValues* targetModel = nullptr;
+	for (KeyValues *model = models->GetFirstSubKey(); model; model = model->GetNextKey()) {
+		if (model->GetString("file") == petModelFilename) {
+			targetModel = model;
+			break;
+		}
+	}
+
+	if (!targetModel) {
+		targetModel = models->CreateNewKey();  // Create new model key
+		targetModel->SetString("file", petModelFilename.c_str());
+	}
+
+	KeyValues* attachments = targetModel->FindKey("attachments", true);
+
+	KeyValues* targetAttachment = nullptr;
+	for (KeyValues *attachment = attachments->GetFirstSubKey(); attachment; attachment = attachment->GetNextKey()) {
+		if (attachment->GetString("name") == attachmentName) {
+			targetAttachment = attachment;
+			break;
+		}
+	}
+
+	if (!targetAttachment) {
+		targetAttachment = attachments->CreateNewKey();  // Create new attachment key
+		targetAttachment->SetString("name", attachmentName.c_str());
+	}
+
+	KeyValues* modelsSubKey = targetAttachment->FindKey("models", true);
+	KeyValues* targetModelSub = nullptr;
+
+	for (KeyValues *modelSub = modelsSubKey->GetFirstSubKey(); modelSub; modelSub = modelSub->GetNextKey()) {
+		if (modelSub->GetString("file") == attachmentModelFilename) {
+			targetModelSub = modelSub;
+			break;
+		}
+	}
+
+	if (!targetModelSub) {
+		targetModelSub = modelsSubKey->CreateNewKey();  // Create new model subkey
+		targetModelSub->SetString("file", attachmentModelFilename.c_str());
+	}
+
+	// Set position, rotation, and scale
+	targetModelSub->SetString("pos", posVector.c_str());
+	targetModelSub->SetString("rot", rotQAngle.c_str());
+	targetModelSub->SetFloat("scale", flScale);
+
+	bool bSaved = models->SaveToFile(g_pFullFileSystem, "pet_attachments.txt", "DEFAULT_WRITE_PATH");
+	models->deleteThis();
+	return bSaved;
+}
+
+void SavePetAttach(const CCommand &args)
+{
+	//C_BaseEntity* pPet = (C_BaseEntity*)g_pAnarchyManager->GetPlayAsPetEntity();
+	pet_t* pPet = g_pAnarchyManager->GetPlayAsPet();
+	if (pPet)
+	{
+		C_BaseEntity* pPetEntity = C_BaseEntity::Instance(pPet->iEntityIndex);
+		//const model_t* TheModel = pPetEntity->GetModel();
+		//std::string petModelFilename = modelinfo->GetModelName(TheModel);
+		//std::string petModelFilename = STRING(pPetEntity->GetModelName());
+		std::string petModelFilename = modelinfo->GetModelName(pPetEntity->GetModel());
+		//std::string petModelFilename = STRING(((C_BaseEntity*)pPetEntity)->GetModelName());
+
+		// normalize the model filename
+		/*int iMaxString = petModelFilename.length() + 1;
+		char* petModelFilenameFixed = new char[iMaxString];
+		Q_strncpy(petModelFilenameFixed, petModelFilename.c_str(), iMaxString);
+		V_FixSlashes(petModelFilenameFixed);
+		V_FixDoubleSlashes(petModelFilenameFixed);
+		petModelFilename = petModelFilenameFixed;*/
+		petModelFilename = g_pAnarchyManager->NormalizeModelFilename(petModelFilename);
+
+
+		std::string attachmentName = args[1];
+		std::string attachmentModelFilename = args[2];
+
+		// normalize the model filename
+		/*iMaxString = attachmentModelFilename.length() + 1;
+		char* attachmentModelFilenameFixed = new char[iMaxString];
+		Q_strncpy(attachmentModelFilenameFixed, attachmentModelFilename.c_str(), iMaxString);
+		V_FixSlashes(attachmentModelFilenameFixed);
+		V_FixDoubleSlashes(attachmentModelFilenameFixed);
+		attachmentModelFilename = attachmentModelFilenameFixed;*/
+		attachmentModelFilename = g_pAnarchyManager->NormalizeModelFilename(attachmentModelFilename);
+
+		std::string posVector = VarArgs("%s %s %s", args[3], args[4], args[5]);
+		std::string rotQAngle = VarArgs("%s %s %s", args[6], args[7], args[8]);
+		float flScale = Q_atof(args[9]);
+		if (savePetAttachment(petModelFilename, attachmentName, attachmentModelFilename, posVector, rotQAngle, flScale))
+		{
+			DevMsg("Successfully saved pet attachment to pet_attachments.txt\n");
+		}
+	}
+}
+ConCommand savepetattach("savepetattach", SavePetAttach, "Usage: internal use only.", FCVAR_HIDDEN);
+
+
+void ManualSpawn(const CCommand &args)
+{
+	cvar->FindVar("auto_unspawn_mode")->SetValue(2);	// c_instanceManager will catch this next update cycle & perform the logic - to avoid cmd overflow from doing it on-demand from here.
+}
+ConCommand manualSpawn("manual_spawn", ManualSpawn, "Usage: Manually unspawns all eligible objects, and spawns in any eligible objects as defined by spawn distance & spawn in view.");
+
+void UnspawnAllObjects(const CCommand &args)
+{
+	int iMinSkippedFrames = (args.ArgC() < 2) ? -1 : Q_atoi(args[1]);
+	int iNumUnspawned = g_pAnarchyManager->GetInstanceManager()->UnspawnAllObjects(iMinSkippedFrames);
+	DevMsg("Unspawned %i objects.\n", iNumUnspawned);
+}
+ConCommand unspawnAllObjects("unspawn_all_objects", UnspawnAllObjects, "Usage: Unspawns all of the objects that are already spawned.");
 
 /*void GetIdTime(const CCommand &args)
 {
@@ -4303,48 +5843,97 @@ void cam_cut(const CCommand &args)
 			}
 		}
 		else {
-			DevMsg("USE camera %i \n", camSlot);
+			if (camSlot == -1)
+			{
+				g_pAnarchyManager->ClearAttractMode();
+			}
+			else
+			{
+				DevMsg("USE camera %i \n", camSlot);
 
-			std::string cvarName = VarArgs("camslot%i", camSlot);
-			std::string inputStr = cvar->FindVar(cvarName.c_str())->GetString();
+				std::string cvarName = VarArgs("camslot%i", camSlot);
+				std::string inputStr = cvar->FindVar(cvarName.c_str())->GetString();
 
-			// Find the first space
-			size_t firstSpace = inputStr.find(' ');
+				// Find the first space
+				size_t firstSpace = inputStr.find(' ');
 
-			if (firstSpace != std::string::npos) {
-				// Find the second space, starting the search from the position of the first space
-				size_t secondSpace = inputStr.find(' ', firstSpace + 1);
+				if (firstSpace != std::string::npos) {
+					// Find the second space, starting the search from the position of the first space
+					size_t secondSpace = inputStr.find(' ', firstSpace + 1);
 
-				if (secondSpace != std::string::npos) {
-					position = inputStr.substr(0, secondSpace);
-					rotation = inputStr.substr(secondSpace + 1, std::string::npos);
-					//cvar->FindVar("cabinet_attract_mode_active");
+					if (secondSpace != std::string::npos) {
+						position = inputStr.substr(0, secondSpace);
+						rotation = inputStr.substr(secondSpace + 1, std::string::npos);
+						//cvar->FindVar("cabinet_attract_mode_active");
 
-					int iTransitionType = cvar->FindVar("camcuttype")->GetInt();
-					if (iTransitionType == 0)
-					{
-						//Vector origin = C_BasePlayer::GetLocalPlayer()->EyePosition();
-						Vector goodPosition;
-						UTIL_StringToVector(goodPosition.Base(), position.c_str());
+						int iTransitionType = cvar->FindVar("camcuttype")->GetInt();
+						if (iTransitionType == 0)
+						{
+							//Vector origin = C_BasePlayer::GetLocalPlayer()->EyePosition();
+							Vector goodPosition;
+							UTIL_StringToVector(goodPosition.Base(), position.c_str());
 
-						trace_t tr;
-						UTIL_TraceLine(MainViewOrigin(), goodPosition, CONTENTS_SOLID, NULL, COLLISION_GROUP_NONE, &tr);//MASK_SOLID
-						if (tr.fraction >= 0.9)
-							iTransitionType = 1;
-						else
-							iTransitionType = 2;
+							trace_t tr;
+							UTIL_TraceLine(MainViewOrigin(), goodPosition, CONTENTS_SOLID, NULL, COLLISION_GROUP_NONE, &tr);//MASK_SOLID
+							if (tr.fraction >= 0.9)
+								iTransitionType = 1;
+							else
+								iTransitionType = 2;
+						}
+
+						std::string cmd = VarArgs("set_attract_mode_transform %s %s %i;", position.c_str(), rotation.c_str(), iTransitionType);
+						engine->ClientCmd(cmd.c_str());
+						cvar->FindVar("camcut_attract_mode_active")->SetValue(1);
+						cvar->FindVar("attract_mode_active")->SetValue(1);
 					}
-
-					std::string cmd = VarArgs("set_attract_mode_transform %s %s %i;", position.c_str(), rotation.c_str(), iTransitionType);
-					engine->ClientCmd(cmd.c_str());
-					cvar->FindVar("camcut_attract_mode_active")->SetValue(1);
-					cvar->FindVar("attract_mode_active")->SetValue(1);
 				}
 			}
 		}
 	}
 }
 ConCommand camCut("camcut", cam_cut, "Usage: Parameters are position then rotation.");
+
+void cmd_pet_next(const CCommand &args)
+{
+	engine->ClientCmd("petplayasnext");
+}
+ConCommand cmdPetNext("cmd_pet_next", cmd_pet_next, "Usage: Jump to the next pet.");
+
+void cmd_pet_prev(const CCommand &args)
+{
+	engine->ClientCmd("petplayasprev");
+}
+ConCommand cmdPetPrev("cmd_pet_prev", cmd_pet_prev, "Usage: Jump to the previous pet.");
+
+void cmd_pet_target(const CCommand &args)
+{
+	engine->ClientCmd("pet_target");
+}
+ConCommand cmdPetTarget("cmd_pet_target", cmd_pet_target, "Usage: Sets the point you are looking at as the place 'follow' pets want to go to. (Set at your own feet to make them follow you instead.)");
+
+void cmd_pet_remove_all(const CCommand &args)
+{
+	engine->ClientCmd("destroy_all_pets");
+}
+ConCommand cmdPetRemoveAll("cmd_pet_remove_all", cmd_pet_remove_all, "Usage: Unspawns all of the pets that are currently in this world.");
+
+void cmd_pet_wear(const CCommand &args)
+{
+	engine->ClientCmd("pet_wear");
+}
+ConCommand cmdPetWear("cmd_pet_wear", cmd_pet_wear, "Usage: Attaches/detatches the prop you are looking at to your current play-as pet.");
+
+void cmd_lookspot_toggle(const CCommand &args)
+{
+	engine->ClientCmd("toggle_lookspot");
+}
+ConCommand cmdLookspotToggle("cmd_lookspot_toggle", cmd_lookspot_toggle, "Usage: Shows an arrow indicator at your avatar's feet and another indicator of where you are aiming. Useful in 3rd person view.");
+
+void cmd_cam_collision_toggle(const CCommand &args)
+{
+	engine->ClientCmd("toggle cam_collision");
+}
+ConCommand cmdCamCollisionToggle("cmd_cam_collision_toggle", cmd_cam_collision_toggle, "Usage: Toggles 3rd person camera collisions.");
 
 void cmd_vgui_toggle(const CCommand &args)
 {

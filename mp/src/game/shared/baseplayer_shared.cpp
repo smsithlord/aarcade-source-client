@@ -1861,6 +1861,17 @@ void CBasePlayer::SharedSpawn()
 	if(IsLocalPlayer() &&haptics)
 		haptics->LocalPlayerReset();
 #endif
+
+	// Added for Anarchy Arcade
+#ifndef CLIENT_DLL
+	CBasePlayer *pPlayer = UTIL_GetLocalPlayer();
+	if (pPlayer)
+	{
+		edict_t *pClient = engine->PEntityOfEntIndex(pPlayer->entindex());
+		engine->ClientCommand(pClient, "local_player_spawned");
+	}
+#endif
+	// End Added for Anarchy Arcade
 }
 
 

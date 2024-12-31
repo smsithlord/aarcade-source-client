@@ -174,10 +174,33 @@ struct pet_t {
 	int iEntityIndex;
 	KeyValues* pConfigKV;
 	int iState;
+	int iWaterState;
 	int iCurSequence;
+	int iBehavior;
+	//Vector wanderHome;
 	Vector pos;
 	QAngle rot;
+	std::string outfitId;
+	std::map<std::string, std::vector<std::string>> attachments;
+	//std::vector<std::string> attachments;
 	//int iTargetEntityIndex;
+};
+
+enum aaPetState
+{
+	AAPETSTATE_NONE = -1,
+	AAPETSTATE_IDLE,
+	AAPETSTATE_WALK,
+	AAPETSTATE_RUN,
+	AAPETSTATE_FALL
+};
+
+enum aaPetBehavior
+{
+	AAPETBEHAVIOR_NONE = 0,
+	AAPETBEHAVIOR_LOOK,
+	AAPETBEHAVIOR_FOLLOW,
+	AAPETBEHAVIOR_WANDER
 };
 
 class C_AnarchyManager : public CAutoGameSystemPerFrame
@@ -229,12 +252,30 @@ public:
 
 	std::string GenerateTextureThumb(std::string textureName);
 
-	void SpawnPet(std::string model, std::string forward, std::string idle, float flScale, std::string rot, std::string pos, float flNear, float flFar, float flSpeed);
+	void SaveCurrentPetInfo();
+	void RestoreCurrentPetInfo(bool bPlayAsNext = true);
+
+	void SavePetStates();
+	void RestorePetStates();
+	void ProcessPendingPetsRestore();
+	void AfterPendingPetsRestore();
+
+	pet_t* GetPlayAsPet();
+	void SetPlayAsPet(pet_t* pPet);
+	//C_DynamicProp* GetPlayAsPetEntity();	// depreciate me!!
+	pet_t* GetNearestPetToPlayerLook(float flMaxRange = 300.0f);
+	void SpawnPet(std::string model, std::string run, std::string walk, std::string idle, std::string fall, float flScale, std::string rot, std::string pos, float flNear, float flFar, float flRunSpeed, float flWalkSpeed, std::string outfit, std::string behavior, std::string sequence);
+	//void UpdatePet(int iEntIndex, std::string run = "", std::string walk = "", std::string idle = "", std::string fall = "", float flScale = 0.0f, std::string rot = "", std::string pos = "", float flNear = 0.0f, float flFar = 0.0f, float flRunSpeed = 0.0f, float flWalkSpeed = 0.0f);
 	void PetCreated(int iEntIndex);
 	void DestroyPet(int iEntIndex);
 	void DestroyAllPets();
 	void ProcessAllPets();
 	pet_t* GetPetByEntIndex(int iEntIndex);
+
+	void LookspotCreated(int iSpotIndex, int iHaloIndex, int iDirIndex);
+	void ProcessLookspot();
+	void ToggleLookspot(int iValue = -1);
+	void DestroyLookspot();
 
 	bool IsLevelInitialized() { return m_bLevelInitialized; }
 
@@ -334,6 +375,8 @@ public:
 	void AttractCameraReached();
 
 	void ShowAdoptAssetMenu();
+
+	bool CAM_IsThirdPerson();
 
 	std::string GetMaterialUnderCrosshair();
 	std::string GetModelUnderCrosshair();
@@ -509,6 +552,7 @@ public:
 	void ShowCommandsMenu();
 	void ShowPaintMenu();
 	void ShowPlayersMenu();
+	void ShowPetsMenu();
 
 	// TRY TO KEEP THESE IN CHRONOLOGICAL ORDER, AT LEAST FOR THE STARTUP SEQUENCE!
 	void Disconnect();
@@ -582,6 +626,9 @@ public:
 	void OnConnectionMetricsUpdate(std::vector<int> metrics);
 
 	void SteamTalker(std::string text, std::string voice, float flPitch, float flRate, float flVolume);
+	void OnAIChatBotResponse(std::string responseText);
+	void OnAIChatBotSpeakStart(std::string botType);
+	void OnAIChatBotSpeakEnd(std::string botType);
 
 	// helpers
 	void GenerateUniqueId(char* result);
@@ -612,6 +659,12 @@ public:
 
 	void SelectNext();
 	void SelectPrev();
+
+	pet_t* m_pPlayAsPet;
+	std::string NormalizeModelFilename(std::string modelFile);
+	std::vector<pet_t*> GetAllLivingPets();
+	std::vector<std::string> GetAllPetOutfits(std::string modelFile);
+	pet_t* FindPetByModel(std::string modelFile);
 
 	void UpdateItemTextOnObjects(std::string itemId, std::string text);
 	void BotCheer(std::string text = "");
@@ -665,10 +718,17 @@ public:
 
 	void StartQuestsSoon();
 
+	void LocalPlayerSpawned();
+	void LocalPlayerDied();
+
+	C_PropShortcutEntity* GetInspectShortcut();
 	void ActivateInspectObject(C_PropShortcutEntity* pShortcut);
 	void DeactivateInspectObject();
 	void InspectModeTick(float flFrameTime);
 	void ApplyCarryData(std::string origin);
+
+	void PlaySequenceRegularOnProp(C_DynamicProp* pProp, const char* sequenceTitle);
+	void OnHotlinkDraw(C_BaseAnimating* pBaseAnimating, bool bWasDrawn);
 
 	//void SetForegroundShortcut(C_PropShortcutEntity* pShortcut);
 	//C_PropShortcutEntity* GetForegroundShortcut() { return m_pForegroundShortcut; }
@@ -805,6 +865,8 @@ protected:
 	void ScanForLegacySave(std::string path, std::string searchPath, std::string workshopIds, std::string mountIds, C_Backpack* pBackpack);
 
 private:
+	Vector m_previousPetTargetPos;
+
 	ConVar* m_pFixedCameraMaxDistConVar;
 	ConVar* m_pFixedCameraMinDistConVar;
 	std::string m_lastBestNonVRSpectateScreenshotId;
@@ -814,14 +876,22 @@ private:
 
 	// All of the nextPet variables must be set together or risk garbage.
 	std::string m_nextPetModel;
-	std::string m_nextPetForward;
+	std::string m_nextPetRun;
+	std::string m_nextPetWalk;
 	std::string m_nextPetIdle;
+	std::string m_nextPetFall;
 	float m_flNextPetScale;
 	std::string m_nextPetPos;
 	std::string m_nextPetRot;
 	float m_flNextPetNear;
 	float m_flNextPetFar;
-	float m_flNextPetSpeed;
+	float m_flNextPetRunSpeed;
+	float m_flNextPetWalkSpeed;
+	std::string m_nextPetOutfit;
+	std::string m_nextPetBehavior;
+	std::string m_nextPetSequence;
+
+	KeyValues* m_pPendingPetsRestoreKV;
 
 	ConVar* m_pJoystickConVar;
 	C_PropShortcutEntity* m_pInspectShortcut;
@@ -1055,6 +1125,10 @@ private:
 	//ThreadedFolderBrowseParams_t* m_pFolderParams;
 
 	nextLoadInfo_t* m_pNextLoadInfo;
+
+	int m_iLookspotIndex;
+	int m_iLookspotHaloIndex;
+	int m_iDirIndex;
 
 	bool m_bSuspendEmbedded;
 	bool m_bInitialized;

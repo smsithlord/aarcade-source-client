@@ -300,6 +300,9 @@ private:
 	bool  m_bInterpolatePosition;
 
 	// these are interpolation vars used for interpolating the camera over time
+	Vector m_vOriginalOrigin;
+	bool m_bDidSetOriginalOrigin;
+	QAngle m_originalAngles;
 	Vector m_vStartPos, m_vEndPos;
 	float m_flInterpStartTime;
 

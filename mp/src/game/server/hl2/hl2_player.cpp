@@ -2814,6 +2814,70 @@ void CHL2_Player::PlayerUse ( void )
 	// Added for Anarchy Acade
 	if (m_afButtonPressed & IN_USE)
 	{
+		// PET STUFF
+		// If a pet is nearby, the PET MENU should appear when USE is pressed.
+		// And then the default USE action should be aborted.
+
+		/*char szValue[2]; // Small buffer size for "0" or "1" plus null terminator
+		// Check if the entity has the "is_pet" keyvalue set
+		if (pTestEntity->GetKeyValue("is_pet", szValue, sizeof(szValue)))
+		{
+			//szValue[0] != '0' // just having is_pet is enough to know it's a pet.
+			//DevMsg("Pet entity used!\n");
+			engine->ClientCommand(UTIL_GetLocalPlayer()->edict(), UTIL_VarArgs("on_pet_used %i;", pUseEntity->entindex()));
+			return; // return to prevent default use behavior
+		}*/
+
+		// Define the search radius (adjust the value as needed)
+		// chatgpt snippet: https://chatgpt.com/c/67290353-c0e4-800d-a27f-65710c5e367a
+		const float SEARCH_RADIUS = 80.0f; // Example radius in units
+
+		// Get the player's position and forward direction
+		Vector playerPosition = GetAbsOrigin();
+		Vector playerForward;
+		AngleVectors(EyeAngles(), &playerForward); // Get the forward vector from the player's view angles
+
+		// Variables to keep track of the best entity by view dot product
+		CBaseEntity *pBestEntity = nullptr;
+		float bestDotProduct = 0.5f; // Minimum threshold for "in front" (can adjust if needed)
+
+		int iCurPlayAsPetIndex = cvar->FindVar("cur_play_as_pet")->GetInt();
+		CBaseEntity *pTestEntity = nullptr;
+
+		// Iterate through entities in the radius
+		for (CEntitySphereQuery query(playerPosition, SEARCH_RADIUS); (pTestEntity = query.GetCurrentEntity()) != nullptr; query.NextEntity())
+		{
+			char szValue[32]; // Buffer size to handle larger numbers
+			if (pTestEntity->GetKeyValue("ExplodeRadius", szValue, sizeof(szValue)))
+			{
+				if (atof(szValue) == 73540 && pTestEntity->entindex() != iCurPlayAsPetIndex)
+				{
+					// Calculate the vector from the player to the entity
+					Vector entityDirection = (pTestEntity->GetAbsOrigin() - playerPosition).Normalized();
+
+					// Calculate the dot product to check if the entity is in front of the player
+					float dotProduct = DotProduct(playerForward, entityDirection);
+					if (dotProduct > 0.5f) // Only consider entities with a view dot > 0.5f
+					{
+						// Check if this entity has a better (higher) dot product than the current best
+						if (dotProduct > bestDotProduct)
+						{
+							bestDotProduct = dotProduct;
+							pBestEntity = pTestEntity;
+						}
+					}
+				}
+			}
+		}
+
+		// If the best entity is found, trigger the pet menu logic
+		if (pBestEntity)
+		{
+			engine->ClientCommand(UTIL_GetLocalPlayer()->edict(), UTIL_VarArgs("on_pet_used %i;", pBestEntity->entindex()));
+			return; // Return to prevent default use behavior
+		}
+
+		// QUEST STUFF
 		// we need to handle some stuff on client side for quests...
 		engine->ClientCommand(UTIL_GetLocalPlayer()->edict(), "on_player_use");
 	}

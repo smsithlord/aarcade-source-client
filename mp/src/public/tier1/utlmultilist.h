@@ -400,7 +400,8 @@ I CUtlMultiList<T,I>::Alloc( )
 		if ( !IndexInRange( m_MaxElementIndex ) )
 		{
 			// We rarely if ever handle alloc failure. Continuing leads to corruption.
-			Error( "CUtlMultiList overflow! (exhausted index range)\n" );
+			//Error( "CUtlMultiList overflow! (exhausted index range)\n" );	// Added for Anarchy Arcade
+			DevMsg("CUtlMultiList overflow! (exhausted index range)\n");	// Added for Anarchy Arcade
 			return InvalidIndex();
 		}
 
@@ -415,7 +416,8 @@ I CUtlMultiList<T,I>::Alloc( )
 			if ( m_MaxElementIndex >= m_Memory.NumAllocated() )
 			{
 				// We rarely if ever handle alloc failure. Continuing leads to corruption.
-				Error( "CUtlMultiList overflow! (exhausted memory allocator)\n" );
+				//Error("CUtlMultiList overflow! (exhausted memory allocator)\n");	// Added for Anarchy Arcade
+				DevMsg("CUtlMultiList overflow! (exhausted memory allocator)\n");	// Added for Anarchy Arcade
 				return InvalidIndex();
 			}
 		}

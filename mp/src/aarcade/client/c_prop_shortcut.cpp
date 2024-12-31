@@ -38,7 +38,7 @@ C_PropShortcutEntity::C_PropShortcutEntity()
 	m_pFadeDistMinConVar = null;
 	m_pFadeDistMaxConVar = null;
 	m_bDrawForeground = false;
-	m_pForegroundMaterial = null;
+	//m_pForegroundMaterial = null;
 
 	this->SetHotlink(true);
 }
@@ -631,17 +631,17 @@ bool C_PropShortcutEntity::ShouldDraw()
 }
 */
 
-void C_PropShortcutEntity::SetDrawForeground(bool bValue)
+/*void C_PropShortcutEntity::SetDrawForeground(bool bValue)
 {
 	m_bDrawForeground = bValue;
-}
+}*/
 
-int C_PropShortcutEntity::DrawModel(int flags)	// Added for Anarchy Arcade
-{
+//int C_PropShortcutEntity::DrawModel(int flags)	// Added for Anarchy Arcade
+//{
 	//if ((g_pAnarchyManager->GetNoDrawShortcutsValue() == 1 || (g_pAnarchyManager->GetNoDrawShortcutsValue() == 2 && g_pAnarchyManager->UseSBSRendering() && g_pAnarchyManager->GetEye() != ISourceVirtualReality::VREye::VREye_Left)))
 	//	return 0;
 
-	if (m_bDrawForeground)
+	/*if (m_bDrawForeground)
 	{
 		CMatRenderContextPtr pRenderContext(materials);
 		pRenderContext->DepthRange(0.0f, 0.1f);
@@ -650,7 +650,7 @@ int C_PropShortcutEntity::DrawModel(int flags)	// Added for Anarchy Arcade
 		//float depthmin = 0.0f;
 		//float depthmax = 1.0f;
 		pRenderContext->DepthRange(0.0f, 1.0f);
-		return result;
+		return result;*/
 
 		/*
 		CMatRenderContextPtr pRenderContext(materials);
@@ -699,13 +699,13 @@ int C_PropShortcutEntity::DrawModel(int flags)	// Added for Anarchy Arcade
 			}
 			pAttachment = pAttachment->NextMovePeer();
 		}*/
-	}
-	else
-	{
+	//}
+	//else
+	//{
 		// Call the original DrawModel function
-		return BaseClass::DrawModel(flags);
-	}
-}
+		//return BaseClass::DrawModel(flags);
+	//}
+//}
 
 
 void C_PropShortcutEntity::OnUsed()

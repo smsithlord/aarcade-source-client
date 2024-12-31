@@ -27,6 +27,7 @@ END_NETWORK_TABLE()
 C_DynamicProp::C_DynamicProp( void )
 {
 	m_iCachedFrameCount = -1;
+	m_bDrawForeground = false;
 }
 
 C_DynamicProp::~C_DynamicProp( void )
@@ -71,7 +72,25 @@ bool C_DynamicProp::TestCollision( const Ray_t &ray, unsigned int fContentsMask,
 
 int C_DynamicProp::DrawModel(int flags)	// Added for Anarchy Arcade
 {
-	return BaseClass::DrawModel(flags);
+	if (m_bDrawForeground)
+	{
+		CMatRenderContextPtr pRenderContext(materials);
+		pRenderContext->DepthRange(0.0f, 0.1f);
+		int result = BaseClass::DrawModel(flags);
+
+		//float depthmin = 0.0f;
+		//float depthmax = 1.0f;
+		pRenderContext->DepthRange(0.0f, 1.0f);
+		return result;
+	}
+	else {
+		return BaseClass::DrawModel(flags);
+	}
+}
+
+void C_DynamicProp::SetDrawForeground(bool bValue)	// Added for Anarchy Arcade
+{
+	m_bDrawForeground = bValue;
 }
 
 //-----------------------------------------------------------------------------

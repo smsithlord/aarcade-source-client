@@ -39,6 +39,8 @@ ConCommand removegloweffect("removegloweffect", RemoveGlowEffect, "Removes a glo
 #define MAPBASE 1
 #endif
 
+ConVar cur_play_as_pet("cur_play_as_pet", "-1", FCVAR_HIDDEN, "Set from the local client so that the server code knows which pet is being played as (to ignore USE action.)");
+
 ConVar junkmodel("junkmodel", "models\\de_halloween\\jacklight.mdl", FCVAR_ARCHIVE, "The model that gets tossed out with spawn_junk.");
 ConVar hueshift("hueshift", "0", FCVAR_NONE, "Internal. It's what is used to calculate the hue shift of audio-sensitive fx.");
 ConVar peak("peak", "0.5", FCVAR_NONE, "Set to 0.5 for default?");
@@ -215,11 +217,20 @@ ConCommand removejunkobjects("removejunkobjects", RemoveJunkObjects, "Removes al
 void PlaySequence(const CCommand &args)
 {
 	CPropShortcutEntity* pProp = dynamic_cast<CPropShortcutEntity*>(CBaseEntity::Instance(Q_atoi(args[1])));
-	if (!pProp)
-		return;
-
-	//pProp->SetModelScale(2.0);	// WORKING WORKING WORKING ITEM SCALING!  JUST LEAVE LAST PARAM AS ZERO!
-	pProp->PlaySequence(args[2]);
+	if (pProp)
+	{
+		//pProp->SetModelScale(2.0);	// WORKING WORKING WORKING ITEM SCALING!  JUST LEAVE LAST PARAM AS ZERO!
+		pProp->PlaySequence(args[2]);
+	}
+	else
+	{
+		CDynamicProp* pDynamicProp = dynamic_cast<CDynamicProp*>(CBaseEntity::Instance(Q_atoi(args[1])));
+		if (pDynamicProp) {
+			inputdata_t myInputData;
+			myInputData.value.SetString(MAKE_STRING(args[2]));
+			pDynamicProp->InputSetAnimation(myInputData);
+		}
+	}
 }
 ConCommand playsequence("playsequence", PlaySequence, "Internal.");
 
@@ -770,6 +781,241 @@ void SetParent(const CCommand &args)
 }
 ConCommand setparent("setparent", SetParent, "Sets the entity's parent.", FCVAR_NONE);
 
+CDynamicProp* spawnPetAttachCloneHelper(std::string modelName, Vector pos, QAngle rot, float flScale)
+{
+	CBasePlayer* pPlayer = UTIL_GetLocalPlayer();
+	if (pPlayer->GetHealth() <= 0)
+		return NULL;
+
+	/*Vector eyePosition;
+	Vector forward;
+	Vector right;
+	Vector up;
+	QAngle eyeAngles = pPlayer->EyeAngles();
+	pPlayer->EyePositionAndVectors(&eyePosition, &forward, &right, &up);
+
+	trace_t tr;
+	Vector vForward;
+	pPlayer->EyeVectors(&vForward);
+	UTIL_TraceLine(pPlayer->EyePosition(), pPlayer->EyePosition() + vForward * MAX_COORD_RANGE, MASK_SOLID, pPlayer, COLLISION_GROUP_NONE, &tr);*/
+
+
+	CBaseEntity *pSafeSpawnEntity = dynamic_cast<CBaseEntity*>(pPlayer);
+	if (!pSafeSpawnEntity)
+	{
+		DevMsg("ERROR: No spawn positions found!\n");
+		return NULL;
+	}
+
+	// Now spawn it
+	//CDynamicProp* pProp = dynamic_cast<CDynamicProp*>(CreateEntityByName("prop_shortcut"));
+	CDynamicProp* pProp = dynamic_cast<CDynamicProp*>(CreateEntityByName("prop_dynamic_override"));
+	//float flScale = 1.0f;//(args.ArgC() > 2) ? Q_atof(args.Arg(2)) : 1.0;
+
+	// Pass in standard key values
+	char buf[512];
+
+	Vector safeOrigin = pSafeSpawnEntity->GetAbsOrigin();
+	//safeOrigin = tr.endpos;
+
+	QAngle safeAngles = QAngle(0, 0, 0);
+
+	// override with our passed in values.
+	//Vector safeOrigin = pos;
+	//QAngle safeAngles = rot;
+
+	// Pass in standard key values
+	Q_snprintf(buf, sizeof(buf), "%f %f %f", safeOrigin.x, safeOrigin.y, safeOrigin.z);
+	pProp->KeyValue("origin", buf);
+	Q_snprintf(buf, sizeof(buf), "%f %f %f", safeAngles.x, safeAngles.y, safeAngles.z);
+	pProp->KeyValue("angles", buf);
+
+	pProp->KeyValue("fademindist", "-1");
+	pProp->KeyValue("fadescale", "1");
+	pProp->KeyValue("MaxAnimTime", "10");
+	pProp->KeyValue("MinAnimTime", "5");
+	pProp->KeyValue("modelscale", UTIL_VarArgs("%f", flScale));
+	pProp->KeyValue("renderamt", "255");
+	pProp->KeyValue("rendercolor", "255 255 255");
+	pProp->KeyValue("solid", "6");
+	pProp->KeyValue("DisableBoneFollowers", "0");
+	pProp->KeyValue("disablereceiveshadows", "0");
+
+	if (flScale != 1.0f)
+	{
+		pProp->KeyValue("disableshadows", "1");
+	}
+	else {
+		pProp->KeyValue("disableshadows", "0");
+	}
+	pProp->KeyValue("ExplodeDamage", "0");
+	pProp->KeyValue("skin", "0");
+	pProp->KeyValue("ExplodeRadius", "0");
+	pProp->KeyValue("fademaxdist", "0");
+	pProp->KeyValue("maxdxlevel", "0");
+	pProp->KeyValue("mindxlevel", "0");
+
+	pProp->KeyValue("PerformanceMode", "0");
+	pProp->KeyValue("pressuredelay", "0");
+	pProp->KeyValue("spawnflags", "0");
+	pProp->KeyValue("RandomAnimation", "0");
+	pProp->KeyValue("renderfx", "0");
+	pProp->KeyValue("rendermode", "0");
+	pProp->KeyValue("SetBodyGroup", "0");
+	pProp->KeyValue("StartDisabled", "0");
+
+	pProp->KeyValue("model", modelName.c_str());//model.c_str());
+	pProp->SetSolidFlags(FSOLID_NOT_SOLID);
+
+	if (DispatchSpawn(pProp) > -1)
+	{
+		if (flScale != 1.0f)
+		{
+			pProp->AddEffects(EF_NOSHADOW);
+		}
+
+		pProp->SetSolidFlags(FSOLID_NOT_SOLID);
+		pProp->SetMoveType(MOVETYPE_NONE);
+		pProp->SetCollisionGroup(COLLISION_GROUP_NONE);
+		pProp->SetSolid(SOLID_NONE);
+		if (pProp->VPhysicsGetObject())
+			pProp->VPhysicsDestroyObject();
+
+		CBaseEntity* pChild = pProp->FirstMoveChild();
+		while (pChild)
+		{
+			pChild->SetSolid(SOLID_NONE);
+			pChild->SetCollisionGroup(COLLISION_GROUP_NONE);
+			pChild = pChild->NextMovePeer();
+		}
+
+		//pProp->SetRenderMode(kRenderTransColor);
+		//pProp->SetRenderColorA(160);
+		/*pProp->SetRenderColor(255, 255, 255);*/
+
+		Vector origin = pos;
+		QAngle angles = rot;
+
+		UTIL_SetOrigin(pProp, origin, true);
+		pProp->SetAbsAngles(angles);
+
+		Vector vel = Vector(0, 0, 0);
+		pProp->Teleport(&origin, &angles, &vel);
+
+		pProp->NetworkStateChanged();
+		//return pProp->entindex();
+		//CBasePlayer* pRequestingPlayer = UTIL_GetCommandClient();
+		//edict_t *pClient = engine->PEntityOfEntIndex(pRequestingPlayer->entindex());
+		//engine->ClientCommand(pClient, "pet_created %i;\n", pProp->entindex());
+	}
+	return pProp;
+}
+
+void SetPetAttach(const CCommand &args)
+{
+	CBaseEntity* pTargetEntity = CBaseEntity::Instance(Q_atoi(args[1]));
+	CBaseEntity* pParentEntity = (args.ArgC() > 2) ? CBaseEntity::Instance(Q_atoi(args[2])) : pTargetEntity;
+	std::string attachment_name = (args.ArgC() > 3) ? args[3] : "";
+	//bool bUseLocalSpace = (args.ArgC() > 4) ? (Q_atoi(args[4]) != 0) : true;
+
+	// clone the model (as attachments are purely cosmetic, and are different than stuff you are carrying.)
+	std::string modelName = pTargetEntity->GetModelName().ToCStr();
+	Vector pos = pTargetEntity->GetAbsOrigin();
+	QAngle rot = pTargetEntity->GetAbsAngles();
+
+	CDynamicProp* pDynamicProp = dynamic_cast<CDynamicProp*>(pTargetEntity);
+	float flScale = (pDynamicProp) ? pDynamicProp->GetModelScale() : 1.0f;
+
+	CDynamicProp* pClonedEntity = spawnPetAttachCloneHelper(modelName, pos, rot, flScale);
+	CBaseEntity* pClonedBaseEntity = (CBaseEntity*)pClonedEntity;
+
+	pClonedBaseEntity->SetParent(pParentEntity, -1, false);
+	pClonedBaseEntity->SetParentAttachment("SetParentAttachment", attachment_name.c_str(), true);
+
+	float flLocalScale = pClonedEntity->GetModelScale();
+	//DevMsg("Local Scale: %02f\n", flLocalScale);
+	Vector localOrigin = pClonedBaseEntity->GetLocalOrigin();
+	//DevMsg("Local Origin: %02f %02f %02f\n", localOrigin.x, localOrigin.y, localOrigin.z);
+	QAngle localAngles = pClonedBaseEntity->GetLocalAngles();
+	//DevMsg("Local Angles: %02f %02f %02f\n", localAngles.x, localAngles.y, localAngles.z);
+
+	CBasePlayer* pRequestingPlayer = UTIL_GetCommandClient();
+	edict_t *pClient = engine->PEntityOfEntIndex(pRequestingPlayer->entindex());
+	//engine->ClientCommand(pClient, UTIL_VarArgs("savepetattach \"%s\" \"%s\" %02f %02f %02f %02f %02f %02f %02f;", attachment_name.c_str(), modelName.c_str(), localOrigin.x, localOrigin.y, localOrigin.z, localAngles.x, localAngles.y, localAngles.z, flLocalScale));
+	engine->ClientCommand(pClient, UTIL_VarArgs("savepetattach \"%s\" \"%s\" %f %f %f %f %f %f %f;", attachment_name.c_str(), modelName.c_str(), localOrigin.x, localOrigin.y, localOrigin.z, localAngles.x, localAngles.y, localAngles.z, flLocalScale));
+}
+ConCommand setpetattach("setpetattach", SetPetAttach, "Sets the entity's parent.", FCVAR_NONE);
+
+void TestSetPetAttach(const CCommand &args)
+{
+	CBaseEntity* pTargetEntity = CBaseEntity::Instance(Q_atoi(args[1]));
+	CBaseEntity* pParentEntity = (args.ArgC() > 2) ? CBaseEntity::Instance(Q_atoi(args[2])) : pTargetEntity;
+	std::string attachment_name = (args.ArgC() > 3) ? args[3] : "";
+	//bool bUseLocalSpace = (args.ArgC() > 4) ? (Q_atoi(args[4]) != 0) : true;
+
+	// clone the model (as attachments are purely cosmetic, and are different than stuff you are carrying.)
+	std::string modelName = pTargetEntity->GetModelName().ToCStr();
+	Vector pos = pTargetEntity->GetAbsOrigin();
+	QAngle rot = pTargetEntity->GetAbsAngles();
+
+	CDynamicProp* pDynamicProp = dynamic_cast<CDynamicProp*>(pTargetEntity);
+	float flScale = (pDynamicProp) ? pDynamicProp->GetModelScale() : 1.0f;
+
+	//CDynamicProp* pClonedEntity = spawnPetAttachCloneHelper(modelName, pos, rot, flScale);
+	CDynamicProp* pClonedEntity = pDynamicProp;
+	CBaseEntity* pClonedBaseEntity = (CBaseEntity*)pClonedEntity;
+
+	pClonedEntity->SetParent(pParentEntity);
+	//pClonedBaseEntity->SetParent(pParentEntity, -1, true);
+	//pClonedBaseEntity->SetParentAttachment("SetParentAttachment", attachment_name.c_str(), true);
+
+	//float flLocalScale = pClonedEntity->GetModelScale();
+	//DevMsg("Local Scale: %02f\n", flLocalScale);
+	//Vector localOrigin = pClonedBaseEntity->GetLocalOrigin();
+	//DevMsg("Local Origin: %02f %02f %02f\n", localOrigin.x, localOrigin.y, localOrigin.z);
+	//QAngle localAngles = pClonedBaseEntity->GetLocalAngles();
+	//DevMsg("Local Angles: %02f %02f %02f\n", localAngles.x, localAngles.y, localAngles.z);
+
+	//CBasePlayer* pRequestingPlayer = UTIL_GetCommandClient();
+	//edict_t *pClient = engine->PEntityOfEntIndex(pRequestingPlayer->entindex());
+	//engine->ClientCommand(pClient, UTIL_VarArgs("savepetattach \"%s\" \"%s\" %f %f %f %f %f %f %f;", attachment_name.c_str(), modelName.c_str(), localOrigin.x, localOrigin.y, localOrigin.z, localAngles.x, localAngles.y, localAngles.z, flLocalScale));
+}
+ConCommand testsetpetattach("testsetpetattach", TestSetPetAttach, "TEST Sets the entity's parent. This version can attach shortcuts w/o making a clone. And does not save.", FCVAR_NONE);
+
+void LoadPetAttach(const CCommand &args)
+{
+	//CBaseEntity* pTargetEntity = CBaseEntity::Instance(Q_atoi(args[1]));
+	CBaseEntity* pParentEntity = CBaseEntity::Instance(Q_atoi(args[1]));
+	std::string model_name = args[2];
+	std::string attachment_name = args[3];
+	//bool bUseLocalSpace = (args.ArgC() > 4) ? (Q_atoi(args[4]) != 0) : true;	// Using local space or not is key to propper attachment & separates this from setparentattach.
+
+	// clone the model (as attachments are purely cosmetic, and are different than stuff you are carrying.)
+	//std::string modelName = pTargetEntity->GetModelName().ToCStr();
+	//Vector pos = pTargetEntity->GetAbsOrigin();
+	//QAngle rot = pTargetEntity->GetAbsAngles();
+	Vector pos = Vector(Q_atof(args[4]), Q_atof(args[5]), Q_atof(args[6]));
+	QAngle rot = QAngle(Q_atof(args[7]), Q_atof(args[8]), Q_atof(args[9]));
+	float flScale = Q_atof(args[10]);
+
+	CDynamicProp* pClonedEntity = spawnPetAttachCloneHelper(model_name, pos, rot, flScale);
+	CBaseEntity* pClonedBaseEntity = (CBaseEntity*)pClonedEntity;
+
+	pClonedBaseEntity->SetParent(pParentEntity, -1, false);
+	pClonedBaseEntity->SetParentAttachment("SetParentAttachment", attachment_name.c_str(), false);
+	pClonedEntity->SetLocalOrigin(pos);
+	pClonedBaseEntity->SetLocalAngles(rot);
+
+	/*float flLocalScale = pClonedEntity->GetModelScale();
+	DevMsg("Local Scale: %02f\n", flLocalScale);
+	Vector localOrigin = pClonedBaseEntity->GetLocalOrigin();
+	DevMsg("Local Origin: %02f %02f %02f\n", localOrigin.x, localOrigin.y, localOrigin.z);
+	QAngle localAngles = pClonedBaseEntity->GetLocalAngles();
+	DevMsg("Local Angles: %02f %02f %02f\n", localAngles.x, localAngles.y, localAngles.z);*/
+	//pClonedEntity->SetSolid(SOLID_NONE);
+}
+ConCommand loadpetattach("loadpetattach", LoadPetAttach, "Internal use only.", FCVAR_NONE);
+
 int iSelectorEntityIndex = -1;
 void SelectorTrace(const CCommand &args)
 {
@@ -854,6 +1100,68 @@ void ServerTesterJoint(const CCommand &args)
 	Msg("Server values for:\n\tMAX_EDICT_BITS\t%i\n\tMAX_EDICTS\t%i\n\tNUM_ENT_ENTRY_BITS\t%i\n\tNUM_ENT_ENTRIES\t%i\n", MAX_EDICT_BITS, MAX_EDICTS, NUM_ENT_ENTRY_BITS, NUM_ENT_ENTRIES);
 }
 ConCommand server_testerjoint("server_testerjoint", ServerTesterJoint, "Usegae: Server tester joint.", FCVAR_NONE);
+
+void AnimalityByTargetname(const CCommand &args)
+{
+	// Primary purpose is to resolve the targetname to an entity index & send that to the client-side portion of this command.
+	if (args.ArgC() > 17)
+	{
+		std::string targetname = args.Arg(1);
+		std::string targetname2 = args.Arg(2);
+		CBaseEntity* pBaseEntity = gEntList.FindEntityByName(NULL, targetname.c_str());
+		CBaseEntity* pTargetBaseEntity = gEntList.FindEntityByName(NULL, targetname2.c_str());
+		if (pBaseEntity && pTargetBaseEntity){
+			// we now have the entity index, so proceed...
+			//g_pAnarchyManager->SpawnPet(model, run, walk, idle, fall, flScale, rot, pos, flNear, flFar, flRunSpeed, flWalkSpeed);
+			int entityIndex = pBaseEntity->entindex();
+			int entityIndex2 = pTargetBaseEntity->entindex();
+
+			// additional params we'll just pack here - which means we'll need to adjust things here if we need to change the "Hammer-facing" "API"
+
+			int iOffset = 1;	// so we know where the rest of the regular pet options begin.
+			std::string run = args.Arg(2 + iOffset);
+			std::string walk = args.Arg(3 + iOffset);
+			std::string idle = args.Arg(4 + iOffset);
+			std::string fall = args.Arg(5 + iOffset);
+			std::string flScale = args.Arg(6 + iOffset);
+			std::string rot = std::string(args.Arg(7 + iOffset)) + " " + std::string(args.Arg(8 + iOffset)) + " " + std::string(args.Arg(9 + iOffset));
+			std::string pos = std::string(args.Arg(10 + iOffset)) + " " + std::string(args.Arg(11 + iOffset)) + " " + std::string(args.Arg(12 + iOffset));
+			std::string flNear = args.Arg(13 + iOffset);
+			std::string flFar = args.Arg(14 + iOffset);
+			std::string flRunSpeed = args.Arg(15 + iOffset);
+			std::string flWalkSpeed = args.Arg(16 + iOffset);
+
+
+
+
+			CBasePlayer* pPlayer = UTIL_GetCommandClient();
+			Vector origin = pTargetBaseEntity->GetAbsOrigin();
+			QAngle angles = pTargetBaseEntity->GetAbsAngles();
+
+			// Prepare a teleportation structure
+			Vector vecVelocity(0, 0, 0);  // Stop all motion
+
+			// Use the Teleport method from the CBaseEntity class
+			pPlayer->Teleport(&origin, &angles, &vecVelocity);
+
+
+
+
+
+			/*char buf[512];
+			Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", origin.x, origin.y, origin.z);
+			std::string targetOrigin = buf;
+			Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", angles.x, angles.y, angles.z);
+			std::string targetAngles = buf;*/
+
+
+			//CBaseEntity* pPlayerEntity = UTIL_GetCommandClient();
+			edict_t *pClient = engine->PEntityOfEntIndex(pPlayer->entindex());
+			engine->ClientCommand(pClient, "animality_by_targetname_client %i %i \"%s\" \"%s\" \"%s\" \"%s\" \"%s\" \"%s\" \"%s\" \"%s\" \"%s\" \"%s\" \"%s\";\n", entityIndex, entityIndex2, run.c_str(), walk.c_str(), idle.c_str(), fall.c_str(), flScale.c_str(), rot.c_str(), pos.c_str(), flNear.c_str(), flFar.c_str(), flRunSpeed.c_str(), flWalkSpeed.c_str());
+		}
+	}
+}
+ConCommand animality_by_targetname("animality_by_targetname", AnimalityByTargetname, "Change into a pet in a way that can be tied into a map in Hammer. Takes a targetname of a model to use, followed by the normal pet arguments.", FCVAR_NONE);
 
 void ShowHubsMenu(const CCommand &args)
 {
@@ -2337,6 +2645,18 @@ void CreateVRSpazzFix(const CCommand &args)
 }
 ConCommand create_vr_spazz_fix("create_vr_spazz_fix", CreateVRSpazzFix, "Fixes the spazz that happens on some maps w/ VR mode.");
 
+/*void SetRenderColor(const CCommand &args)
+{
+	CBaseEntity* pProp = CBaseEntity::Instance(Q_atoi(args[1]));
+	int r = Q_atoi(args[2]);
+	int g = Q_atoi(args[3]);
+	int b = Q_atoi(args[4]);
+	//int a = Q_atoi(args[5]);
+	pProp->SetRenderColor(r, g, b);
+	pProp->NetworkStateChanged();
+}
+ConCommand setrendercolor("setrendercolor", SetRenderColor, "Interal use only.", FCVAR_HIDDEN);*/
+
 void MakeGhost(const CCommand &args)
 {
 	CBaseEntity* pShortcut = CBaseEntity::Instance(Q_atoi(args[1]));
@@ -2596,6 +2916,109 @@ void QuestHideEntity(const CCommand &args)
 	pShortcut->SetMoveType(MOVETYPE_NONE);
 }
 ConCommand questhideentity("quest_hide_entity", QuestHideEntity, "Internal use only.", FCVAR_HIDDEN);
+
+void TeleportPlayerToEntity(const CCommand &args)
+{
+	CBasePlayer* pPlayer = UTIL_GetCommandClient();
+	CBaseEntity* pTargetEntity = CBaseEntity::Instance(Q_atoi(args[1]));
+	if (!pTargetEntity)
+		return;
+
+	// Get the target entity's origin and angles
+	Vector targetOrigin = pTargetEntity->GetAbsOrigin();
+	QAngle targetAngles = pTargetEntity->GetAbsAngles();
+
+	if (args.ArgC() > 4)
+	{
+		Vector offset;
+		offset.x = Q_atof(args[2]);
+		offset.y = Q_atof(args[3]);
+		offset.z = Q_atof(args[4]);
+
+		// Just blindly apply the offset to the target origin - because that's how client-side code applies it in ProcessAllPets,
+		// but technically it should localize the offset to properly support X/Y offets.  (That should be done client-side before sending this offset to us though.)
+
+		targetOrigin -= offset;
+	}
+
+	// Prepare a teleportation structure
+	Vector vecVelocity(0, 0, 0);  // Stop all motion
+	QAngle vecAngles = targetAngles;  // Optionally keep target entity's angles
+
+	// Use the Teleport method from the CBaseEntity class
+	pPlayer->Teleport(&targetOrigin, &vecAngles, &vecVelocity);
+}
+ConCommand teleportplayertoentity("teleport_player_to_entity", TeleportPlayerToEntity, "Teleports the local player to the given entity index.", FCVAR_HIDDEN);
+
+void TeleportEntityToPlayer(const CCommand &args)
+{
+	CBasePlayer* pPlayer = UTIL_GetCommandClient();
+	CBaseEntity* pTargetEntity = CBaseEntity::Instance(Q_atoi(args[1]));
+	if (!pTargetEntity)
+		return;
+
+	// Get the target entity's origin and angles
+	Vector playerOrigin = pPlayer->GetAbsOrigin();
+	QAngle playerAngles = pPlayer->GetAbsAngles();
+
+	// Prepare a teleportation structure
+	Vector vecVelocity(0, 0, 0);  // Stop all motion
+	QAngle vecAngles = playerAngles;  // Optionally keep target entity's angles
+
+	// Use the Teleport method from the CBaseEntity class
+	//pPlayer->Teleport(&targetOrigin, &vecAngles, &vecVelocity);
+	pTargetEntity->Teleport(&playerOrigin, &vecAngles, &vecVelocity);
+}
+ConCommand teleportentitytoplayer("teleport_entity_to_player", TeleportEntityToPlayer, "Teleports the given entity index to the local player.", FCVAR_HIDDEN);
+
+void SetEntityPosRot(const CCommand &args)
+{
+	CBaseEntity* pTargetEntity = CBaseEntity::Instance(Q_atoi(args[1]));
+	if (!pTargetEntity)
+		return;
+
+	Vector targetOrigin;
+	targetOrigin.x = Q_atof(args[2]);
+	targetOrigin.y = Q_atof(args[3]);
+	targetOrigin.z = Q_atof(args[4]);
+
+	QAngle targetAngles;
+	targetAngles.x = Q_atof(args[5]);
+	targetAngles.y = Q_atof(args[6]);
+	targetAngles.z = Q_atof(args[7]);
+
+	// Prepare a teleportation structure
+	Vector vecVelocity(0, 0, 0);  // Stop all motion
+
+	// Use the Teleport method from the CBaseEntity class
+	//pPlayer->Teleport(&targetOrigin, &vecAngles, &vecVelocity);
+	pTargetEntity->Teleport(&targetOrigin, &targetAngles, &vecVelocity);
+}
+ConCommand setentityposrot("set_entity_pos_rot", SetEntityPosRot, "Teleports the given entity index to the given position and rotation.", FCVAR_HIDDEN);
+
+void TeleportPlayerToEntityByName(const CCommand &args)
+{
+	if (args.ArgC() > 1)
+	{
+		CBaseEntity* pTargetEntity = gEntList.FindEntityByName(NULL, args.Arg(1));
+		if (pTargetEntity)
+		{
+			CBasePlayer* pPlayer = UTIL_GetCommandClient();
+
+			// Get the target entity's origin and angles
+			Vector targetOrigin = pTargetEntity->GetAbsOrigin();
+			QAngle targetAngles = pTargetEntity->GetAbsAngles();
+
+			// Prepare a teleportation structure
+			Vector vecVelocity(0, 0, 0);  // Stop all motion
+			QAngle vecAngles = targetAngles;  // Optionally keep target entity's angles
+
+			// Use the Teleport method from the CBaseEntity class
+			pPlayer->Teleport(&targetOrigin, &vecAngles, &vecVelocity);
+		}
+	}
+}
+ConCommand teleportplayertoentitybyname("teleport_player_to_entity_by_name", TeleportPlayerToEntityByName, "Teleports the local player to the given entity name.", FCVAR_HIDDEN);
 
 void QuestUnhideEntity(const CCommand &args)
 {
@@ -3216,6 +3639,60 @@ void UpdateAPIObjectTransform(const CCommand &args)
 	pEntity->Teleport(&goodOrigin, &goodAngle, &vel);
 }
 ConCommand updateapiobjecttransform("update_api_object_transform", UpdateAPIObjectTransform, "Interal use only.", FCVAR_HIDDEN);
+
+void CreateTorch(const CCommand &args)
+{
+	g_pAnarchyManager->DestroyTorch();
+
+	CBaseEntity *pSafeSpawnEntity = dynamic_cast<CBaseEntity*>(UTIL_GetLocalPlayer());
+	if (!pSafeSpawnEntity)
+		return;
+
+	// Now spawn it
+	CBaseEntity* pEntity = CreateEntityByName("env_projectedtexture");
+
+	std::string color = (args.ArgC() > 4) ? UTIL_VarArgs("%s %s %s %s", args.Arg(1), args.Arg(2), args.Arg(3), args.Arg(4)) : "255 197 113 200";
+
+	// Pass in standard key values
+	char buf[512];
+
+	CBaseEntity *pTargetEntity = dynamic_cast<CBaseEntity*>(UTIL_GetLocalPlayer());
+	Vector origin = pTargetEntity->GetAbsOrigin();
+	origin.z += 128.0;
+	QAngle angles = pTargetEntity->GetAbsAngles();
+
+	// Pass in standard key values
+	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", origin.x, origin.y, origin.z);
+	pEntity->KeyValue("origin", buf);
+	//Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", angles.x, angles.y, angles.z);
+	//pEntity->KeyValue("angles", buf);
+	pEntity->KeyValue("angles", "90 0 0");
+
+	pEntity->KeyValue("cameraspace", "0");
+	pEntity->KeyValue("enableshadows", "1");
+	pEntity->KeyValue("farz", "750.0");
+	pEntity->KeyValue("lightcolor", color.c_str());
+	pEntity->KeyValue("lightfov", "100");
+	pEntity->KeyValue("lightonlytarget", "0");
+	pEntity->KeyValue("lightworld", "1");
+	pEntity->KeyValue("nearz", "4");
+	pEntity->KeyValue("parentname", "");
+	pEntity->KeyValue("shadowquality", "1");
+	pEntity->SetParent(pTargetEntity, -1);
+
+	if (DispatchSpawn(pEntity) > -1)
+	{
+		pEntity->SetParent(pTargetEntity, -1);
+	}
+	g_pAnarchyManager->SetTorch(pEntity);
+}
+ConCommand create_torch("create_torch", CreateTorch, "Creates a torch above the player. The parameter is a set of 4 numbers that represent the color & intensity, or no parameters at all.");
+
+void DestroyTorch(const CCommand &args)
+{
+	g_pAnarchyManager->DestroyTorch();
+}
+ConCommand destroy_torch("destroy_torch", DestroyTorch, "Interal use only.");
 
 void CreateLetter(char c, CDynamicProp* pParentEntity, Vector origin, QAngle angles, float flScale)
 {
@@ -3854,8 +4331,116 @@ void SpawnPet_Server(const CCommand &args)
 	}
 
 	// Now spawn it
-	CDynamicProp* pProp = dynamic_cast<CDynamicProp*>(CreateEntityByName("prop_shortcut"));
+	//CDynamicProp* pProp = dynamic_cast<CDynamicProp*>(CreateEntityByName("prop_shortcut"));
+	CDynamicProp* pProp = dynamic_cast<CDynamicProp*>(CreateEntityByName("prop_dynamic_override"));
 	float flScale = (args.ArgC() > 2) ? Q_atof(args.Arg(2)) : 1.0;
+
+	// Pass in standard key values
+	char buf[512];
+
+	Vector safeOrigin = eyePosition;
+	safeOrigin = tr.endpos;
+	QAngle safeAngles = QAngle(0, 0, 0);
+
+	// Pass in standard key values
+	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", safeOrigin.x, safeOrigin.y, safeOrigin.z);
+	pProp->KeyValue("origin", buf);
+	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", safeAngles.x, safeAngles.y, safeAngles.z);
+	pProp->KeyValue("angles", buf);
+
+	pProp->KeyValue("fademindist", "-1");
+	pProp->KeyValue("fadescale", "1");
+	pProp->KeyValue("MaxAnimTime", "10");
+	pProp->KeyValue("MinAnimTime", "5");
+	pProp->KeyValue("modelscale", UTIL_VarArgs("%f", flScale));
+	pProp->KeyValue("renderamt", "255");
+	pProp->KeyValue("rendercolor", "255 255 255");
+	pProp->KeyValue("solid", "6");
+	pProp->KeyValue("DisableBoneFollowers", "0");
+	pProp->KeyValue("disablereceiveshadows", "0");
+	pProp->KeyValue("disableshadows", "0");
+	pProp->KeyValue("ExplodeDamage", "0");
+	pProp->KeyValue("skin", "0");
+	pProp->KeyValue("ExplodeRadius", "73540");
+	pProp->KeyValue("fademaxdist", "0");
+	pProp->KeyValue("maxdxlevel", "0");
+	pProp->KeyValue("mindxlevel", "0");
+
+	pProp->KeyValue("PerformanceMode", "0");
+	pProp->KeyValue("pressuredelay", "0");
+	pProp->KeyValue("spawnflags", "0");
+	//pProp->KeyValue("spawnflags", "64");	// usable
+	//pProp->KeyValue("spawnflags", "72"); // 64 (usable) + 8 (debris) = 72
+
+	//int iSpawnFlags = 8;
+	//pProp->KeyValue("spawnflags", UTIL_VarArgs("%i", iSpawnFlags));
+	//pProp->KeyValue("is_pet", "1");
+
+	pProp->KeyValue("RandomAnimation", "0");
+	pProp->KeyValue("renderfx", "0");
+	pProp->KeyValue("rendermode", "0");
+	pProp->KeyValue("SetBodyGroup", "0");
+	pProp->KeyValue("StartDisabled", "0");
+
+	pProp->KeyValue("model", model.c_str());
+	pProp->SetSolidFlags(FSOLID_NOT_SOLID);
+
+	if (DispatchSpawn(pProp) > -1)
+	{
+		pProp->SetSolidFlags(FSOLID_NOT_SOLID);
+		pProp->SetMoveType(MOVETYPE_NONE);
+		pProp->SetCollisionGroup(COLLISION_GROUP_NONE);
+		pProp->SetSolid(SOLID_NONE);
+		if (pProp->VPhysicsGetObject())
+			pProp->VPhysicsDestroyObject();
+
+		CBaseEntity* pChild = pProp->FirstMoveChild();
+		while (pChild)
+		{
+			pChild->SetSolid(SOLID_NONE);
+			pChild->SetCollisionGroup(COLLISION_GROUP_NONE);
+			pChild = pChild->NextMovePeer();
+		}
+
+		pProp->NetworkStateChanged();
+
+		CBasePlayer* pRequestingPlayer = UTIL_GetCommandClient();
+		edict_t *pClient = engine->PEntityOfEntIndex(pRequestingPlayer->entindex());
+		engine->ClientCommand(pClient, "pet_created %i;\n", pProp->entindex());
+	}
+}
+ConCommand spawn_pet_server("spawn_pet_server", SpawnPet_Server, "For internal use only.", FCVAR_HIDDEN);
+
+int spawnModelHelper(std::string model)
+{
+	CBasePlayer* pPlayer = UTIL_GetLocalPlayer();
+	if (pPlayer->GetHealth() <= 0)
+		return -1;
+
+	Vector eyePosition;
+	Vector forward;
+	Vector right;
+	Vector up;
+	QAngle eyeAngles = pPlayer->EyeAngles();
+	pPlayer->EyePositionAndVectors(&eyePosition, &forward, &right, &up);
+
+	trace_t tr;
+	Vector vForward;
+	pPlayer->EyeVectors(&vForward);
+	UTIL_TraceLine(pPlayer->EyePosition(), pPlayer->EyePosition() + vForward * MAX_COORD_RANGE, MASK_SOLID, pPlayer, COLLISION_GROUP_NONE, &tr);
+
+
+	CBaseEntity *pSafeSpawnEntity = dynamic_cast<CBaseEntity*>(pPlayer);
+	if (!pSafeSpawnEntity)
+	{
+		DevMsg("ERROR: No spawn positions found!\n");
+		return -1;
+	}
+
+	// Now spawn it
+	//CDynamicProp* pProp = dynamic_cast<CDynamicProp*>(CreateEntityByName("prop_shortcut"));
+	CDynamicProp* pProp = dynamic_cast<CDynamicProp*>(CreateEntityByName("prop_dynamic_override"));
+	float flScale = 1.0f;//(args.ArgC() > 2) ? Q_atof(args.Arg(2)) : 1.0;
 
 	// Pass in standard key values
 	char buf[512];
@@ -3898,9 +4483,12 @@ void SpawnPet_Server(const CCommand &args)
 	pProp->KeyValue("StartDisabled", "0");
 
 	pProp->KeyValue("model", model.c_str());
+	pProp->SetSolidFlags(FSOLID_NOT_SOLID);
 
 	if (DispatchSpawn(pProp) > -1)
 	{
+		pProp->AddEffects(EF_NOSHADOW);
+		pProp->SetSolidFlags(FSOLID_NOT_SOLID);
 		pProp->SetMoveType(MOVETYPE_NONE);
 		pProp->SetCollisionGroup(COLLISION_GROUP_NONE);
 		pProp->SetSolid(SOLID_NONE);
@@ -3915,14 +4503,70 @@ void SpawnPet_Server(const CCommand &args)
 			pChild = pChild->NextMovePeer();
 		}
 
-		pProp->NetworkStateChanged();
+		//pProp->SetRenderMode(kRenderTransColor);
+		//pProp->SetRenderColorA(160);
+		pProp->SetRenderColor(255, 255, 255);
 
-		CBasePlayer* pRequestingPlayer = UTIL_GetCommandClient();
-		edict_t *pClient = engine->PEntityOfEntIndex(pRequestingPlayer->entindex());
-		engine->ClientCommand(pClient, "pet_created %i;\n", pProp->entindex());
+		pProp->NetworkStateChanged();
+		return pProp->entindex();
+		//CBasePlayer* pRequestingPlayer = UTIL_GetCommandClient();
+		//edict_t *pClient = engine->PEntityOfEntIndex(pRequestingPlayer->entindex());
+		//engine->ClientCommand(pClient, "pet_created %i;\n", pProp->entindex());
+	}
+	return -1;
+}
+
+void SpawnLookSpot_Server(const CCommand &args)
+{
+
+	std::string model_lookspot = "models\\sithlord\\lookspot.mdl";
+	std::string model_lookspothalo = "models\\sithlord\\lookspothalo.mdl";
+	std::string model_lookspotdir = "models\\sithlord\\lookdir.mdl";
+	CBasePlayer* pPlayer = UTIL_GetLocalPlayer();
+	if (pPlayer->GetHealth() <= 0)
+		return;
+	
+	int index_lookspot = spawnModelHelper(model_lookspot);
+	int index_lookspothalo = spawnModelHelper(model_lookspothalo);
+	int index_lookspotdir = spawnModelHelper(model_lookspotdir);
+
+	CBasePlayer* pRequestingPlayer = UTIL_GetCommandClient();
+	edict_t *pClient = engine->PEntityOfEntIndex(pRequestingPlayer->entindex());
+	engine->ClientCommand(pClient, "lookspot_created %i %i %i;\n", index_lookspot, index_lookspothalo, index_lookspotdir);
+
+}
+ConCommand spawn_lookspot_server("spawn_lookspot", SpawnLookSpot_Server, "For internal use only (eventually.) Creates the lookspot UI world elements.", FCVAR_NONE);
+
+void SetPropVisibility(const CCommand &args)
+{
+	int iEntityIndex = (args.ArgC() > 1) ? Q_atoi(args[1]) : -1;
+	CBaseEntity* pTopEntity = (iEntityIndex >= 0) ? CBaseEntity::Instance(iEntityIndex) : (CBaseEntity*)UTIL_GetLocalPlayer();
+	if (pTopEntity) {
+		bool bVisValue = (args.ArgC() > 2) ? Q_strcmp(args[2], "0") : pTopEntity->IsEffectActive(EF_NODRAW);
+		CBaseEntity* pEntity = pTopEntity;
+		while (pEntity)
+		{
+			if (bVisValue && pEntity->IsEffectActive(EF_NODRAW))
+			{
+				pEntity->RemoveEffects(EF_NODRAW); // Make the entity visibile
+				if (pTopEntity->IsPlayer())
+				{
+					pEntity->RemoveEffects(EF_NOSHADOW);
+				}
+			}
+			else if (!bVisValue && !pEntity->IsEffectActive(EF_NODRAW))
+			{
+				pEntity->AddEffects(EF_NODRAW); // Make the entity invisible
+				if (pTopEntity->IsPlayer())
+				{
+					pEntity->AddEffects(EF_NOSHADOW);
+				}
+			}
+			pEntity = (pTopEntity == pEntity) ? pTopEntity->FirstMoveChild() : pEntity->NextMovePeer();
+		}
 	}
 }
-ConCommand spawn_pet_server("spawn_pet_server", SpawnPet_Server, "For internal use only.", FCVAR_HIDDEN);
+ConCommand set_prop_vis("set_prop_vis", SetPropVisibility, "For internal use only.", FCVAR_HIDDEN);
 
 void SpawnJunk(const CCommand &args)
 {

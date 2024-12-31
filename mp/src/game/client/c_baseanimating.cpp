@@ -3208,6 +3208,11 @@ int C_BaseAnimating::DrawModel( int flags )
 	// If we're visualizing our bboxes, draw them
 	DrawBBoxVisualizations();
 
+	if (this->IsHotlink())
+	{
+		g_pAnarchyManager->OnHotlinkDraw(this, drawn);
+	}
+
 	return drawn;
 }
 

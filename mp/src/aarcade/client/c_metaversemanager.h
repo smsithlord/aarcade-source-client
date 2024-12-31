@@ -559,7 +559,7 @@ private:
 	KeyValues* m_pVolatileSavesKV;
 	bool m_bHasDisconnected;
 	user_t* m_pLocalUser;
-	bool m_bHostSessionNow;
+	bool m_bHostSessionNow;	// OBSOLETE! This variable should no longer be used. It was for waiting for Steam avatar to be fetched.
 	std::map<std::string, object_update_t*> m_pendingObjectUpdates;
 	std::map<std::string, user_update_t*> m_pendingUserUpdates;
 	std::vector<C_DynamicProp*> m_avatarDeathList;
