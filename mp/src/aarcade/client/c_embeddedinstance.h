@@ -25,7 +25,7 @@ public:
 	virtual C_EmbeddedInstance* GetParentSelectedEmbeddedInstance() { return null; }
 	virtual void Update() { DevMsg("ERROR: Base method called!\n"); };
 	virtual void Close() {};
-	virtual void TakeScreenshot() {};
+	virtual void TakeScreenshot(std::string nextTaskScreenshotName = "") {};
 	virtual std::string GetURL() { return ""; }
 	virtual void CleanUpTexture() {};
 

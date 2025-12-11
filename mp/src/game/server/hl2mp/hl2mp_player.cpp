@@ -1310,7 +1310,7 @@ void CHL2MP_Player::DeathSound( const CTakeDamageInfo &info )
 	EmitSound( filter, entindex(), ep );
 }
 
-#include <vector>
+#include <vector>	// Added for Anarchy Arcade
 CBaseEntity* CHL2MP_Player::EntSelectSpawnPoint( void )
 {
 	// Added for Anarchy Arcade BEGIN

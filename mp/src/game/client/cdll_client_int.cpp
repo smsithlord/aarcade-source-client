@@ -374,7 +374,7 @@ public:
 
 	void OnGameUIActivated( void )
 	{
-		IGameEvent *event = gameeventmanager->CreateEventAA( "gameui_activated" );
+		IGameEvent *event = gameeventmanager->CreateEventAA( "gameui_activated" );	// Added for Anarchy Arcade
 		if ( event )
 		{
 			gameeventmanager->FireEventClientSide( event );
@@ -383,7 +383,7 @@ public:
 
 	void OnGameUIHidden( void )
 	{
-		IGameEvent *event = gameeventmanager->CreateEventAA( "gameui_hidden" );
+		IGameEvent *event = gameeventmanager->CreateEventAA("gameui_hidden");	// Added for Anarchy Arcade
 		if ( event )
 		{
 			gameeventmanager->FireEventClientSide( event );

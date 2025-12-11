@@ -519,11 +519,11 @@ void C_InstanceManager::ApplyChanges(C_PropShortcutEntity* pShortcut, bool bShou
 
 	// position
 	char buf[AA_MAX_STRING];
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", object->origin.x, object->origin.y, object->origin.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", object->origin.x, object->origin.y, object->origin.z);
 	std::string position = buf;
 
 	// rotation
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", object->angles.x, object->angles.y, object->angles.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", object->angles.x, object->angles.y, object->angles.z);
 	std::string rotation = buf;
 
 	int slave = (object->slave) ? 1 : 0;
@@ -798,7 +798,7 @@ void C_InstanceManager::SpawnObject(object_t* object, bool bIsAutoplayObject)
 
 	int iGoodIsAutoplayObject = (bShouldBeAutoplayObject || bIsAutoplayObject) ? 1 : 0;
 
-	std::string msg = VarArgs("spawnshortcut \"%s\" \"%s\" \"%s\" \"%s\" %.10f %.10f %.10f %.10f %.10f %.10f %.10f %i %i %i %i %i %i %i\n", object->objectId.c_str(), object->itemId.c_str(), goodModelId.c_str(), modelFile.c_str(), object->origin.x, object->origin.y, object->origin.z, object->angles.x, object->angles.y, object->angles.z, object->scale, iIsSlaveObject, object->body, object->skin, object->parentEntityIndex, bShouldGhost, bIsNewObject, iGoodIsAutoplayObject);
+	std::string msg = VarArgs("spawnshortcut \"%s\" \"%s\" \"%s\" \"%s\" %.10g %.10g %.10g %.10g %.10g %.10g %.10g %i %i %i %i %i %i %i\n", object->objectId.c_str(), object->itemId.c_str(), goodModelId.c_str(), modelFile.c_str(), object->origin.x, object->origin.y, object->origin.z, object->angles.x, object->angles.y, object->angles.z, object->scale, iIsSlaveObject, object->body, object->skin, object->parentEntityIndex, bShouldGhost, bIsNewObject, iGoodIsAutoplayObject);
 	engine->ExecuteClientCmd(msg.c_str());	// servercmdfix , false);ClientCmd
 
 //	if (m_unspawnedObjects.empty())	// doing this msg here is probably spamming it.
@@ -2118,12 +2118,12 @@ void C_InstanceManager::CreateNewNode(std::string nodeName, C_PropShortcutEntity
 
 				// position
 				Vector localPosition = childOrigin;// pPropShortcutEntity->GetLocalOrigin();
-				Q_snprintf(buf1, sizeof(buf1), "%.10f %.10f %.10f", localPosition.x, localPosition.y, localPosition.z);
+				Q_snprintf(buf1, sizeof(buf1), "%.10g %.10g %.10g", localPosition.x, localPosition.y, localPosition.z);
 				std::string position = buf1;
 
 				// rotation
 				QAngle localAngles = childAngles;// pPropShortcutEntity->GetLocalAngles();
-				Q_snprintf(buf2, sizeof(buf2), "%.10f %.10f %.10f", localAngles.x, localAngles.y, localAngles.z);
+				Q_snprintf(buf2, sizeof(buf2), "%.10g %.10g %.10g", localAngles.x, localAngles.y, localAngles.z);
 				std::string rotation = buf2;
 
 				// is this a node itself?  prevent node-ception.
@@ -2163,12 +2163,12 @@ void C_InstanceManager::CreateNewNode(std::string nodeName, C_PropShortcutEntity
 
 						// position
 						//Vector localPosition = childOrigin;// pPropShortcutEntity->GetLocalOrigin();
-						//Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", localPosition.x, localPosition.y, localPosition.z);
+						//Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", localPosition.x, localPosition.y, localPosition.z);
 						//std::string position = buf;
 
 						// rotation
 						//QAngle localAngles = childAngles;// pPropShortcutEntity->GetLocalAngles();
-						//Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", localAngles.x, localAngles.y, localAngles.z);
+						//Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", localAngles.x, localAngles.y, localAngles.z);
 						//std::string rotation = buf;
 
 						float scale = pPropShortcutEntity->GetModelScale();

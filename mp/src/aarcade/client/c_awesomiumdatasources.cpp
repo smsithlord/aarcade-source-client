@@ -60,6 +60,8 @@ void UiDataSource::OnRequest(int request_id, const ResourceRequest& request, con
 {
 //	DevMsg("UiDataSource: OnRequest: %s\n", WebStringToCharString(path));
 
+	bool bResponseSent = false;
+
 	std::string requestPath = WebStringToCharString(path);	// everything after asset://ui/
 	std::string requestUrl = WebStringToCharString(request.url().spec());	// the entire Url
 
@@ -67,6 +69,7 @@ void UiDataSource::OnRequest(int request_id, const ResourceRequest& request, con
 	if (requestPath == "undefined")
 	{
 		SendResponse(request_id, 0, null, WSLit("text/html"));
+		bResponseSent = true;
 		return;
 	}
 
@@ -140,6 +143,7 @@ void UiDataSource::OnRequest(int request_id, const ResourceRequest& request, con
 				delete[] data;
 
 				SendResponse(request_id, strlen(generatedPage.c_str()), (unsigned char*)generatedPage.c_str(), WSLit("text/html"));
+				bResponseSent = true;
 			}
 			buf.Purge();
 		}
@@ -158,6 +162,7 @@ void UiDataSource::OnRequest(int request_id, const ResourceRequest& request, con
 				delete[] data;
 
 				SendResponse(request_id, strlen(loadedContent.c_str()), (unsigned char*)loadedContent.c_str(), WSLit("application/javascript"));
+				bResponseSent = true;
 			}
 			buf.Purge();
 		}
@@ -176,6 +181,7 @@ void UiDataSource::OnRequest(int request_id, const ResourceRequest& request, con
 				filesystem->Close(fileHandle);
 
 				SendResponse(request_id, bufferSize, responseBuffer, WSLit("text/css"));
+				bResponseSent = true;
 
 				delete[] responseBuffer;
 			}
@@ -196,6 +202,7 @@ void UiDataSource::OnRequest(int request_id, const ResourceRequest& request, con
 			filesystem->Close(fileHandle);
 
 			SendResponse(request_id, bufferSize, responseBuffer, WSLit("image"));
+			bResponseSent = true;
 
 			delete[] responseBuffer;
 			}
@@ -214,6 +221,7 @@ void UiDataSource::OnRequest(int request_id, const ResourceRequest& request, con
 				filesystem->Close(fileHandle);
 
 				SendResponse(request_id, bufferSize + 1, responseBuffer, WSLit("image"));
+				bResponseSent = true;
 
 				delete[] responseBuffer;
 			}
@@ -238,18 +246,61 @@ void UiDataSource::OnRequest(int request_id, const ResourceRequest& request, con
 
 				filesystem->Close(fileHandle);
 
-				if (bIsImage)
+				if (bIsImage) {
 					SendResponse(request_id, bufferSize + 1, responseBuffer, WSLit("image"));
-				else if (bIsFontTFF)
+					bResponseSent = true;
+				}
+				else if (bIsFontTFF) {
 					SendResponse(request_id, bufferSize + 1, responseBuffer, WSLit("application/x-font-ttf"));
-				else if (bIsFontWOFF)
+					bResponseSent = true;
+				}
+				else if (bIsFontWOFF) {
 					SendResponse(request_id, bufferSize + 1, responseBuffer, WSLit("application/x-font-woff"));
+					bResponseSent = true;
+				}
 
 				delete[] responseBuffer;
 			}
 			else
 			{
-				SendResponse(request_id, 0, null, WSLit("image"));
+				SendResponse(request_id, 0, null, WSLit("text/html"));
+				bResponseSent = true;
+			}
+		}
+		else if (shortPath.find("cache/steamhttpimages/") == 0)
+		{
+			FileHandle_t fileHandle;
+
+			fileHandle = filesystem->Open(VarArgs("%s", shortPath.c_str()), "rb", "DEFAULT_WRITE_PATH");
+			if (fileHandle)
+			{
+				int bufferSize = filesystem->Size(fileHandle);
+				unsigned char* responseBuffer = new unsigned char[bufferSize + 1];
+
+				filesystem->Read((void*)responseBuffer, bufferSize, fileHandle);
+				responseBuffer[bufferSize] = 0; // null terminator
+
+				filesystem->Close(fileHandle);
+
+				if (bIsImage) {
+					SendResponse(request_id, bufferSize + 1, responseBuffer, WSLit("image"));
+					bResponseSent = true;
+				}
+				else if (bIsFontTFF) {
+					SendResponse(request_id, bufferSize + 1, responseBuffer, WSLit("application/x-font-ttf"));
+					bResponseSent = true;
+				}
+				else if (bIsFontWOFF) {
+					SendResponse(request_id, bufferSize + 1, responseBuffer, WSLit("application/x-font-woff"));
+					bResponseSent = true;
+				}
+
+				delete[] responseBuffer;
+			}
+			else
+			{
+				SendResponse(request_id, 0, null, WSLit("text/html"));
+				bResponseSent = true;
 			}
 		}
 		else if (shortPath.find("cache/snapshots/") == 0)
@@ -268,18 +319,25 @@ void UiDataSource::OnRequest(int request_id, const ResourceRequest& request, con
 
 				filesystem->Close(fileHandle);
 
-				if (bIsImage)
+				if (bIsImage) {
 					SendResponse(request_id, bufferSize + 1, responseBuffer, WSLit("image"));
-				else if (bIsFontTFF)
+					bResponseSent = true;
+				}
+				else if (bIsFontTFF) {
 					SendResponse(request_id, bufferSize + 1, responseBuffer, WSLit("application/x-font-ttf"));
-				else if (bIsFontWOFF)
+					bResponseSent = true;
+				}
+				else if (bIsFontWOFF) {
 					SendResponse(request_id, bufferSize + 1, responseBuffer, WSLit("application/x-font-woff"));
+					bResponseSent = true;
+				}
 
 				delete[] responseBuffer;
 			}
 			else
 			{
-				SendResponse(request_id, 0, null, WSLit("image"));
+				SendResponse(request_id, 0, null, WSLit("text/html"));
+				bResponseSent = true;
 			}
 		}
 		else
@@ -305,17 +363,26 @@ void UiDataSource::OnRequest(int request_id, const ResourceRequest& request, con
 
 				filesystem->Close(fileHandle);
 
-				if (bIsImage)
+				if (bIsImage) {
 					SendResponse(request_id, bufferSize + 1, responseBuffer, WSLit("image"));
-				else if (bIsFontTFF)
+					bResponseSent = true;
+				}
+				else if (bIsFontTFF) {
 					SendResponse(request_id, bufferSize + 1, responseBuffer, WSLit("application/x-font-ttf"));
-				else if (bIsFontWOFF)
+					bResponseSent = true;
+				}
+				else if (bIsFontWOFF) {
 					SendResponse(request_id, bufferSize + 1, responseBuffer, WSLit("application/x-font-woff"));
+					bResponseSent = true;
+				}
 
 				delete[] responseBuffer;
 			}
 		}
 	}
+
+	if ( !bResponseSent )
+		SendResponse(request_id, 0, null, WSLit("text/html"));
 }
 
 ScreenshotDataSource::ScreenshotDataSource()
@@ -330,6 +397,8 @@ ScreenshotDataSource::~ScreenshotDataSource()
 
 void ScreenshotDataSource::OnRequest(int request_id, const ResourceRequest& request, const WebString& path)
 {
+	bool bResponseSent = false;
+
 //	DevMsg("ScreenshotDataSource: OnRequest: %s\n", WebStringToCharString(path));
 
 	std::string requestPath = WebStringToCharString(path);	// everything after asset://ui/
@@ -382,6 +451,7 @@ void ScreenshotDataSource::OnRequest(int request_id, const ResourceRequest& requ
 				delete[] data;
 
 				SendResponse(request_id, strlen(generatedPage.c_str()), (unsigned char*)generatedPage.c_str(), WSLit("text/html"));
+				bResponseSent = true;
 			}
 			buf.Purge();
 		}
@@ -400,6 +470,7 @@ void ScreenshotDataSource::OnRequest(int request_id, const ResourceRequest& requ
 				delete[] data;
 
 				SendResponse(request_id, strlen(loadedContent.c_str()), (unsigned char*)loadedContent.c_str(), WSLit("application/javascript"));
+				bResponseSent = true;
 			}
 			buf.Purge();
 		}
@@ -418,6 +489,7 @@ void ScreenshotDataSource::OnRequest(int request_id, const ResourceRequest& requ
 				filesystem->Close(fileHandle);
 
 				SendResponse(request_id, bufferSize, responseBuffer, WSLit("text/css"));
+				bResponseSent = true;
 
 				delete[] responseBuffer;
 			}
@@ -477,10 +549,14 @@ void ScreenshotDataSource::OnRequest(int request_id, const ResourceRequest& requ
 			filesystem->Close(fileHandle);
 
 			SendResponse(request_id, bufferSize + 1, responseBuffer, WSLit("image"));
+			bResponseSent = true;
 
 			delete[] responseBuffer;
 		}
 	}
+
+	if (!bResponseSent)
+		SendResponse(request_id, 0, null, WSLit("text/html"));
 }
 
 LocalDataSource::LocalDataSource()
@@ -495,6 +571,8 @@ LocalDataSource::~LocalDataSource()
 
 void LocalDataSource::OnRequest(int request_id, const ResourceRequest& request, const WebString& path)
 {
+	bool bResponseSent = false;
+
 	// Convert the path to a string
 	int len = path.ToUTF8(null, 0);
 	char* buf = new char[len + 1];
@@ -520,7 +598,8 @@ void LocalDataSource::OnRequest(int request_id, const ResourceRequest& request, 
 	if (found == std::string::npos)
 	{
 		//DevMsg("Requested local file is not a valid image file format: %s\n", requestPath.c_str());
-		SendResponse(request_id, 0, null, WSLit("image"));
+		SendResponse(request_id, 0, null, WSLit("text/html"));
+		bResponseSent = true;
 		return;
 	}
 
@@ -556,6 +635,7 @@ void LocalDataSource::OnRequest(int request_id, const ResourceRequest& request, 
 				filesystem->Close(fileHandle);
 
 				SendResponse(request_id, bufferSize + 1, responseBuffer, WSLit("image"));
+				bResponseSent = true;
 
 				delete[] responseBuffer;
 			}
@@ -563,15 +643,20 @@ void LocalDataSource::OnRequest(int request_id, const ResourceRequest& request, 
 		else
 		{
 			//DevMsg("Could not find local file for asset: %s\n", requestPath.c_str());
-			SendResponse(request_id, 0, null, WSLit("image"));
+			SendResponse(request_id, 0, null, WSLit("text/html"));
+			bResponseSent = true;
 		}
 	}
 	else
 	{
 		//DevMsg("Debug: %s : %s\n", requestPath.c_str(), ext.c_str());
 		//DevMsg("Only local IMAGE files can be referenced.\n");
-		SendResponse(request_id, 0, null, WSLit("image"));
+		SendResponse(request_id, 0, null, WSLit("text/html"));
+		bResponseSent = true;
 	}
+
+	if (!bResponseSent)
+		SendResponse(request_id, 0, null, WSLit("text/html"));
 }
 
 CacheDataSource::CacheDataSource()
@@ -586,6 +671,8 @@ CacheDataSource::~CacheDataSource()
 
 void CacheDataSource::OnRequest(int request_id, const ResourceRequest& request, const WebString& path)
 {
+	bool bResponseSent = false;
+
 	// Convert the path to a string
 	int len = path.ToUTF8(null, 0);
 	char* buf = new char[len + 1];
@@ -609,7 +696,8 @@ void CacheDataSource::OnRequest(int request_id, const ResourceRequest& request, 
 	if (found == std::string::npos)
 	{
 		//DevMsg("Requested local file is not a valid image file format: %s\n", requestPath.c_str());
-		SendResponse(request_id, 0, null, WSLit("image"));
+		SendResponse(request_id, 0, null, WSLit("text/html"));
+		bResponseSent = true;
 		return;
 	}
 
@@ -660,13 +748,18 @@ void CacheDataSource::OnRequest(int request_id, const ResourceRequest& request, 
 		else
 		{
 			//DevMsg("Could not find local file for asset: %s\n", requestPath.c_str());
-			SendResponse(request_id, 0, null, WSLit("image"));
+			SendResponse(request_id, 0, null, WSLit("text/html"));
+			bResponseSent = true;
 		}
 	}
 	else
 	{
 		//DevMsg("Debug: %s : %s\n", requestPath.c_str(), ext.c_str());
 		//DevMsg("Only local IMAGE files can be referenced.\n");
-		SendResponse(request_id, 0, null, WSLit("image"));
+		SendResponse(request_id, 0, null, WSLit("text/html"));
+		bResponseSent = true;
 	}
+
+	if (!bResponseSent)
+		SendResponse(request_id, 0, null, WSLit("text/html"));
 }

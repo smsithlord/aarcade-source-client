@@ -30,6 +30,7 @@ public:
 	void OnSteamBrowserInstanceCreated(C_SteamBrowserInstance* pSteamBrowserInstance);
 	bool IsAlreadyInInstances(C_SteamBrowserInstance* pSteamBrowserInstance);
 	C_SteamBrowserInstance* FindSteamBrowserInstanceByEntityIndex(int iEntityIndex);
+	C_SteamBrowserInstance* FindSteamBrowserInstanceByUrlKeyword(std::string keyword);
 	C_SteamBrowserInstance* FindSteamBrowserInstance(std::string id);
 	C_SteamBrowserInstance* FindSteamBrowserInstance(unsigned int unHandle);
 	C_SteamBrowserInstance* GetPendingSteamBrowserInstance();

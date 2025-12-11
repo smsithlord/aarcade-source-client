@@ -9,7 +9,7 @@
 #include "iclientrenderable.h"
 #include "toolframework_client.h"
 
-#include "aarcade/client/c_anarchymanager.h"
+#include "aarcade/client/c_anarchymanager.h"	// Added for Anarchy Arcade
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"

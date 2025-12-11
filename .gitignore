@@ -21,6 +21,7 @@ mp/src/materialsystem/stdshaders/Debug_dx9_mod_hl2mp/*
 mp/src/game/client/Debug_mod_hl2mp/*
 mp/src/game/server/Debug_mod_hl2mp/*
 *.pdb
+mp/src/.vs/*
 
 
 # Visual Studio 

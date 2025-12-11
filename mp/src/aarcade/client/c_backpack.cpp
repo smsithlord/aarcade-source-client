@@ -450,7 +450,35 @@ void C_Backpack::MergDb()
 	// INSTANCES
 	g_pAnarchyManager->GetMetaverseManager()->LoadAllLocalInstances(m_pDb, &m_instances);
 	//DevMsg("Instances: %u\n", m_instances.size());
+
+	// Added for KeyValues string table fix
 	auto instancesIt = m_instances.begin();
+	while (instancesIt != m_instances.end())
+	{
+		const std::string& instanceId = instancesIt->first;
+		InstanceRecord& rec = instancesIt->second;
+
+		if (!g_pAnarchyManager->GetInstanceManager()->GetInstance(instanceId))
+		{
+			// Only add if it doesn't already exist
+			g_pAnarchyManager->GetInstanceManager()->AddInstance(
+				rec.legacy,
+				instanceId,
+				rec.mapId,
+				rec.title,
+				rec.file,
+				rec.workshopIds,
+				rec.mountIds,
+				rec.autoplayId,
+				rec.style
+				);
+		}
+
+		// No deleteThis / nulling-out needed; just move on
+		++instancesIt;
+	}
+
+	/*auto instancesIt = m_instances.begin();
 	while (instancesIt != m_instances.end())
 	{
 		//DevMsg("Instance from DB addon is: %s\n", instancesIt->first.c_str());
@@ -485,6 +513,7 @@ void C_Backpack::MergDb()
 		}
 		instancesIt++;
 	}
+	*/
 	//m_instances.clear();	// why aren't these cleared??
 }
 

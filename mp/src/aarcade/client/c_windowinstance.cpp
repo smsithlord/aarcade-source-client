@@ -26,7 +26,7 @@ C_WindowInstance::~C_WindowInstance()
 	DevMsg("WindowInstance: Destructor\n");
 }
 
-void C_WindowInstance::TakeScreenshot() {
+void C_WindowInstance::TakeScreenshot(std::string nextTaskScreenshotName) {
 	DevMsg("Take screenshot (C_WindowInstance)\n");
 }
 

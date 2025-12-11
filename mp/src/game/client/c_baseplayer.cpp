@@ -57,7 +57,7 @@
 // NVNT haptics system interface
 #include "haptics/ihaptics.h"
 
-#include "../aarcade/client/c_anarchymanager.h"
+#include "../aarcade/client/c_anarchymanager.h"	// Added for Anarchy Arcade
 
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"

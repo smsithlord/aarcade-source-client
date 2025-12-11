@@ -369,7 +369,7 @@ void C_QuestManager::DoMarkCollectibleObjectForQuest(std::string questId, std::s
 	// "quest hide" means make non-collide & invisible.
 	int iShouldSpin = (pQuest->bCollectiblesSpin) ? 1 : 0;
 	int iCollectiblesCollide = (pQuest->bCollectiblesCollide) ? 1 : 0;
-	engine->ClientCmd(VarArgs("quest_mark_collectible_entity %i %i %.10f %.10f %.10f %i;", pObject->entityIndex, iShouldSpin, pObject->angles.x, pObject->angles.y, pObject->angles.z, iCollectiblesCollide));
+	engine->ClientCmd(VarArgs("quest_mark_collectible_entity %i %i %.10g %.10g %.10g %i;", pObject->entityIndex, iShouldSpin, pObject->angles.x, pObject->angles.y, pObject->angles.z, iCollectiblesCollide));
 
 	C_BaseEntity* pEntity = C_BaseEntity::Instance(pObject->entityIndex);
 	if (pEntity)
@@ -479,7 +479,7 @@ void C_QuestManager::DoUnmarkCollectibleObjectForQuest(std::string questId, std:
 	// "quest hide" means make non-collide & invisible.
 	int iShouldSpin = (pQuest->bCollectiblesSpin) ? 1 : 0;
 	int iCollectiblesCollide = (pQuest->bCollectiblesCollide) ? 1 : 0;
-	engine->ClientCmd(VarArgs("quest_unmark_collectible_entity %i %.10f %.10f %.10f %i;", pObject->entityIndex, pObject->angles.x, pObject->angles.y, pObject->angles.z, iCollectiblesCollide));
+	engine->ClientCmd(VarArgs("quest_unmark_collectible_entity %i %.10g %.10g %.10g %i;", pObject->entityIndex, pObject->angles.x, pObject->angles.y, pObject->angles.z, iCollectiblesCollide));
 
 	C_BaseEntity* pEntity = C_BaseEntity::Instance(pObject->entityIndex);
 	if (pEntity)
@@ -716,7 +716,7 @@ void C_QuestManager::QuestSuccess(std::string questId)
 #include <algorithm>
 bool C_QuestManager::IsObjectUsedByAnyEZQuests(object_t* object)
 {
-	if (m_EZQuests.size() <= 0)
+	if(m_EZQuests.empty())
 	{
 		return false;
 	}
@@ -1731,6 +1731,11 @@ bool C_QuestManager::OnPlayerUse()
 
 void C_QuestManager::InitializeAndBeginAllQuests()
 {
+	if (m_EZQuests.empty())
+	{
+		return;
+	}
+
 	// Load our EZQuests into real quests.
 	EZQuest_t* pEZQuest;
 	std::vector<std::string> arguments;

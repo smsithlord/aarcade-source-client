@@ -186,6 +186,11 @@ struct pet_t {
 	//int iTargetEntityIndex;
 };
 
+struct steamHTTPImageDownload_t {
+	std::string url;
+	std::string status;	// "pending", "success", "failure"
+};
+
 enum aaPetState
 {
 	AAPETSTATE_NONE = -1,
@@ -203,6 +208,16 @@ enum aaPetBehavior
 	AAPETBEHAVIOR_WANDER
 };
 
+enum aaPetStaggerPattern
+{
+	PET_STAGGER_SINGLE_FILE = 0,      // Near single file, with slight variations
+	PET_STAGGER_THEME_PARK_LINE,  // Staggered queue formation like in a theme park
+	PET_STAGGER_CIRCLE,           // Surrounding the target in a circular crowd
+	PET_STAGGER_SEMI_CIRCLE,      // Semi-circle around the target
+	PET_STAGGER_V_SHAPE,          // V-formation facing forward
+	PET_STAGGER_RANDOM_BLOB       // Loose, natural cluster around the target
+};
+
 class C_AnarchyManager : public CAutoGameSystemPerFrame
 {
 public:
@@ -211,6 +226,9 @@ public:
 
 	void Tester();
 	void DownloadSingleFile(std::string url);
+	void DownloadSteamHTTPImage(std::string url);
+	unsigned int HexStrToUint32(const char* hex);
+	void ClearSteamHTTPImageDownloadRequests();
 
 	virtual bool Init();
 	virtual void PostInit();
@@ -259,6 +277,11 @@ public:
 	void RestorePetStates();
 	void ProcessPendingPetsRestore();
 	void AfterPendingPetsRestore();
+	void AfterPendingPetsLoadBatch();
+
+	// for cylcing between different batches of pets (virtual TV stuff show stuff in mind.)
+	void LoadPetBatch(std::string batchName);
+	void SavePetBatch(std::string batchName);
 
 	pet_t* GetPlayAsPet();
 	void SetPlayAsPet(pet_t* pPet);
@@ -625,7 +648,10 @@ public:
 
 	void OnConnectionMetricsUpdate(std::vector<int> metrics);
 
+	void ShmotimeJavaScriptInject(std::string text);
+	void SteamworksBrowserJavaScriptInject(std::string text);	// To play audio from the HUD in the AAI Steamworks tab, if it exists.
 	void SteamTalker(std::string text, std::string voice, float flPitch, float flRate, float flVolume);
+	void OnWebResponse(std::string responseText);
 	void OnAIChatBotResponse(std::string responseText);
 	void OnAIChatBotSpeakStart(std::string botType);
 	void OnAIChatBotSpeakEnd(std::string botType);
@@ -733,7 +759,17 @@ public:
 	//void SetForegroundShortcut(C_PropShortcutEntity* pShortcut);
 	//C_PropShortcutEntity* GetForegroundShortcut() { return m_pForegroundShortcut; }
 
+	Vector GetPetStaggeredPosition(unsigned int u, const Vector &vTargetPos, const QAngle &qTargetRot, pet_t* pPet, float minDist);
+	void ClearPetStaggeredPositions();
+	void CycleStaggerPattern(int iDirection = 1);
+
+	void SetNextTaskScreenshot(std::string filepath);
+	std::string GetNextTaskScreenshot();
+
+	void PerformAutoScreenshot();
+
 	// accessors
+	aaPetStaggerPattern GetCurrentStaggerPattern() { return m_eStaggerPattern; }
 	std::string GetFailedModelThumbName() { return failedModelName; }
 	ISourceVirtualReality::VREye GetEye() { return m_eye; }
 	int GetNoDrawShortcutsValue();
@@ -844,6 +880,15 @@ public:
 	void DownloadFileResponse(HTTPRequestCompleted_t *pResult, bool bIOFailure);
 	CCallResult<C_AnarchyManager, HTTPRequestCompleted_t> m_DownloadFileCallback;
 
+	void SteamHTTPImageDownloadResponse(HTTPRequestCompleted_t *pResult, bool bIOFailure);
+	CCallResult<C_AnarchyManager, HTTPRequestCompleted_t> m_SteamHTTPImageDownloadCallback;
+
+	void SteamHTTPImageDownloadHeaderCheck(HTTPRequestCompleted_t *pResult, bool bIOFailure);
+	CCallResult<C_AnarchyManager, HTTPRequestCompleted_t> m_SteamHTTPImageDownloadHeaderCheck;
+
+	//void SteamHTTPImageDownloadHeadersReceived(HTTPRequestHeadersReceived_t *pResult);
+	//CCallResult<C_AnarchyManager, HTTPRequestHeadersReceived_t> m_SteamHTTPImageDownloadHeadersReceived;
+
 	//LRESULT CALLBACK HookWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 	void InitDragDrop(HWND hWnd);
 	void HandleDragDrop(HDROP hDrop);
@@ -865,6 +910,20 @@ protected:
 	void ScanForLegacySave(std::string path, std::string searchPath, std::string workshopIds, std::string mountIds, C_Backpack* pBackpack);
 
 private:
+	std::map<uint64, steamHTTPImageDownload_t*> m_steamHTTPImageDownloadRequests;
+
+	std::string m_nextTaskScreenshot;
+
+	Vector AdjustForMinDist(Vector vPos, float minDist);
+	Vector ComputeSingleFilePosition(unsigned int u, const Vector &vTargetPos, const QAngle &qTargetRot);
+	Vector ComputeThemeParkLinePosition(unsigned int u, const Vector &vTargetPos, const QAngle &qTargetRot);
+	Vector ComputeCirclePosition(unsigned int u, const Vector &vTargetPos);
+	Vector ComputeSemiCirclePosition(unsigned int u, const Vector &vTargetPos, const QAngle &qTargetRot);
+	Vector ComputeVShapePosition(unsigned int u, const Vector &vTargetPos, const QAngle &qTargetRot);
+	Vector ComputeRandomBlobPosition(unsigned int u, const Vector &vTargetPos);
+	aaPetStaggerPattern m_eStaggerPattern;// Current stagger pattern
+	std::vector<Vector> m_vPetPositions;// Stores positions of pets for collision avoidance
+
 	Vector m_previousPetTargetPos;
 
 	ConVar* m_pFixedCameraMaxDistConVar;

@@ -1245,15 +1245,15 @@ protected:
 	float	m_flCheckSuppressTime;		// Amount of time to suppress the checking for targets
 	bool	m_flLastDenySoundPlayed;	// Debounce for deny sound
 	int		m_nAttack2Debounce;
-	bool	m_bAiming;
-	bool	m_bFiring;
-	bool	m_bReloading;
-	bool	m_bHoldingReload;
-	bool	m_bHoldingFire;
-	float	m_flFiringHeldTime;
-	float	m_flReloadHeldTime;
-	bool	m_bDoubleReloading;
-	float	m_flDoubleReloadingTime;
+	bool	m_bAiming;	// Added for Anarchy Arcade
+	bool	m_bFiring;	// Added for Anarchy Arcade
+	bool	m_bReloading;	// Added for Anarchy Arcade
+	bool	m_bHoldingReload;	// Added for Anarchy Arcade
+	bool	m_bHoldingFire;	// Added for Anarchy Arcade
+	float	m_flFiringHeldTime;	// Added for Anarchy Arcade
+	float	m_flReloadHeldTime;	// Added for Anarchy Arcade
+	bool	m_bDoubleReloading;	// Added for Anarchy Arcade
+	float	m_flDoubleReloadingTime;	// Added for Anarchy Arcade
 
 	CNetworkVar( bool,	m_bActive );
 	CNetworkVar( int,	m_EffectState );		// Current state of the effects on the gun

@@ -820,7 +820,12 @@ void C_SteamBrowserInstance::OnBrowserInstanceStartRequest(const char* pchURL, c
 		steamapicontext->SteamHTMLSurface()->AllowStartRequest(m_unHandle, false);
 
 		std::string params = urlBuf.substr(38);
-		if (params.find("?aichatbotresponse=") == 0)
+		if (params.find("?onwebresponse=") == 0)
+		{
+			std::string responseText = params.substr(15, std::string::npos);
+			g_pAnarchyManager->OnWebResponse(responseText);
+		}
+		else if (params.find("?aichatbotresponse=") == 0)
 		{
 			std::string responseText = params.substr(19, std::string::npos);
 			g_pAnarchyManager->OnAIChatBotResponse(responseText);
@@ -1303,8 +1308,9 @@ void C_SteamBrowserInstance::Update()
 		this->OnProxyBind(null);
 }
 
-void C_SteamBrowserInstance::TakeScreenshot()
+void C_SteamBrowserInstance::TakeScreenshot(std::string nextTaskScreenshotName)
 {
+	g_pAnarchyManager->SetNextTaskScreenshot(nextTaskScreenshotName);
 	m_bTakeScreenshot = true;
 }
 
@@ -1349,8 +1355,24 @@ void C_SteamBrowserInstance::TakeScreenshotNow(ITexture* pTexture, IVTFTexture *
 	// scrub the item title to be windows path friendly.
 	std::string scrubbedItemTitle = scrubBadAlphabet(itemTitle);
 	std::string screenshotFolder = "taskshots/" + scrubbedItemTitle;
+
+	// if there's a "nextTaskScreenshot" that isn't empty, then use it
+	std::string nextTaskScreenshot = g_pAnarchyManager->GetNextTaskScreenshot();
+	if (nextTaskScreenshot != "") {
+		std::string nextTaskScreenshotFolder = nextTaskScreenshot;
+		std::string nextFolderPath = nextTaskScreenshotFolder.substr(0, nextTaskScreenshotFolder.find_last_of("/\\"));
+		screenshotFolder = "screenshots/" + nextFolderPath;
+	}
+
+
 	g_pFullFileSystem->CreateDirHierarchy(screenshotFolder.c_str(), "DEFAULT_WRITE_PATH");
 	std::string goodFile = screenshotFolder + "/" + scrubbedItemTitle + " " + dateString + ".tga";
+
+	// if there's a "nextTaskScreenshot" that isn't empty, overwrite good file too
+	if (nextTaskScreenshot != "") {
+		std::string nextTaskScreenshotFile = nextTaskScreenshot.substr(nextTaskScreenshot.find_last_of("/\\") + 1);
+		goodFile = screenshotFolder + "/" + nextTaskScreenshotFile + ".tga";
+	}
 
 	/*
 	unsigned int screenshotNumber = 0;

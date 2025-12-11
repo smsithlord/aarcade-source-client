@@ -2455,6 +2455,11 @@ bool CGameMovement::CheckJumpButton( void )
 	//flMul *= vrUpwardMultiplyer;
 	// End added for Anarchy Arcade (hl2vr)
 
+	// Added for Anarchy Arcade
+	float flJumpPower = cvar->FindVar("jump_power")->GetFloat();
+	flMul *= flJumpPower;
+	// End added for Anarchy Arcade
+
 	// Acclerate upward
 	// If we are ducking...
 	float startz = mv->m_vecVelocity[2];

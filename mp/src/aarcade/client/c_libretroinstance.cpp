@@ -815,8 +815,9 @@ void C_LibretroInstance::Update()
 	}
 }
 
-void C_LibretroInstance::TakeScreenshot()
+void C_LibretroInstance::TakeScreenshot(std::string nextTaskScreenshotName)
 {
+	g_pAnarchyManager->SetNextTaskScreenshot(nextTaskScreenshotName);
 	m_bTakeScreenshot = true;
 }
 
@@ -861,8 +862,23 @@ void C_LibretroInstance::TakeScreenshotNow(ITexture* pTexture, IVTFTexture *pVTF
 	// scrub the item title to be windows path friendly.
 	std::string scrubbedItemTitle = scrubBadAlphabet(itemTitle);
 	std::string screenshotFolder = "taskshots/" + scrubbedItemTitle;
+
+	// if there's a "nextTaskScreenshot" that isn't empty, then use it
+	std::string nextTaskScreenshot = g_pAnarchyManager->GetNextTaskScreenshot();
+	if (nextTaskScreenshot != "") {
+		std::string nextTaskScreenshotFolder = nextTaskScreenshot;
+		std::string nextFolderPath = nextTaskScreenshotFolder.substr(0, nextTaskScreenshotFolder.find_last_of("/\\"));
+		screenshotFolder = "screenshots/" + nextFolderPath;
+	}
+
 	g_pFullFileSystem->CreateDirHierarchy(screenshotFolder.c_str(), "DEFAULT_WRITE_PATH");
 	std::string goodFile = screenshotFolder + "/" + scrubbedItemTitle + " " + dateString + ".tga";
+
+	// if there's a "nextTaskScreenshot" that isn't empty, overwrite good file too
+	if (nextTaskScreenshot != "") {
+		std::string nextTaskScreenshotFile = nextTaskScreenshot.substr(nextTaskScreenshot.find_last_of("/\\") + 1);
+		goodFile = screenshotFolder + "/" + nextTaskScreenshotFile + ".tga";
+	}
 
 	/*
 	unsigned int screenshotNumber = 0;

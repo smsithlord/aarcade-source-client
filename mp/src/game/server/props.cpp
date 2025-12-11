@@ -6055,9 +6055,9 @@ void CC_Prop_Dynamic_Create( const CCommand &args )
 	{
 		char buf[512];
 		// Pass in standard key values
-		Q_snprintf( buf, sizeof(buf), "%.10f %.10f %.10f", tr.endpos.x, tr.endpos.y, tr.endpos.z );
+		Q_snprintf( buf, sizeof(buf), "%.10g %.10g %.10g", tr.endpos.x, tr.endpos.y, tr.endpos.z );
 		pProp->KeyValue( "origin", buf );
-		Q_snprintf( buf, sizeof(buf), "%.10f %.10f %.10f", angles.x, angles.y, angles.z );
+		Q_snprintf( buf, sizeof(buf), "%.10g %.10g %.10g", angles.x, angles.y, angles.z );
 		pProp->KeyValue( "angles", buf );
 		pProp->KeyValue( "model", pModelName );
 		pProp->KeyValue( "solid", pVCollide ? "6" : "2" );
@@ -6140,9 +6140,9 @@ CPhysicsProp* CreatePhysicsProp( const char *pModelName, const Vector &vTraceSta
 	{
 		char buf[512];
 		// Pass in standard key values
-		Q_snprintf( buf, sizeof(buf), "%.10f %.10f %.10f", tr.endpos.x, tr.endpos.y, tr.endpos.z );
+		Q_snprintf( buf, sizeof(buf), "%.10g %.10g %.10g", tr.endpos.x, tr.endpos.y, tr.endpos.z );
 		pProp->KeyValue( "origin", buf );
-		Q_snprintf( buf, sizeof(buf), "%.10f %.10f %.10f", angles.x, angles.y, angles.z );
+		Q_snprintf( buf, sizeof(buf), "%.10g %.10g %.10g", angles.x, angles.y, angles.z );
 		pProp->KeyValue( "angles", buf );
 		pProp->KeyValue( "model", pModelName );
 		pProp->KeyValue( "fademindist", "-1" );

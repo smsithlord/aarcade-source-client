@@ -479,9 +479,9 @@ void FogTest(const CCommand &args)
 	// Pass in standard key values
 	char buf[512];
 	// Pass in standard key values
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", origin.x, origin.y, origin.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", origin.x, origin.y, origin.z);
 	pDustCloudEntity->KeyValue("origin", buf);
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", angles.x, angles.y, angles.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", angles.x, angles.y, angles.z);
 	pDustCloudEntity->KeyValue("angles", buf);
 
 	pDustCloudEntity->KeyValue("Alpha", "30");
@@ -521,9 +521,9 @@ void SmokeTest(const CCommand &args)
 	// Pass in standard key values
 	char buf[512];
 	// Pass in standard key values
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", origin.x, origin.y, origin.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", origin.x, origin.y, origin.z);
 	pDSmokeVolumeEntity->KeyValue("origin", buf);
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", angles.x, angles.y, angles.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", angles.x, angles.y, angles.z);
 	pDSmokeVolumeEntity->KeyValue("angles", buf);
 
 
@@ -580,9 +580,9 @@ void SpawnShortcut(const CCommand &args)
 	// Pass in standard key values
 	char buf[512];
 	// Pass in standard key values
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", origin.x, origin.y, origin.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", origin.x, origin.y, origin.z);
 	pShortcut->KeyValue("origin", buf);
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", angles.x, angles.y, angles.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", angles.x, angles.y, angles.z);
 	pShortcut->KeyValue("angles", buf);
 
 	std::vector<std::string> badModels;
@@ -935,13 +935,13 @@ void SetPetAttach(const CCommand &args)
 	float flLocalScale = pClonedEntity->GetModelScale();
 	//DevMsg("Local Scale: %02f\n", flLocalScale);
 	Vector localOrigin = pClonedBaseEntity->GetLocalOrigin();
-	//DevMsg("Local Origin: %02f %02f %02f\n", localOrigin.x, localOrigin.y, localOrigin.z);
+	//DevMsg("Local Origin: %.6g %.6g %.6g\n", localOrigin.x, localOrigin.y, localOrigin.z);
 	QAngle localAngles = pClonedBaseEntity->GetLocalAngles();
-	//DevMsg("Local Angles: %02f %02f %02f\n", localAngles.x, localAngles.y, localAngles.z);
+	//DevMsg("Local Angles: %.6g %.6g %.6g\n", localAngles.x, localAngles.y, localAngles.z);
 
 	CBasePlayer* pRequestingPlayer = UTIL_GetCommandClient();
 	edict_t *pClient = engine->PEntityOfEntIndex(pRequestingPlayer->entindex());
-	//engine->ClientCommand(pClient, UTIL_VarArgs("savepetattach \"%s\" \"%s\" %02f %02f %02f %02f %02f %02f %02f;", attachment_name.c_str(), modelName.c_str(), localOrigin.x, localOrigin.y, localOrigin.z, localAngles.x, localAngles.y, localAngles.z, flLocalScale));
+	//engine->ClientCommand(pClient, UTIL_VarArgs("savepetattach \"%s\" \"%s\" %.6g %.6g %.6g %.6g %.6g %.6g %02f;", attachment_name.c_str(), modelName.c_str(), localOrigin.x, localOrigin.y, localOrigin.z, localAngles.x, localAngles.y, localAngles.z, flLocalScale));
 	engine->ClientCommand(pClient, UTIL_VarArgs("savepetattach \"%s\" \"%s\" %f %f %f %f %f %f %f;", attachment_name.c_str(), modelName.c_str(), localOrigin.x, localOrigin.y, localOrigin.z, localAngles.x, localAngles.y, localAngles.z, flLocalScale));
 }
 ConCommand setpetattach("setpetattach", SetPetAttach, "Sets the entity's parent.", FCVAR_NONE);
@@ -972,9 +972,9 @@ void TestSetPetAttach(const CCommand &args)
 	//float flLocalScale = pClonedEntity->GetModelScale();
 	//DevMsg("Local Scale: %02f\n", flLocalScale);
 	//Vector localOrigin = pClonedBaseEntity->GetLocalOrigin();
-	//DevMsg("Local Origin: %02f %02f %02f\n", localOrigin.x, localOrigin.y, localOrigin.z);
+	//DevMsg("Local Origin: %.6g %.6g %.6g\n", localOrigin.x, localOrigin.y, localOrigin.z);
 	//QAngle localAngles = pClonedBaseEntity->GetLocalAngles();
-	//DevMsg("Local Angles: %02f %02f %02f\n", localAngles.x, localAngles.y, localAngles.z);
+	//DevMsg("Local Angles: %.6g %.6g %.6g\n", localAngles.x, localAngles.y, localAngles.z);
 
 	//CBasePlayer* pRequestingPlayer = UTIL_GetCommandClient();
 	//edict_t *pClient = engine->PEntityOfEntIndex(pRequestingPlayer->entindex());
@@ -1009,9 +1009,9 @@ void LoadPetAttach(const CCommand &args)
 	/*float flLocalScale = pClonedEntity->GetModelScale();
 	DevMsg("Local Scale: %02f\n", flLocalScale);
 	Vector localOrigin = pClonedBaseEntity->GetLocalOrigin();
-	DevMsg("Local Origin: %02f %02f %02f\n", localOrigin.x, localOrigin.y, localOrigin.z);
+	DevMsg("Local Origin: %.6g %.6g %.6g\n", localOrigin.x, localOrigin.y, localOrigin.z);
 	QAngle localAngles = pClonedBaseEntity->GetLocalAngles();
-	DevMsg("Local Angles: %02f %02f %02f\n", localAngles.x, localAngles.y, localAngles.z);*/
+	DevMsg("Local Angles: %.6g %.6g %.6g\n", localAngles.x, localAngles.y, localAngles.z);*/
 	//pClonedEntity->SetSolid(SOLID_NONE);
 }
 ConCommand loadpetattach("loadpetattach", LoadPetAttach, "Internal use only.", FCVAR_NONE);
@@ -1149,9 +1149,9 @@ void AnimalityByTargetname(const CCommand &args)
 
 
 			/*char buf[512];
-			Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", origin.x, origin.y, origin.z);
+			Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", origin.x, origin.y, origin.z);
 			std::string targetOrigin = buf;
-			Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", angles.x, angles.y, angles.z);
+			Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", angles.x, angles.y, angles.z);
 			std::string targetAngles = buf;*/
 
 
@@ -1213,9 +1213,9 @@ void ShowHubsMenu(const CCommand &args)
 	QAngle angles = pNodeInfoEntity->GetAbsAngles();
 
 	char buf[512];
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", origin.x, origin.y, origin.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", origin.x, origin.y, origin.z);
 	pNodeSetupKV->SetString("origin", buf);
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", angles.x, angles.y, angles.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", angles.x, angles.y, angles.z);
 	pNodeSetupKV->SetString("angles", buf);
 
 	// these 3 are only useful server-side!
@@ -1392,9 +1392,9 @@ void Create_Hotlink(const CCommand &args)
 		// Pass in standard key values
 		char buf[512];
 		// Pass in standard key values
-		Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", tr.endpos.x, tr.endpos.y, tr.endpos.z);
+		Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", tr.endpos.x, tr.endpos.y, tr.endpos.z);
 		pProp->KeyValue("origin", buf);
-		Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", angles.x, angles.y, angles.z);
+		Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", angles.x, angles.y, angles.z);
 		pProp->KeyValue("angles", buf);
 
 		pProp->KeyValue("model", modelFile);
@@ -1539,7 +1539,7 @@ void DoNPCMove(const CCommand &args)
 		pTargetEntity = CreateEntityByName(pEntityKV->GetString("classname"));
 
 		char buf[512];
-		Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", targetPosition.x, targetPosition.y, targetPosition.z);
+		Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", targetPosition.x, targetPosition.y, targetPosition.z);
 		pTargetEntity->KeyValue("origin", buf);
 
 		pTargetEntity->KeyValue("angles", "0 0 0");
@@ -2555,10 +2555,10 @@ void CreateVRSpazzFix(const CCommand &args)
 
 	char buf[512];
 
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", vecAttachmentPos.x, vecAttachmentPos.y, vecAttachmentPos.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", vecAttachmentPos.x, vecAttachmentPos.y, vecAttachmentPos.z);
 	pBaseEntity->KeyValue("origin", buf);
 
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", vecAttachmentAngles.x, vecAttachmentAngles.y, vecAttachmentAngles.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", vecAttachmentAngles.x, vecAttachmentAngles.y, vecAttachmentAngles.z);
 	pBaseEntity->KeyValue("angles", buf);
 
 	pBaseEntity->Precache();
@@ -2621,10 +2621,10 @@ void CreateVRSpazzFix(const CCommand &args)
 
 		//char buf[512];
 
-		Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", vecAttachmentPos.x, vecAttachmentPos.y, vecAttachmentPos.z);
+		Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", vecAttachmentPos.x, vecAttachmentPos.y, vecAttachmentPos.z);
 		pBaseEntity->KeyValue("origin", buf);
 
-		Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", vecAttachmentAngles.x, vecAttachmentAngles.y, vecAttachmentAngles.z);
+		Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", vecAttachmentAngles.x, vecAttachmentAngles.y, vecAttachmentAngles.z);
 		pBaseEntity->KeyValue("angles", buf);
 
 		pBaseEntity->Precache();
@@ -3549,7 +3549,7 @@ void CreateAPIObject(const CCommand &args)
 	pProp->KeyValue("origin", origin.c_str());
 	
 	//char buf[512];
-	//Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", goodOrigin.x, goodOrigin.y, goodOrigin.z);
+	//Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", goodOrigin.x, goodOrigin.y, goodOrigin.z);
 	//pProp->KeyValue("origin", buf);
 
 	pProp->KeyValue("angles", rotation.c_str());
@@ -3656,23 +3656,34 @@ void CreateTorch(const CCommand &args)
 	// Pass in standard key values
 	char buf[512];
 
-	CBaseEntity *pTargetEntity = dynamic_cast<CBaseEntity*>(UTIL_GetLocalPlayer());
+	int iTargetEntityIndex = (args.ArgC() > 5) ? Q_atoi(args[5]) : -1;
+	if (iTargetEntityIndex >= 0) {
+		DevMsg("Using entity for torch parent: %i\n", iTargetEntityIndex);
+	}
+
+	float flDist = (args.ArgC() > 6) ? Q_atof(args[6]) : 128.0f;
+	std::string fov = (args.ArgC() > 7) ? args[7] : "100";
+
+	CBaseEntity* pTargetEntity = CBaseEntity::Instance(iTargetEntityIndex);
+	if (!pTargetEntity) {
+		pTargetEntity = UTIL_GetLocalPlayer();
+	}
 	Vector origin = pTargetEntity->GetAbsOrigin();
-	origin.z += 128.0;
+	origin.z += flDist;
 	QAngle angles = pTargetEntity->GetAbsAngles();
 
 	// Pass in standard key values
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", origin.x, origin.y, origin.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", origin.x, origin.y, origin.z);
 	pEntity->KeyValue("origin", buf);
-	//Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", angles.x, angles.y, angles.z);
+	//Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", angles.x, angles.y, angles.z);
 	//pEntity->KeyValue("angles", buf);
 	pEntity->KeyValue("angles", "90 0 0");
 
 	pEntity->KeyValue("cameraspace", "0");
 	pEntity->KeyValue("enableshadows", "1");
-	pEntity->KeyValue("farz", "750.0");
+	pEntity->KeyValue("farz", "512.0");
 	pEntity->KeyValue("lightcolor", color.c_str());
-	pEntity->KeyValue("lightfov", "100");
+	pEntity->KeyValue("lightfov", fov.c_str());
 	pEntity->KeyValue("lightonlytarget", "0");
 	pEntity->KeyValue("lightworld", "1");
 	pEntity->KeyValue("nearz", "4");
@@ -3686,7 +3697,7 @@ void CreateTorch(const CCommand &args)
 	}
 	g_pAnarchyManager->SetTorch(pEntity);
 }
-ConCommand create_torch("create_torch", CreateTorch, "Creates a torch above the player. The parameter is a set of 4 numbers that represent the color & intensity, or no parameters at all.");
+ConCommand create_torch("create_torch", CreateTorch, "[r, g, b, intencity, parentEntityIndex, dist, fov] Creates a torch above the player. The parameter is a set of 4 numbers that represent the color & intensity, or no parameters at all.");
 
 void DestroyTorch(const CCommand &args)
 {
@@ -3712,9 +3723,9 @@ void CreateLetter(char c, CDynamicProp* pParentEntity, Vector origin, QAngle ang
 	//QAngle safeAngles = pSafeSpawnEntity->GetAbsAngles();
 
 	// Pass in standard key values
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", origin.x, origin.y, origin.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", origin.x, origin.y, origin.z);
 	pProp->KeyValue("origin", buf);
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", angles.x, angles.y, angles.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", angles.x, angles.y, angles.z);
 	pProp->KeyValue("angles", buf);
 
 	pProp->KeyValue("fademindist", "-1");
@@ -3811,9 +3822,9 @@ void CreateVoxel(CDynamicProp* pParentEntity, Vector origin, QAngle angles, floa
 	//QAngle safeAngles = pSafeSpawnEntity->GetAbsAngles();
 
 	// Pass in standard key values
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", origin.x, origin.y, origin.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", origin.x, origin.y, origin.z);
 	pProp->KeyValue("origin", buf);
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", angles.x, angles.y, angles.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", angles.x, angles.y, angles.z);
 	pProp->KeyValue("angles", buf);
 
 	pProp->KeyValue("fademindist", "-1");
@@ -4119,12 +4130,12 @@ void ReallySetText(std::string text_in, int pParentEntityIndex, float flExtraSca
 
 	// position
 	Vector localPosition = childOrigin;// pPropShortcutEntity->GetLocalOrigin();
-	Q_snprintf(buf1, sizeof(buf1), "%.10f %.10f %.10f", localPosition.x, localPosition.y, localPosition.z);
+	Q_snprintf(buf1, sizeof(buf1), "%.10g %.10g %.10g", localPosition.x, localPosition.y, localPosition.z);
 	std::string position = buf1;
 
 	// rotation
 	QAngle localAngles = childAngles;// pPropShortcutEntity->GetLocalAngles();
-	Q_snprintf(buf2, sizeof(buf2), "%.10f %.10f %.10f", localAngles.x, localAngles.y, localAngles.z);
+	Q_snprintf(buf2, sizeof(buf2), "%.10g %.10g %.10g", localAngles.x, localAngles.y, localAngles.z);
 	std::string rotation = buf2;
 	*/
 
@@ -4158,10 +4169,10 @@ void CreateNavNodeServer(const CCommand &args)
 
 	char buf[512];
 
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", v.x, v.y, v.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", v.x, v.y, v.z);
 	pBaseEntity->KeyValue("origin", buf);
 
-	//Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", vecAttachmentAngles.x, vecAttachmentAngles.y, vecAttachmentAngles.z);
+	//Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", vecAttachmentAngles.x, vecAttachmentAngles.y, vecAttachmentAngles.z);
 	pBaseEntity->KeyValue("spawnflags", "0");
 	pBaseEntity->KeyValue("nodeid", "1");
 	pBaseEntity->KeyValue("angles", "0 0 0");
@@ -4244,9 +4255,9 @@ void SpawnChatBall(const CCommand &args)
 	safeOrigin += forward * 24.0;
 
 	// Pass in standard key values
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", safeOrigin.x, safeOrigin.y, safeOrigin.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", safeOrigin.x, safeOrigin.y, safeOrigin.z);
 	pProp->KeyValue("origin", buf);
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", safeAngles.x, safeAngles.y, safeAngles.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", safeAngles.x, safeAngles.y, safeAngles.z);
 	pProp->KeyValue("angles", buf);
 
 	pProp->KeyValue("fademindist", "-1");
@@ -4343,9 +4354,9 @@ void SpawnPet_Server(const CCommand &args)
 	QAngle safeAngles = QAngle(0, 0, 0);
 
 	// Pass in standard key values
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", safeOrigin.x, safeOrigin.y, safeOrigin.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", safeOrigin.x, safeOrigin.y, safeOrigin.z);
 	pProp->KeyValue("origin", buf);
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", safeAngles.x, safeAngles.y, safeAngles.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", safeAngles.x, safeAngles.y, safeAngles.z);
 	pProp->KeyValue("angles", buf);
 
 	pProp->KeyValue("fademindist", "-1");
@@ -4450,9 +4461,9 @@ int spawnModelHelper(std::string model)
 	QAngle safeAngles = QAngle(0, 0, 0);
 
 	// Pass in standard key values
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", safeOrigin.x, safeOrigin.y, safeOrigin.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", safeOrigin.x, safeOrigin.y, safeOrigin.z);
 	pProp->KeyValue("origin", buf);
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", safeAngles.x, safeAngles.y, safeAngles.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", safeAngles.x, safeAngles.y, safeAngles.z);
 	pProp->KeyValue("angles", buf);
 
 	pProp->KeyValue("fademindist", "-1");
@@ -4636,9 +4647,9 @@ void SpawnJunk(const CCommand &args)
 	QAngle safeAngles = eyeAngles;// pSafeSpawnEntity->GetAbsAngles();
 
 	// Pass in standard key values
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", safeOrigin.x, safeOrigin.y, safeOrigin.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", safeOrigin.x, safeOrigin.y, safeOrigin.z);
 	pProp->KeyValue("origin", buf);
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", safeAngles.x, safeAngles.y, safeAngles.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", safeAngles.x, safeAngles.y, safeAngles.z);
 	pProp->KeyValue("angles", buf);
 
 	pProp->KeyValue("fademindist", "-1");
@@ -4726,9 +4737,9 @@ void CreateLocalAvatarObject(const CCommand &args)
 	QAngle safeAngles = pSafeSpawnEntity->GetAbsAngles();
 
 	// Pass in standard key values
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", safeOrigin.x, safeOrigin.y, safeOrigin.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", safeOrigin.x, safeOrigin.y, safeOrigin.z);
 	pProp->KeyValue("origin", buf);
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", safeAngles.x, safeAngles.y, safeAngles.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", safeAngles.x, safeAngles.y, safeAngles.z);
 	pProp->KeyValue("angles", buf);
 
 	pProp->KeyValue("fademindist", "-1");
@@ -4821,9 +4832,9 @@ void CreateAvatarObject(const CCommand &args)
 	QAngle safeAngles = pSafeSpawnEntity->GetAbsAngles();
 
 	// Pass in standard key values
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", safeOrigin.x, safeOrigin.y, safeOrigin.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", safeOrigin.x, safeOrigin.y, safeOrigin.z);
 	pProp->KeyValue("origin", buf);
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", safeAngles.x, safeAngles.y, safeAngles.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", safeAngles.x, safeAngles.y, safeAngles.z);
 	pProp->KeyValue("angles", buf);
 
 	pProp->KeyValue("fademindist", "-1");
@@ -4923,9 +4934,9 @@ void CreateVRHands(const CCommand &args)
 	safeAngles.Init();// = pPlayer->GetAbsAngles();
 
 	// Pass in standard key values
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", safeOrigin.x, safeOrigin.y, safeOrigin.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", safeOrigin.x, safeOrigin.y, safeOrigin.z);
 	pProp->KeyValue("origin", buf);
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", safeAngles.x, safeAngles.y, safeAngles.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", safeAngles.x, safeAngles.y, safeAngles.z);
 	pProp->KeyValue("angles", buf);
 
 	pProp->KeyValue("fademindist", "-1");
@@ -4984,9 +4995,9 @@ void CreateVRHands(const CCommand &args)
 			safeAngles.x += 45.0f;
 
 			// Pass in standard key values
-			Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", safeOrigin.x, safeOrigin.y, safeOrigin.z);
+			Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", safeOrigin.x, safeOrigin.y, safeOrigin.z);
 			pProp->KeyValue("origin", buf);
-			Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", safeAngles.x, safeAngles.y, safeAngles.z);
+			Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", safeAngles.x, safeAngles.y, safeAngles.z);
 			pProp->KeyValue("angles", buf);
 
 			pProp->KeyValue("fademindist", "-1");
@@ -5029,9 +5040,9 @@ void CreateVRHands(const CCommand &args)
 			safeAngles.x += 45.0f;
 
 			// Pass in standard key values
-			Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", safeOrigin.x, safeOrigin.y, safeOrigin.z);
+			Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", safeOrigin.x, safeOrigin.y, safeOrigin.z);
 			pTeleportProp->KeyValue("origin", buf);
-			Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", safeAngles.x, safeAngles.y, safeAngles.z);
+			Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", safeAngles.x, safeAngles.y, safeAngles.z);
 			pTeleportProp->KeyValue("angles", buf);
 
 			pTeleportProp->KeyValue("fademindist", "-1");

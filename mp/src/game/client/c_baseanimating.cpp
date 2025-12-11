@@ -54,7 +54,7 @@
 #include "replay/replay_ragdoll.h"
 #include "studio_stats.h"
 #include "tier1/callqueue.h"
-#include "../../aarcade/client/c_prop_shortcut.h"
+#include "../../aarcade/client/c_prop_shortcut.h"	// Added for Anarchy Arcade
 #include "../../aarcade/client/c_anarchymanager.h"	// Added for Anarchy Arcade
 
 #ifdef TF_CLIENT_DLL

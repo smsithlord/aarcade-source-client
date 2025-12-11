@@ -15,6 +15,8 @@ public:
 	bool LoadMountsFromKeyValues(std::string filename);
 //	void Update();
 
+	void DetectGamePaths(std::vector<std::string>& libraryPaths);
+
 	C_Mount* GetMount(std::string id);
 	void GetAllMounts(std::vector<C_Mount*>& responseVector);
 

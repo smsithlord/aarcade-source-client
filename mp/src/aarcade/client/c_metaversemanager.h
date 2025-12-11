@@ -222,7 +222,8 @@ public:
 	unsigned int LoadAllLocalApps(sqlite3* pDb = null, std::map<std::string, KeyValues*>* pResponseMap = null);
 	unsigned int LoadAllLocalModels(unsigned int& numDynamic, sqlite3* pDb = null, std::map<std::string, KeyValues*>* pResponseMap = null);
 	unsigned int LoadAllLocalItems(sqlite3* pDb = null, std::map<std::string, KeyValues*>* pResponseMap = null);
-	unsigned int LoadAllLocalInstances(sqlite3* pDb = null, std::map<std::string, KeyValues*>* pResponseMap = null);
+	unsigned int LoadAllLocalInstances(sqlite3* pDb = null, std::map<std::string, InstanceRecord>* pResponseMap = null);
+	//unsigned int LoadAllLocalInstances(sqlite3* pDb = null, std::map<std::string, KeyValues*>* pResponseMap = null);
 
 	std::string ResolveLegacyModel(std::string legacyModel);
 	KeyValues* LoadLocalModel(std::string file, std::string filePath = "");

@@ -608,6 +608,20 @@ C_SteamBrowserInstance* C_SteamBrowserManager::FindSteamBrowserInstanceByEntityI
 	return null;
 }
 
+
+C_SteamBrowserInstance* C_SteamBrowserManager::FindSteamBrowserInstanceByUrlKeyword(std::string keyword)
+{
+	unsigned int max = m_steamBrowserInstances.size();
+	for (unsigned int i = 0; i < max; i++)
+	{
+		if (m_steamBrowserInstances[i]->GetURL().find(keyword.c_str()) != std::string::npos) {
+			return m_steamBrowserInstances[i];
+		}
+	}
+
+	return null;
+}
+
 C_SteamBrowserInstance* C_SteamBrowserManager::FindSteamBrowserInstance(unsigned int unHandle)
 {
 	unsigned int max = m_steamBrowserInstances.size();

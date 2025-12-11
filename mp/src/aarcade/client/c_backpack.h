@@ -6,6 +6,7 @@
 #include <vector>
 #include "filesystem.h"
 #include "../../sqlite/include/sqlite/sqlite3.h"
+#include "ArcadeKeyValues.h"
 
 class C_Backpack
 {
@@ -62,7 +63,8 @@ private:
 	std::map<std::string, KeyValues*> m_items;
 	std::map<std::string, KeyValues*> m_models;
 	std::map<std::string, KeyValues*> m_apps;
-	std::map<std::string, KeyValues*> m_instances;
+	//std::map<std::string, KeyValues*> m_instances;
+	std::map<std::string, InstanceRecord> m_instances;
 };
 
 #endif

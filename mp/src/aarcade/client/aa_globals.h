@@ -8,6 +8,12 @@
 #endif
 */
 
+/*
+#ifndef AA_USE_GENERATED_CODE
+#define AA_USE_GENERATED_CODE 1
+#endif
+*/
+
 //#ifndef MAPBASE
 //#define MAPBASE 1
 //#endif

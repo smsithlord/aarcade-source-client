@@ -78,7 +78,7 @@ public:
 
 	std::string GetId() { return m_id; }
 	void Update();
-	void TakeScreenshot();
+	void TakeScreenshot(std::string nextTaskScreenshotName = "");
 	void TakeScreenshotNow(ITexture* pTexture, IVTFTexture *pVTFTexture, Rect_t *pSubRect, unsigned char* dest, unsigned int width, unsigned int height, unsigned int pitch, unsigned int depth);
 
 	void CopyLastFrame(const void* data, unsigned int width, unsigned int height, unsigned int depth);

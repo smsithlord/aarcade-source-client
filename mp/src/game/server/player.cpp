@@ -6147,9 +6147,9 @@ static void CreateAirboat( CBasePlayer *pPlayer )
 			safeAngles += anglesOffset;
 
 			// Pass in standard key values
-			Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", safeOrigin.x, safeOrigin.y, safeOrigin.z);
+			Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", safeOrigin.x, safeOrigin.y, safeOrigin.z);
 			pProp->KeyValue("origin", buf);
-			Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", safeAngles.x, safeAngles.y, safeAngles.z);
+			Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", safeAngles.x, safeAngles.y, safeAngles.z);
 			pProp->KeyValue("angles", buf);
 
 			pProp->KeyValue("fademindist", "-1");

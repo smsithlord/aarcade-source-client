@@ -475,10 +475,10 @@ void CPropShortcutEntity::CreateSequenceEntities(const char* sequenceName)
 
 				char buf[512];
 
-				Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", vecAttachmentPos.x, vecAttachmentPos.y, vecAttachmentPos.z);
+				Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", vecAttachmentPos.x, vecAttachmentPos.y, vecAttachmentPos.z);
 				pBaseEntity->KeyValue("origin", buf);
 
-				Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", vecAttachmentAngles.x, vecAttachmentAngles.y, vecAttachmentAngles.z);
+				Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", vecAttachmentAngles.x, vecAttachmentAngles.y, vecAttachmentAngles.z);
 				pBaseEntity->KeyValue("angles", buf);
 
 				if (!Q_strcmp(pEntityKV->GetString("classname"), "point_spotlight"))

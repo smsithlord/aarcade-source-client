@@ -3259,6 +3259,26 @@ void JSHandler::OnMethodCall(WebView* caller, unsigned int remote_object_id, con
 		std::string id = Awesomium::ToString(args[iArgOffset + 0].ToString());
 		g_pAnarchyManager->ShowBulkImportList(id);
 	}
+	else if (methodName == "captureDisplayTaskScreenshot")
+	{
+		if (!engine->IsInGame())
+			return;
+
+		C_EmbeddedInstance* pInstance = g_pAnarchyManager->GetCanvasManager()->GetDisplayInstance();
+		if (!pInstance) {
+			pInstance = g_pAnarchyManager->GetCanvasManager()->GetFirstInstanceToDisplay();
+		}
+
+		if (pInstance) {
+			pInstance->TakeScreenshot("auto/display");
+		}
+	}
+	else if (methodName == "captureViewScreenshot")
+	{
+		if (!engine->IsInGame())
+			return;
+		g_pAnarchyManager->PerformAutoScreenshot();
+	}
 	else if (methodName == "outputTestDOM")
 	{
 		cvar->FindVar("output_test_dom")->SetValue(true);
@@ -3505,6 +3525,27 @@ void JSHandler::OnMethodCall(WebView* caller, unsigned int remote_object_id, con
 	{
 		bool bValue = (args.size() - iArgOffset > 0) ? args[iArgOffset + 0].ToBoolean() : true;
 		g_pAnarchyManager->GetInputManager()->SetFullscreenMode(bValue);
+	}
+	else if (methodName == "shmotimeJavaScriptInject")
+	{
+		std::string text = (args.size() - iArgOffset > 0) ? Awesomium::ToString(args[iArgOffset + 0].ToString()) : "";
+		if (text != "") {
+			g_pAnarchyManager->ShmotimeJavaScriptInject(text);
+		}
+	}
+	else if (methodName == "steamworksBrowserJavaScriptInject")
+	{
+		std::string text = (args.size() - iArgOffset > 0) ? Awesomium::ToString(args[iArgOffset + 0].ToString()) : "";
+		if (text != "") {
+			g_pAnarchyManager->SteamworksBrowserJavaScriptInject(text);
+		}
+	}
+	else if (methodName == "steamHTTPImageDownload")
+	{
+		std::string url = (args.size() - iArgOffset > 0) ? Awesomium::ToString(args[iArgOffset + 0].ToString()) : "";
+		if (url != "") {
+			g_pAnarchyManager->DownloadSteamHTTPImage(url);
+		}
 	}
 	//else if (methodName == "convertAndPaint")
 	//{
@@ -3921,7 +3962,9 @@ JSValue JSHandler::OnMethodCallWithReturnValue(WebView* caller, unsigned int rem
 	}
 	else if (methodName == "getNearestObjectToPlayerLook")
 	{
-		float flMaxRange = (args.size()-iArgOffset > 0) ? args[iArgOffset+0].ToDouble() : -1;
+		unsigned int argSize = args.size() - iArgOffset;
+		float flMaxRange = (argSize > 0) ? args[iArgOffset + 0].ToDouble() : -1;
+		bool bIncludeType = (argSize > 1) ? args[iArgOffset + 1].ToBoolean() : false;
 
 		object_t* pObject = g_pAnarchyManager->GetInstanceManager()->GetNearestObjectToPlayerLook(NULL, flMaxRange);
 
@@ -3940,8 +3983,22 @@ JSValue JSHandler::OnMethodCallWithReturnValue(WebView* caller, unsigned int rem
 			std::string title = "Unnamed";
 			KeyValues* pItemKV = g_pAnarchyManager->GetMetaverseManager()->GetActiveKeyValues(g_pAnarchyManager->GetMetaverseManager()->GetLibraryItem(pObject->itemId));
 			KeyValues* pModelKV = g_pAnarchyManager->GetMetaverseManager()->GetActiveKeyValues(g_pAnarchyManager->GetMetaverseManager()->GetLibraryModel(pObject->modelId));
-			if (pItemKV)
+			if (pItemKV) {
 				title = pItemKV->GetString("title");
+
+				// include the type (as a type title), if it's desired
+				if (bIncludeType) {
+					std::string itemType = pItemKV->GetString("type");
+					KeyValues* pType = g_pAnarchyManager->GetMetaverseManager()->GetLibraryType(itemType);
+					if (pType)
+					{
+						KeyValues* pActiveTypeKV = g_pAnarchyManager->GetMetaverseManager()->GetActiveKeyValues(pType);
+						if (pActiveTypeKV) {
+							entry.SetProperty(WSLit("type"), WSLit(pActiveTypeKV->GetString("title")));
+						}
+					}
+				}
+			}
 			else if (pModelKV)
 				title = pModelKV->GetString(VarArgs("platforms/%s/file", AA_PLATFORM_ID));
 
@@ -3965,7 +4022,9 @@ JSValue JSHandler::OnMethodCallWithReturnValue(WebView* caller, unsigned int rem
 	}
 	else if (methodName == "getNextNearestObjectToPlayerLook")
 	{
-		float flMaxRange = (args.size()-iArgOffset > 0) ? args[iArgOffset+0].ToDouble() : -1;
+		unsigned int argSize = args.size() - iArgOffset;
+		float flMaxRange = (argSize > 0) ? args[iArgOffset + 0].ToDouble() : -1;
+		bool bIncludeType = (argSize > 1) ? args[iArgOffset + 1].ToBoolean() : false;
 
 		object_t* pLastObject = g_pAnarchyManager->GetLastNearestObjectToPlayerLook();
 		object_t* pObject = null;
@@ -3995,8 +4054,22 @@ JSValue JSHandler::OnMethodCallWithReturnValue(WebView* caller, unsigned int rem
 			std::string title = "Unnamed";
 			KeyValues* pItemKV = g_pAnarchyManager->GetMetaverseManager()->GetActiveKeyValues(g_pAnarchyManager->GetMetaverseManager()->GetLibraryItem(pObject->itemId));
 			KeyValues* pModelKV = g_pAnarchyManager->GetMetaverseManager()->GetActiveKeyValues(g_pAnarchyManager->GetMetaverseManager()->GetLibraryModel(pObject->modelId));
-			if (pItemKV)
+			if (pItemKV) {
 				title = pItemKV->GetString("title");
+
+				// include the type (as a type title), if it's desired
+				if (bIncludeType) {
+					std::string itemType = pItemKV->GetString("type");
+					KeyValues* pType = g_pAnarchyManager->GetMetaverseManager()->GetLibraryType(itemType);
+					if (pType)
+					{
+						KeyValues* pActiveTypeKV = g_pAnarchyManager->GetMetaverseManager()->GetActiveKeyValues(pType);
+						if (pActiveTypeKV) {
+							entry.SetProperty(WSLit("type"), WSLit(pActiveTypeKV->GetString("title")));
+						}
+					}
+				}
+			}
 			else if ( pModelKV )
 				title = pModelKV->GetString(VarArgs("platforms/%s/file", AA_PLATFORM_ID));
 			else
@@ -4551,10 +4624,10 @@ JSValue JSHandler::OnMethodCallWithReturnValue(WebView* caller, unsigned int rem
 				if (users[i]->entity)
 				{
 					user.SetProperty(WSLit("exists"), WSLit("1"));
-					user.SetProperty(WSLit("bodyOrigin"), WSLit(VarArgs("%.10f %.10f %.10f", users[i]->bodyOrigin.x, users[i]->bodyOrigin.y, users[i]->bodyOrigin.z)));
-					user.SetProperty(WSLit("bodyAngles"), WSLit(VarArgs("%.10f %.10f %.10f", users[i]->bodyAngles.x, users[i]->bodyAngles.y, users[i]->bodyAngles.z)));
-					user.SetProperty(WSLit("headOrigin"), WSLit(VarArgs("%.10f %.10f %.10f", users[i]->headOrigin.x, users[i]->headOrigin.y, users[i]->headOrigin.z)));
-					user.SetProperty(WSLit("headAngles"), WSLit(VarArgs("%.10f %.10f %.10f", users[i]->headAngles.x, users[i]->headAngles.y, users[i]->headAngles.z)));
+					user.SetProperty(WSLit("bodyOrigin"), WSLit(VarArgs("%.10g %.10g %.10g", users[i]->bodyOrigin.x, users[i]->bodyOrigin.y, users[i]->bodyOrigin.z)));
+					user.SetProperty(WSLit("bodyAngles"), WSLit(VarArgs("%.10g %.10g %.10g", users[i]->bodyAngles.x, users[i]->bodyAngles.y, users[i]->bodyAngles.z)));
+					user.SetProperty(WSLit("headOrigin"), WSLit(VarArgs("%.10g %.10g %.10g", users[i]->headOrigin.x, users[i]->headOrigin.y, users[i]->headOrigin.z)));
+					user.SetProperty(WSLit("headAngles"), WSLit(VarArgs("%.10g %.10g %.10g", users[i]->headAngles.x, users[i]->headAngles.y, users[i]->headAngles.z)));
 				}
 				else
 					user.SetProperty(WSLit("exists"), WSLit("0"));
@@ -4594,10 +4667,10 @@ JSValue JSHandler::OnMethodCallWithReturnValue(WebView* caller, unsigned int rem
 		if (pInstanceUser->entity)
 		{
 			user.SetProperty(WSLit("exists"), WSLit("1"));
-			user.SetProperty(WSLit("bodyOrigin"), WSLit(VarArgs("%.10f %.10f %.10f", pInstanceUser->bodyOrigin.x, pInstanceUser->bodyOrigin.y, pInstanceUser->bodyOrigin.z)));
-			user.SetProperty(WSLit("bodyAngles"), WSLit(VarArgs("%.10f %.10f %.10f", pInstanceUser->bodyAngles.x, pInstanceUser->bodyAngles.y, pInstanceUser->bodyAngles.z)));
-			user.SetProperty(WSLit("headOrigin"), WSLit(VarArgs("%.10f %.10f %.10f", pInstanceUser->headOrigin.x, pInstanceUser->headOrigin.y, pInstanceUser->headOrigin.z)));
-			user.SetProperty(WSLit("headAngles"), WSLit(VarArgs("%.10f %.10f %.10f", pInstanceUser->headAngles.x, pInstanceUser->headAngles.y, pInstanceUser->headAngles.z)));
+			user.SetProperty(WSLit("bodyOrigin"), WSLit(VarArgs("%.10g %.10g %.10g", pInstanceUser->bodyOrigin.x, pInstanceUser->bodyOrigin.y, pInstanceUser->bodyOrigin.z)));
+			user.SetProperty(WSLit("bodyAngles"), WSLit(VarArgs("%.10g %.10g %.10g", pInstanceUser->bodyAngles.x, pInstanceUser->bodyAngles.y, pInstanceUser->bodyAngles.z)));
+			user.SetProperty(WSLit("headOrigin"), WSLit(VarArgs("%.10g %.10g %.10g", pInstanceUser->headOrigin.x, pInstanceUser->headOrigin.y, pInstanceUser->headOrigin.z)));
+			user.SetProperty(WSLit("headAngles"), WSLit(VarArgs("%.10g %.10g %.10g", pInstanceUser->headAngles.x, pInstanceUser->headAngles.y, pInstanceUser->headAngles.z)));
 		}
 		else
 			user.SetProperty(WSLit("exists"), WSLit("0"));
@@ -4650,7 +4723,7 @@ JSValue JSHandler::OnMethodCallWithReturnValue(WebView* caller, unsigned int rem
 				response.SetProperty(WSLit("map"), WSLit(g_pAnarchyManager->MapName()));
 				response.SetProperty(WSLit("pos_x"), WSLit(VarArgs("%i", pOverviewKV->GetInt("pos_x"))));
 				response.SetProperty(WSLit("pos_y"), WSLit(VarArgs("%i", pOverviewKV->GetInt("pos_y"))));
-				response.SetProperty(WSLit("scale"), WSLit(VarArgs("%.10f", pOverviewKV->GetFloat("scale"))));
+				response.SetProperty(WSLit("scale"), WSLit(VarArgs("%.10g", pOverviewKV->GetFloat("scale"))));
 
 				pOverviewKV->deleteThis();
 				return response;
@@ -5806,11 +5879,11 @@ JSValue JSHandler::OnMethodCallWithReturnValue(WebView* caller, unsigned int rem
 
 			// origin
 			char buf[AA_MAX_STRING];
-			Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", pObject->origin.x, pObject->origin.y, pObject->origin.z);
+			Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", pObject->origin.x, pObject->origin.y, pObject->origin.z);
 			responseObject.SetProperty(WSLit("origin"), WSLit(buf));
 
 			// angles
-			Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", pObject->angles.x, pObject->angles.y, pObject->angles.z);
+			Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", pObject->angles.x, pObject->angles.y, pObject->angles.z);
 			responseObject.SetProperty(WSLit("angles"), WSLit(buf));
 
 			responseObject.SetProperty(WSLit("child"), JSValue(pObject->child));
@@ -10190,6 +10263,9 @@ JSValue JSHandler::OnMethodCallWithReturnValue(WebView* caller, unsigned int rem
 		KeyValues* pSearchInfo;
 		KeyValues* pModel;
 
+		Vector localPlayerOrigin = C_BasePlayer::GetLocalPlayer()->GetAbsOrigin();
+		pet_t* pPlayAsPet = g_pAnarchyManager->GetPlayAsPet();
+
 		for (unsigned int i = 0; i < pets.size(); i++)
 		{
 			pPet = pets[i];
@@ -10228,12 +10304,17 @@ JSValue JSHandler::OnMethodCallWithReturnValue(WebView* caller, unsigned int rem
 			pet.SetProperty(WSLit("entityIndex"), JSValue(iPetEntityIndex));
 			pet.SetProperty(WSLit("outfitId"), WSLit(petOutfitId.c_str()));
 			pet.SetProperty(WSLit("behavior"), JSValue(pPet->iBehavior));
-			
+
 			pet.SetProperty(WSLit("model"), WSLit(petModelFilename.c_str()));
+
+			pet.SetProperty(WSLit("isPlayAsPet"), JSValue((pPlayAsPet && pPlayAsPet->iEntityIndex == pPet->iEntityIndex)));
 
 			C_DynamicProp* pProp = dynamic_cast<C_DynamicProp*>(C_BaseEntity::Instance(iPetEntityIndex));
 			if (pProp)
 			{
+				float flDistToPlayer = localPlayerOrigin.DistTo(pProp->GetAbsOrigin());
+				pet.SetProperty(WSLit("distToPlayer"), JSValue(flDistToPlayer));
+
 				pet.SetProperty(WSLit("sequence"), WSLit(VarArgs("%s", pProp->GetSequenceName(pPet->iCurSequence))));
 			}
 

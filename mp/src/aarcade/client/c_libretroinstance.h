@@ -259,7 +259,7 @@ public:
 	//void Reinit();
 	bool CreateWorkerThread(std::string core);
 	void Update();
-	void TakeScreenshot();
+	void TakeScreenshot(std::string nextTaskScreenshotName = "");
 	void TakeScreenshotNow(ITexture* pTexture, IVTFTexture *pVTFTexture, Rect_t *pSubRect, unsigned char* dest, unsigned int width, unsigned int height, unsigned int pitch, unsigned int depth);
 	bool LoadCore(std::string coreFile = "");
 	static bool LoadGame();

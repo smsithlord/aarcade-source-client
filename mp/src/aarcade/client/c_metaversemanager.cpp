@@ -9,6 +9,7 @@
 #include <algorithm>
 #include "../../public/zip/XZip.h"
 #include "../../public/zip/XUnzip.h"
+#include "ArcadeKeyValues.h"
 //#include "zip_utils.h"
 
 // memdbgon must be the last include file in a .cpp file!!!
@@ -1222,6 +1223,298 @@ bool C_MetaverseManager::ConvertLibraryVersion(unsigned int uOld, unsigned int u
 							*/
 						//	return true;
 						//}
+
+	/*else if (uOld == 2 && uTarget == 3)
+	{
+		// FUTURE TODO:
+		// NOTE: In minor update (non-library-version-breaking) the %02f storing of vectors was changed to %.6g to remove . and trailing 0's when applicable.
+		//
+		// LIBRARY VERSION 3:
+		// - Eliminate [ITEM/APP/INSTANCE(?)/MAPS]'s nested KV of "current" or "local" because they were never really used.
+		// - This will put "generation" as a sibling to the actual data, so that'll probably need special handling.
+		// - Every single item/app/etc needs to be loaded & migrated. (This library update system is designed for that though, DB is transaction locked prior to this method being called.)
+		// - This will provide significant compression of library.db size & reduce strain on string parsing vectors from strings in the KVs.
+
+
+		// LIBRARY VERSION 2 TO 3:
+		// - Change vector format from %02f to %.6g to remove trailing zeros and reduce storage size
+		// - Process all instances and update local/position, local/rotation, and scale formatting in objects
+
+		sqlite3* pDb = m_db;
+		std::vector<std::string> badInstanceIds;
+		std::vector<std::string> instanceIds;
+
+		// Measure database size before conversion
+		sqlite3_stmt *stmtSizeBefore = NULL;
+		int rcSize = sqlite3_prepare(pDb, "PRAGMA page_count;", -1, &stmtSizeBefore, NULL);
+		long long pagesBefore = 0, pageSizeBytes = 0;
+		if (rcSize == SQLITE_OK && sqlite3_step(stmtSizeBefore) == SQLITE_ROW)
+		{
+			pagesBefore = sqlite3_column_int64(stmtSizeBefore, 0);
+		}
+		sqlite3_finalize(stmtSizeBefore);
+
+		sqlite3_stmt *stmtPageSize = NULL;
+		rcSize = sqlite3_prepare(pDb, "PRAGMA page_size;", -1, &stmtPageSize, NULL);
+		if (rcSize == SQLITE_OK && sqlite3_step(stmtPageSize) == SQLITE_ROW)
+		{
+			pageSizeBytes = sqlite3_column_int64(stmtPageSize, 0);
+		}
+		sqlite3_finalize(stmtPageSize);
+
+		long long sizeBefore = pagesBefore * pageSizeBytes;
+		DevMsg("Database size before conversion: %lld bytes (%lld pages * %lld bytes/page)\n", sizeBefore, pagesBefore, pageSizeBytes);
+
+		// First, collect all instance IDs
+		sqlite3_stmt *stmtSelAll = NULL;
+		int rc = sqlite3_prepare(pDb, "SELECT id FROM instances", -1, &stmtSelAll, NULL);
+		if (rc != SQLITE_OK)
+		{
+			DevMsg("prepare failed: %s\n", sqlite3_errmsg(pDb));
+			return false;
+		}
+
+		while (sqlite3_step(stmtSelAll) == SQLITE_ROW)
+			instanceIds.push_back(std::string((const char*)sqlite3_column_text(stmtSelAll, 0)));
+		sqlite3_finalize(stmtSelAll);
+
+		DevMsg("Processing %u instances for version 2 to 3 conversion...\n", instanceIds.size());
+
+		// Track total character savings across all instances
+		int totalCharsSavedGlobal = 0;
+
+		// Process each instance
+		for (unsigned int i = 0; i < instanceIds.size(); i++)
+		{
+			sqlite3_stmt *stmtSel = NULL;
+			rc = sqlite3_prepare(pDb, VarArgs("SELECT * FROM instances WHERE id = \"%s\"", instanceIds[i].c_str()), -1, &stmtSel, NULL);
+			if (rc != SQLITE_OK)
+			{
+				DevMsg("prepare failed: %s\n", sqlite3_errmsg(pDb));
+				sqlite3_finalize(stmtSel);
+				continue;
+			}
+
+			if (sqlite3_step(stmtSel) != SQLITE_ROW)
+			{
+				DevMsg("warning: could not find row for instance %s. skipping.\n", instanceIds[i].c_str());
+				sqlite3_finalize(stmtSel);
+				continue;
+			}
+
+			std::string rowId = std::string((const char*)sqlite3_column_text(stmtSel, 0));
+			int length = sqlite3_column_bytes(stmtSel, 1);
+
+			if (length == 0)
+			{
+				DevMsg("WARNING: Zero-byte KeyValues detected for instance %s, marking as bad.\n", rowId.c_str());
+				badInstanceIds.push_back(rowId);
+				sqlite3_finalize(stmtSel);
+				continue;
+			}
+
+			KeyValues* pInstance = new KeyValues("instance");
+			CUtlBuffer buf(0, length, 0);
+			buf.CopyBuffer(sqlite3_column_blob(stmtSel, 1), length);
+			pInstance->ReadAsBinary(buf);
+			sqlite3_finalize(stmtSel);
+			buf.Purge();
+
+			// Validate instance has required data
+			std::string instanceId = pInstance->GetString("info/local/id");
+			if (instanceId == "" || instanceId != rowId)
+			{
+				DevMsg("WARNING: Instance %s has invalid ID, marking as bad.\n", rowId.c_str());
+				badInstanceIds.push_back(rowId);
+				pInstance->deleteThis();
+				continue;
+			}
+
+			// Check if instance has objects to process
+			KeyValues* objectsKV = pInstance->FindKey("objects");
+			if (!objectsKV || !objectsKV->GetFirstSubKey())
+			{
+				// No objects to process, but instance is valid - save it back unchanged
+				DevMsg("Instance %s has no objects, skipping vector processing.\n", rowId.c_str());
+			}
+			else
+			{
+				// Process all objects in this instance
+				Vector vec;
+				float scale;
+				int objectCount = 0;
+				int totalCharsBefore = 0;
+				int totalCharsAfter = 0;
+
+				for (KeyValues *sub = objectsKV->GetFirstSubKey(); sub; sub = sub->GetNextKey())
+				{
+					// Process position vector (was origin)
+					const char* positionStr = sub->GetString("local/position");
+					totalCharsBefore += strlen(positionStr);
+					UTIL_StringToVector(vec.Base(), positionStr);
+					char* newPosition = VarArgs("%.6g %.6g %.6g", vec.x, vec.y, vec.z);
+					totalCharsAfter += strlen(newPosition);
+					sub->SetString("local/position", newPosition);
+
+					// Process rotation vector (was angles)
+					const char* rotationStr = sub->GetString("local/rotation");
+					totalCharsBefore += strlen(rotationStr);
+					UTIL_StringToVector(vec.Base(), rotationStr);
+					char* newRotation = VarArgs("%.6g %.6g %.6g", vec.x, vec.y, vec.z);
+					totalCharsAfter += strlen(newRotation);
+					sub->SetString("local/rotation", newRotation);
+
+					// Process scale float
+					const char* scaleStr = sub->GetString("local/scale");
+					totalCharsBefore += strlen(scaleStr);
+					scale = sub->GetFloat("local/scale");
+					char* newScale = VarArgs("%.6g", scale);
+					totalCharsAfter += strlen(newScale);
+					sub->SetString("local/scale", newScale);
+
+					objectCount++;
+				}
+
+				if (objectCount > 0)
+				{
+					int charsSaved = totalCharsBefore - totalCharsAfter;
+					totalCharsSavedGlobal += charsSaved;
+					DevMsg("Instance %s: %d objects, %d chars -> %d chars (saved %d chars)\n",
+						rowId.c_str(), objectCount, totalCharsBefore, totalCharsAfter, charsSaved);
+				}
+			}
+
+			// Save the updated instance back to the database
+			sqlite3_stmt *stmtUpdate = NULL;
+			rc = sqlite3_prepare(pDb, VarArgs("REPLACE INTO instances VALUES(\"%s\", ?)", rowId.c_str()), -1, &stmtUpdate, NULL);
+			if (rc != SQLITE_OK)
+			{
+				DevMsg("FATAL ERROR: prepare failed: %s\n", sqlite3_errmsg(pDb));
+				sqlite3_finalize(stmtUpdate);
+				pInstance->deleteThis();
+				return false;
+			}
+
+			CUtlBuffer instBuf;
+			pInstance->WriteAsBinary(instBuf);
+			int size = instBuf.Size();
+
+			rc = sqlite3_bind_blob(stmtUpdate, 1, instBuf.Base(), size, SQLITE_STATIC);
+			if (rc != SQLITE_OK)
+			{
+				DevMsg("FATAL ERROR: bind failed: %s\n", sqlite3_errmsg(pDb));
+				sqlite3_finalize(stmtUpdate);
+				pInstance->deleteThis();
+				instBuf.Purge();
+				return false;
+			}
+
+			rc = sqlite3_step(stmtUpdate);
+			if (rc != SQLITE_DONE)
+			{
+				DevMsg("FATAL ERROR: execution failed: %s\n", sqlite3_errmsg(pDb));
+				sqlite3_finalize(stmtUpdate);
+				pInstance->deleteThis();
+				instBuf.Purge();
+				return false;
+			}
+
+			sqlite3_finalize(stmtUpdate);
+			instBuf.Purge();
+			pInstance->deleteThis();
+		}
+
+		instanceIds.clear();
+
+		// Remove any bad instances we found
+		if (badInstanceIds.size() > 0)
+		{
+			DevMsg("Removing %u bad instances from library during v2->v3 conversion.\n", badInstanceIds.size());
+			for (unsigned int i = 0; i < badInstanceIds.size(); i++)
+			{
+				sqlite3_stmt *stmtDel = NULL;
+				rc = sqlite3_prepare(pDb, VarArgs("DELETE FROM instances WHERE id = \"%s\"", badInstanceIds[i].c_str()), -1, &stmtDel, NULL);
+				if (rc != SQLITE_OK)
+				{
+					DevMsg("FATAL ERROR: prepare failed: %s\n", sqlite3_errmsg(pDb));
+					sqlite3_finalize(stmtDel);
+					continue;
+				}
+
+				rc = sqlite3_step(stmtDel);
+				if (rc != SQLITE_DONE)
+					DevMsg("FATAL ERROR: execution failed: %s\n", sqlite3_errmsg(pDb));
+
+				sqlite3_finalize(stmtDel);
+			}
+		}
+		badInstanceIds.clear();
+
+		// Update the library version to 3
+		sqlite3_stmt *stmtVersion = NULL;
+		rc = sqlite3_prepare(pDb, "REPLACE INTO version (id, value) VALUES(0, 3)", -1, &stmtVersion, NULL);
+		if (rc != SQLITE_OK)
+		{
+			DevMsg("FATAL ERROR: prepare failed: %s\n", sqlite3_errmsg(pDb));
+			return false;
+		}
+
+		rc = sqlite3_step(stmtVersion);
+		if (rc != SQLITE_DONE)
+		{
+			DevMsg("FATAL ERROR: execution failed: %s\n", sqlite3_errmsg(pDb));
+			sqlite3_finalize(stmtVersion);
+			return false;
+		}
+
+		sqlite3_finalize(stmtVersion);
+
+		// VACUUM the database to reclaim unused space and defragment
+		DevMsg("VACUUMing database to reclaim space...\n");
+		char *error = NULL;
+		rc = sqlite3_exec(pDb, "VACUUM;", NULL, NULL, &error);
+		if (rc != SQLITE_OK)
+		{
+			DevMsg("VACUUM failed: %s\n", sqlite3_errmsg(pDb));
+			if (error) sqlite3_free(error);
+			// Don't return false here - conversion still succeeded
+		}
+		else
+		{
+			DevMsg("Database VACUUM completed successfully.\n");
+		}
+
+		// Measure database size after conversion and vacuum
+		sqlite3_stmt *stmtPagesAfter = NULL;
+		rcSize = sqlite3_prepare(pDb, "PRAGMA page_count;", -1, &stmtPagesAfter, NULL);
+		if (rcSize == SQLITE_OK && sqlite3_step(stmtPagesAfter) == SQLITE_ROW)
+		{
+			long long pagesAfter = sqlite3_column_int64(stmtPagesAfter, 0);
+			long long sizeAfter = pagesAfter * pageSizeBytes;
+			long long sizeDiff = sizeAfter - sizeBefore;
+			DevMsg("Database size after conversion: %lld bytes (%lld pages * %lld bytes/page)\n", sizeAfter, pagesAfter, pageSizeBytes);
+			DevMsg("Size change: %+lld bytes (%+lld pages)\n", sizeDiff, pagesAfter - pagesBefore);
+			DevMsg("String characters saved: %d, but database size changed by %lld bytes\n",
+				totalCharsSavedGlobal, sizeDiff);
+
+			if (sizeDiff > 0)
+			{
+				DevMsg("Database grew despite string savings - this is normal SQLite overhead for small changes.\n");
+			}
+			else if (sizeDiff < 0)
+			{
+				DevMsg("Database shrank by %lld bytes - conversion was successful!\n", -sizeDiff);
+			}
+			else
+			{
+				DevMsg("Database size unchanged - string savings were absorbed by SQLite overhead.\n");
+			}
+		}
+		sqlite3_finalize(stmtPagesAfter);
+
+		DevMsg("Successfully converted library from version 2 to version 3.\n");
+		return true;
+	}*/
 	else
 		DevMsg("ERROR: Unknown library conversion values!\n");
 
@@ -1708,16 +2001,16 @@ void C_MetaverseManager::PerformLocalPlayerUpdate()
 	pPlayer->EyeVectors(&playerHeadOrigin);
 
 	char buf[AA_MAX_STRING];
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", playerBodyOrigin.x, playerBodyOrigin.y, playerBodyOrigin.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", playerBodyOrigin.x, playerBodyOrigin.y, playerBodyOrigin.z);
 	std::string bodyOrigin = buf;
 
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", playerBodyAngles.x, playerBodyAngles.y, playerBodyAngles.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", playerBodyAngles.x, playerBodyAngles.y, playerBodyAngles.z);
 	std::string bodyAngles = buf;
 
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", playerHeadOrigin.x, playerHeadOrigin.y, playerHeadOrigin.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", playerHeadOrigin.x, playerHeadOrigin.y, playerHeadOrigin.z);
 	std::string headOrigin = buf;
 
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", playerHeadAngles.x, playerHeadAngles.y, playerHeadAngles.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", playerHeadAngles.x, playerHeadAngles.y, playerHeadAngles.z);
 	std::string headAngles = buf;
 
 	std::string object;
@@ -1760,8 +2053,8 @@ void C_MetaverseManager::PerformLocalPlayerUpdate()
 			float fMouseY;
 			pEmbeddedInstance->GetLastMouse(fMouseX, fMouseY);
 
-			mouseX = VarArgs("%.10f", fMouseX);
-			mouseY = VarArgs("%.10f", fMouseY);
+			mouseX = VarArgs("%.10g", fMouseX);
+			mouseY = VarArgs("%.10g", fMouseY);
 		}
 		else
 		{
@@ -3394,6 +3687,31 @@ bool C_MetaverseManager::LoadSQLKevValues(const char* tableName, const char* id,
 			bSuccess = false;
 	}
 	sqlite3_finalize(stmt);	// TODO: error checking?  Maybe not needed, if this is like a close() operation.
+
+	/*
+	// FIXME: TEMP TEST
+	// check if this is an instance, and if it is, round the pos and rots.
+	KeyValues* akv = this->GetActiveKeyValues(kv);
+	KeyValues* okv = akv->FindKey("objects");
+	if (okv) {
+		Vector vec;
+		float scale;
+
+		for (KeyValues *sub = okv->GetFirstSubKey(); sub; sub = sub->GetNextKey())
+		{
+			//origin angles scale
+			UTIL_StringToVector(vec.Base(), sub->GetString("origin"));
+			sub->SetString("origin", VarArgs("%.6g %.6g %.6g", vec.x, vec.y, vec.z));
+
+			UTIL_StringToVector(vec.Base(), sub->GetString("angles"));
+			sub->SetString("angles", VarArgs("%.6g %.6g %.6g", vec.x, vec.y, vec.z));
+
+			scale = sub->GetFloat("scale");
+			sub->SetString("scale", VarArgs("%.6g", scale));
+			//sub->SetFloat("scale", VarArgs("%.6g", scale));
+		}
+	}
+	*/
 
 	return bSuccess;
 }
@@ -6726,6 +7044,185 @@ KeyValues* C_MetaverseManager::LoadLocalApp(std::string file, std::string filePa
 	return pApp;
 }
 
+// Added for KeyValues string table fix
+unsigned int C_MetaverseManager::LoadAllLocalInstances(sqlite3* pDb, std::map<std::string, InstanceRecord>* pResponseMap )
+{
+	if (!pDb)
+		pDb = m_db;
+
+	unsigned int count = 0;
+	sqlite3_stmt* stmt = nullptr;
+
+	int rc = sqlite3_prepare(pDb, "SELECT * from instances", -1, &stmt, NULL);
+	if (rc != SQLITE_OK)
+		DevMsg("prepare failed: %s\n", sqlite3_errmsg(pDb));
+
+	int length;
+	std::string rowId;
+
+	int iNumSkippedZeroByte = 0;
+	int iNumSkippedBlankIds = 0;
+	int iNumSkippedConflictedId = 0;
+	int iNumSkippedNoId = 0;
+	int iNumSkippedEmpty = 0;
+
+	while (sqlite3_step(stmt) == SQLITE_ROW)
+	{
+		// Column 0: instance row id (text)
+		rowId = std::string((const char*)sqlite3_column_text(stmt, 0));
+
+		// Column 1: KeyValues binary blob
+		length = sqlite3_column_bytes(stmt, 1);
+
+		if (length == 0)
+		{
+			iNumSkippedZeroByte++;
+			continue;
+		}
+
+		const void* blobData = sqlite3_column_blob(stmt, 1);
+		if (!blobData)
+		{
+			iNumSkippedZeroByte++;
+			continue;
+		}
+
+		// Convert binary blob to hex string so ArcadeKeyValues::ParseFromHex can read it
+		const unsigned char* bytes = reinterpret_cast<const unsigned char*>(blobData);
+		std::string hexData;
+		hexData.reserve(length * 2);
+
+		char hexByte[3];
+		for (int i = 0; i < length; ++i)
+		{
+			Q_snprintf(hexByte, sizeof(hexByte), "%02x", bytes[i]);
+			hexData += hexByte;
+		}
+
+		// Parse with ArcadeKeyValues instead of KeyValues::ReadAsBinary
+		std::unique_ptr<ArcadeKeyValues> pInstance = ArcadeKeyValues::ParseFromHex(hexData);
+		if (!pInstance)
+		{
+			iNumSkippedZeroByte++;
+			continue;
+		}
+
+		// --- info/local/id ---
+
+		ArcadeKeyValues* instanceKV = pInstance->FindKey("instance", false);
+		ArcadeKeyValues* infoKV = instanceKV ? instanceKV->FindKey("info", false) : nullptr;
+		ArcadeKeyValues* localKV = infoKV ? infoKV->FindKey("local", false) : nullptr;
+
+		std::string instanceId;
+		if (localKV)
+			instanceId = localKV->GetString("id", "");
+		else
+			instanceId.clear();
+
+		if (instanceId.empty())
+		{
+			iNumSkippedBlankIds++;
+			continue;
+		}
+
+		if (instanceId != rowId)
+		{
+			iNumSkippedConflictedId++;
+			continue;
+		}
+
+		if (instanceId.empty())
+		{
+			iNumSkippedNoId++;
+			continue;
+		}
+
+		// --- objects must have at least one child, like old code ---
+
+		ArcadeKeyValues* objectsKV = instanceKV->FindKey("objects", true);
+		if (!objectsKV || !objectsKV->GetFirstSubKey())
+		{
+			iNumSkippedEmpty++;
+			continue;
+		}
+
+		// --- Extract fields into InstanceRecord ---
+
+		InstanceRecord rec;
+
+		rec.legacy = instanceKV->GetInt("legacy", 0);
+
+		if (localKV)
+		{
+			rec.mapId = localKV->GetString("map", "");
+
+			rec.title = localKV->GetString("title", "");
+			if (rec.title.empty())
+				rec.title = "Unnamed (" + instanceId + ")";
+
+			rec.file = ""; // Same as your original code
+
+			// platforms / <AA_PLATFORM_ID> / ...
+			ArcadeKeyValues* platformsKV = localKV->FindKey("platforms", false);
+			ArcadeKeyValues* platformKV = nullptr;
+
+			if (platformsKV)
+				platformKV = platformsKV->FindKey(AA_PLATFORM_ID, false);
+
+			if (platformKV)
+			{
+				rec.workshopIds = platformKV->GetString("workshopIds", "");
+				rec.mountIds = platformKV->GetString("mountIds", "");
+				// backpackIds existed in comments previously; still unused here
+			}
+
+			rec.style = localKV->GetString("style", "");
+			rec.autoplayId = localKV->GetString("autoplay", "");
+		}
+		else
+		{
+			rec.title = "Unnamed (" + instanceId + ")";
+		}
+
+		// --- Either store in map or call AddInstance immediately ---
+
+		if (pResponseMap)
+		{
+			(*pResponseMap)[instanceId] = rec;
+		}
+		else
+		{
+			g_pAnarchyManager->GetInstanceManager()->AddInstance(
+				rec.legacy,
+				instanceId,
+				rec.mapId,
+				rec.title,
+				rec.file,
+				rec.workshopIds,
+				rec.mountIds,
+				rec.autoplayId,
+				rec.style
+				);
+		}
+
+		count++;
+	}
+
+	if (iNumSkippedZeroByte > 0 || iNumSkippedBlankIds > 0 ||
+		iNumSkippedConflictedId > 0 || iNumSkippedNoId > 0 || iNumSkippedEmpty > 0)
+	{
+		DevMsg("Skipped Loading Instances:\n\t%i\tZeroByte\n\t%i\tBlankIds\n\t%i\tConflictedIds\n\t%i\tNoId\n\t%i\tEmpty\n",
+			iNumSkippedZeroByte, iNumSkippedBlankIds, iNumSkippedConflictedId,
+			iNumSkippedNoId, iNumSkippedEmpty);
+	}
+
+	sqlite3_finalize(stmt); // keeps your existing TODO comment semantics
+	return count;
+}
+
+
+
+/*
 unsigned int C_MetaverseManager::LoadAllLocalInstances(sqlite3* pDb, std::map<std::string, KeyValues*>* pResponseMap)
 {
 	if (!pDb)
@@ -6831,7 +7328,7 @@ unsigned int C_MetaverseManager::LoadAllLocalInstances(sqlite3* pDb, std::map<st
 
 	sqlite3_finalize(stmt);	// TODO: error checking?  Maybe not needed, if this is like a close() operation.
 	return count;
-}
+}*/
 
 unsigned int C_MetaverseManager::LoadAllLocalApps(sqlite3* pDb, std::map<std::string, KeyValues*>* pResponseMap)
 {
@@ -9825,12 +10322,12 @@ void C_MetaverseManager::GetObjectInfo(object_t* pObject, KeyValues* &pObjectInf
 
 	// origin
 	char buf[AA_MAX_STRING];
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", pObject->origin.x, pObject->origin.y, pObject->origin.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", pObject->origin.x, pObject->origin.y, pObject->origin.z);
 	std::string origin = buf;
 	pObjectInfo->SetString("origin", origin.c_str());
 
 	// angles
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", pObject->angles.x, pObject->angles.y, pObject->angles.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", pObject->angles.x, pObject->angles.y, pObject->angles.z);
 	std::string angles = buf;
 	pObjectInfo->SetString("angles", angles.c_str());
 
@@ -11653,11 +12150,11 @@ void C_MetaverseManager::OnEntryCreated(std::string mode, std::string id, KeyVal
 
 				// position
 				char buf[AA_MAX_STRING];
-				Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", pObject->origin.x, pObject->origin.y, pObject->origin.z);
+				Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", pObject->origin.x, pObject->origin.y, pObject->origin.z);
 				std::string position = buf;
 
 				// rotation
-				Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", pObject->angles.x, pObject->angles.y, pObject->angles.z);
+				Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", pObject->angles.x, pObject->angles.y, pObject->angles.z);
 				std::string rotation = buf;
 
 				int slave = (pObject->slave) ? 1 : 0;
@@ -12007,14 +12504,14 @@ void C_MetaverseManager::SendObjectRemoved(object_t* object)
 	}
 	args.push_back(parentObjectId);
 
-	args.push_back(VarArgs("%.10f", object->scale));
+	args.push_back(VarArgs("%.10g", object->scale));
 
 	char buf[AA_MAX_STRING];
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", object->origin.x, object->origin.y, object->origin.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", object->origin.x, object->origin.y, object->origin.z);
 	std::string origin = buf;
 	args.push_back(origin);
 
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", object->angles.x, object->angles.y, object->angles.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", object->angles.x, object->angles.y, object->angles.z);
 	std::string angles = buf;
 	args.push_back(angles);
 
@@ -12688,14 +13185,14 @@ void C_MetaverseManager::SendObjectUpdate(C_PropShortcutEntity* pShortcut)
 	}
 	args.push_back(parentObjectId);
 
-	args.push_back(VarArgs("%.10f", object->scale));
+	args.push_back(VarArgs("%.10g", object->scale));
 	
 	char buf[AA_MAX_STRING];
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", object->origin.x, object->origin.y, object->origin.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", object->origin.x, object->origin.y, object->origin.z);
 	std::string origin = buf;
 	args.push_back(origin);
 
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", object->angles.x, object->angles.y, object->angles.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", object->angles.x, object->angles.y, object->angles.z);
 	std::string angles = buf;
 	args.push_back(angles);
 	
@@ -13234,11 +13731,11 @@ bool C_MetaverseManager::ProcessObjectUpdate(object_update_t* pObjectUpdate)
 
 			// position
 			char buf[AA_MAX_STRING];
-			Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", pObject->origin.x, pObject->origin.y, pObject->origin.z);
+			Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", pObject->origin.x, pObject->origin.y, pObject->origin.z);
 			std::string position = buf;
 
 			// rotation
-			Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", pObject->angles.x, pObject->angles.y, pObject->angles.z);
+			Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", pObject->angles.x, pObject->angles.y, pObject->angles.z);
 			std::string rotation = buf;
 
 			int slave = (pObject->slave) ? 1 : 0;
@@ -13508,7 +14005,7 @@ void C_MetaverseManager::OverviewExtracted()
 		args.push_back(VarArgs("%s.tga", g_pAnarchyManager->MapName()));
 		args.push_back(VarArgs("%i", pOverviewKV->GetInt("pos_x")));
 		args.push_back(VarArgs("%i", pOverviewKV->GetInt("pos_y")));
-		args.push_back(VarArgs("%.10f", pOverviewKV->GetFloat("scale")));
+		args.push_back(VarArgs("%.10g", pOverviewKV->GetFloat("scale")));
 
 		pNetworkBrowserInstance->DispatchJavaScriptMethod("aampNetwork", "syncOverview", args);
 	}
@@ -13706,10 +14203,10 @@ void C_MetaverseManager::SyncPano()
 	Vector playerBodyOrigin = pPlayer->GetAbsOrigin();
 
 	char buf[AA_MAX_STRING];
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", playerBodyOrigin.x, playerBodyOrigin.y, playerBodyOrigin.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", playerBodyOrigin.x, playerBodyOrigin.y, playerBodyOrigin.z);
 	std::string bodyOrigin = buf;
 
-	Q_snprintf(buf, sizeof(buf), "%.10f %.10f %.10f", playerBodyAngles.x, playerBodyAngles.y, playerBodyAngles.z);
+	Q_snprintf(buf, sizeof(buf), "%.10g %.10g %.10g", playerBodyAngles.x, playerBodyAngles.y, playerBodyAngles.z);
 	std::string bodyAngles = buf;
 
 	std::vector<std::string> args;

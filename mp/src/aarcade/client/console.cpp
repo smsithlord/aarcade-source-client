@@ -20,8 +20,25 @@
 #include "client_virtualreality.h"//"iclientvirtualreality.h"
 #include "sourcevr/isourcevirtualreality.h"
 
+//#include "KeyValues.h"	// Added for Anarchy Arcade
+
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
+
+// Required DLL entry point
+/*BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
+{
+	KeyValues::SetUseGrowableStringTable(true);	// Added for Anarchy Arcade
+	return TRUE;
+}*/
+/*BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID lpvReserved)
+{
+	if (fdwReason == DLL_PROCESS_ATTACH)
+	{
+		KeyValues::SetUseGrowableStringTable(true);
+	}
+	return TRUE;
+}*/
 
 //ConVar xbmc_enable( "xbmc_enable", "0", FCVAR_ARCHIVE );
 //ConVar default_width( "default_width", "256", FCVAR_ARCHIVE);	// obsolete
@@ -51,6 +68,7 @@ ConVar fixed_camera_min_dist("fixed_camera_min_dist", "32.0", FCVAR_NONE, "Minim
 ConVar fixed_camera_max_dist("fixed_camera_max_dist", "500.0", FCVAR_NONE, "Maximum distance the player can be from a screenshot for it to be considered as a fixed camera position.");
 
 ConVar screenshot_multiverse("screenshot_multiverse", "0", FCVAR_ARCHIVE);
+ConVar quests_enabled("quests_enabled", "1", FCVAR_ARCHIVE);
 
 ConVar nodraw_shortcuts("nodraw_shortcuts", "0", FCVAR_NONE, "When enabled, shortcuts will not be rendered.  Useful for taking screenshots.");
 ConVar fixed_camera_spectate_mode("fixed_camera_spectate_mode", "0", FCVAR_NONE, "Set to 1 to use screenshots in the map as 3rd person fixed camera positions.");
@@ -92,6 +110,8 @@ ConVar camslot7("camslot7", "", FCVAR_ARCHIVE);
 ConVar camslot8("camslot8", "", FCVAR_ARCHIVE);
 ConVar camslot9("camslot9", "", FCVAR_ARCHIVE);
 ConVar camcuttype("camcuttype", "0", FCVAR_ARCHIVE);
+
+ConVar jumpPower("jump_power", "1.0", FCVAR_NONE, "Multiplayer to apply to jump power for mega jump.");
 
 ConVar atlas_width("atlas_width", "1280", FCVAR_NONE, "The resolution to use on the always animating texture atlas. Must re-fresh the atlas web tab to take effect.");
 ConVar atlas_height("atlas_height", "720", FCVAR_NONE, "The resolution to use on the always animating texture atlas. Must re-fresh the atlas web tab to take effect.");
@@ -505,9 +525,28 @@ ConCommand destroy_lookspot("destroy_lookspot", DestroyLookspot, "Usage: Interal
 
 void PetTarget(const CCommand &args)
 {
-	g_pAnarchyManager->TogglePetTargetPos(g_pAnarchyManager->GetSelectorTraceVector());
+	int iArgCount = args.ArgC();
+
+	// optional POSITION string vector to pet_target (so we can pet_target "0 0 0" to clear it)
+	bool bWasGivenPosition = (iArgCount > 1);
+	if (bWasGivenPosition) {
+		std::string pos = (bWasGivenPosition) ? args[1] : "0 0 0";
+		Vector posVec;
+		if (pos == "-1") {
+			posVec.x = 0;
+			posVec.y = 0;
+			posVec.z = 0;
+		}
+		else {
+			UTIL_StringToVector(posVec.Base(), pos.c_str());
+		}
+		g_pAnarchyManager->TogglePetTargetPos(posVec);
+	}
+	else {
+		g_pAnarchyManager->TogglePetTargetPos(g_pAnarchyManager->GetSelectorTraceVector());
+	}
 }
-ConCommand pet_target("pet_target", PetTarget, "Usage: Tell pets to go somewhere. Use a 2nd time to return to follow-me mode.");
+ConCommand pet_target("pet_target", PetTarget, "Usage: Tell pets to go somewhere. Use a 2nd time to return to follow-me mode. The parameter is optional position string. Or use -1 to indicate 0 0 0.");
 
 void PetCreated(const CCommand &args)
 {
@@ -596,10 +635,10 @@ void AnimalityByTargetnameClient(const CCommand &args)
 				modelFilename = g_pAnarchyManager->NormalizeModelFilename(modelFilename);
 
 				/*Vector origin = pBaseEntity2->GetAbsOrigin();
-				std::string position = VarArgs("%.10f %.10f %.10f", origin.x, origin.y, origin.z);
+				std::string position = VarArgs("%.10g %.10g %.10g", origin.x, origin.y, origin.z);
 
 				QAngle angles = pBaseEntity2->GetAbsAngles();
-				std::string rotation = VarArgs("%.10f %.10f %.10f", angles.x, angles.y, angles.z);*/
+				std::string rotation = VarArgs("%.10g %.10g %.10g", angles.x, angles.y, angles.z);*/
 
 				Vector origin;
 				UTIL_StringToVector(origin.Base(), args.Arg(3));
@@ -2298,6 +2337,11 @@ void TesterJoint(const CCommand &args)
 
 	//g_pAnarchyManager->GetInstanceManager()->ProcessAutoUnspawnUpdate();	// This object unspawning system ACTUALLY WORKS!!!!!! But there is such a performance stutter loading in new assets still, that it needs to find a proper implementation.  (Also note stuff like item texture cleanup is probably not implemented, it's still an unfinished feature.)
 
+
+
+
+
+/*
 	//C_BaseEntity* pPet = null;
 	pet_t* pPet = g_pAnarchyManager->GetPlayAsPet();
 	//if (pPlayAsPet)
@@ -2331,8 +2375,22 @@ void TesterJoint(const CCommand &args)
 			//engine->ServerCmd(VarArgs("snap_object_pos %i %f %f %f %f %f %f;\n", pShortcut->entindex(), origin.x, origin.y, origin.z, angles.x, angles.y, angles.z));
 		}
 	}
+	*/
+
+	g_pAnarchyManager->DownloadSingleFile("https://akns-images.eonline.com/eol_images/Entire_Site/202414/rs_1200x1200-240204170033-1200-taylor-swift-2024-grammys.jpg");
 }
 ConCommand testerjoint("testerjoint", TesterJoint, "Usage: ");
+
+void TesterJoint22(const CCommand &args)
+{
+	std::vector<std::string> results;
+	g_pAnarchyManager->GetMountManager()->DetectGamePaths(results);
+	for (unsigned int i = 0; i < results.size(); i++)
+	{
+		DevMsg("\tDetected path: %s\n", results[i].c_str());
+	}
+}
+ConCommand testerjoint22("testerjoint22", TesterJoint22, "Usage: ");
 
 // Console command to display the number of mount paths
 void CC_CountMountPaths()
@@ -2918,6 +2976,8 @@ void PetOutfitLoad(const CCommand &args)
 				}
 			}
 		}
+		kv->deleteThis();
+		kv = null;
 	}
 }
 ConCommand petoutfitload("petoutfitload", PetOutfitLoad, "Saves the outfit on the current play-as-pet. (Generates a new outfitid if one is not given.)");
@@ -2960,6 +3020,26 @@ void PetPlayAnimRaw(const CCommand &args)
 }
 ConCommand petplayanimraw("petplayanimraw", PetPlayAnimRaw, "Plays the exact sequence on the pet using the entity index. (Or nearest pet if -1 index specified. Or the play-as pet if index NOT specified.)"); //(Or the play-as pet if no pet index specified. Or nearest pet if neither.)");
 
+void PetSaveBatch(const CCommand &args)
+{
+	if (args.ArgC() < 2)
+		return;
+
+	std::string batchName = args[1];
+	g_pAnarchyManager->SavePetBatch(batchName);
+}
+ConCommand petsavebatch("petsavebatch", PetSaveBatch, "Saves the current pets as the given name. (So be sure to give it a name.) Use it with petloadbatch later.");
+
+void PetLoadBatch(const CCommand &args)
+{
+	if (args.ArgC() < 2)
+		return;
+
+	std::string batchName = args[1];
+	g_pAnarchyManager->LoadPetBatch(batchName);
+}
+ConCommand petloadbatch("petloadbatch", PetLoadBatch, "Loads the pets of a given name. (So be sure to give it a name.) Use it with petsavebatch.");
+
 void PetBehavior(const CCommand &args)
 {
 	if (args.ArgC() < 2)
@@ -2980,6 +3060,32 @@ void PetBehavior(const CCommand &args)
 	pPet->iBehavior = iBehavior;
 }
 ConCommand petbehavior("petbehavior", PetBehavior, "Sets the behavior on the pet using the entity index. (Or nearest pet if -1 index specified. Or the play-as pet if index NOT specified.)");
+
+void PetBehaviorToggle(const CCommand &args)
+{
+	if (args.ArgC() < 3)
+		return;
+
+	int iBehaviorA = Q_atoi(args[1]);
+	int iBehaviorB = Q_atoi(args[2]);
+	if (iBehaviorB < 0) {
+		iBehaviorB = 0;
+	}
+
+	bool bWasGivenIndex = (args.ArgC() > 3);
+	pet_t* pPet = (bWasGivenIndex) ? g_pAnarchyManager->GetPetByEntIndex(Q_atoi(args[3])) : g_pAnarchyManager->GetPlayAsPet();
+	if (!pPet) {
+		pPet = g_pAnarchyManager->GetNearestPetToPlayerLook();
+	}
+
+	if (!pPet) {
+		return;
+	}
+
+	int iBehavior = (pPet->iBehavior == iBehaviorA) ? iBehaviorB : iBehaviorA;
+	pPet->iBehavior = iBehavior;
+}
+ConCommand petbehaviortoggle("petbehaviortoggle", PetBehaviorToggle, "[behaviorA, behaviorB, petEntityIndex] Toggles the behavior on the pet using the entity index. (Or nearest pet if -1 index specified. Or the play-as pet if index NOT specified.) First param is primary behavior, 2nd param is 2ndary behavior, use -1 to just use 'idle'.");
 
 void PetUpdate(const CCommand &args)
 {
@@ -3338,7 +3444,7 @@ void PetAttach(const CCommand &args)
 {
 	//pet_t* pPet = g_pAnarchyManager->GetPlayAsPet();
 
-	bool bWasGivenIndex = (args.ArgC() > 2);
+	bool bWasGivenIndex = (args.ArgC() > 2 && Q_atoi(args[2]) >= 0);
 	pet_t* pPet = (bWasGivenIndex) ? g_pAnarchyManager->GetPetByEntIndex(Q_atoi(args[2])) : g_pAnarchyManager->GetPlayAsPet();
 
 	if (!pPet)
@@ -3455,7 +3561,7 @@ void PetAttach(const CCommand &args)
 		// Are we given an attachment name? If so, search for a saved attachment that is bound to it.
 		//bool bChangedAttachmentName = false;
 		KeyValues* pAttachmentKV = NULL;
-		std::string attachmentName = (args.ArgC() > 1) ? args[1] : "";
+		std::string attachmentName = (args.ArgC() > 3) ? args[3] : "";
 		if (attachmentName != "")
 		{
 			if (models)
@@ -4070,7 +4176,7 @@ void NPCMove(const CCommand &args)
 {
 	Vector pos = g_pAnarchyManager->GetSelectorTraceVector();
 
-	engine->ClientCmd(VarArgs("donpcmove %02f %02f %02f\n", pos.x, pos.y, pos.z));
+	engine->ClientCmd(VarArgs("donpcmove %.6g %.6g %.6g\n", pos.x, pos.y, pos.z));
 }
 ConCommand npcmove("npcmove", NPCMove, "Usegae: Morph the object under your crosshair into what ever your parameter is.");
 
@@ -4417,10 +4523,21 @@ ConCommand rememberwrapper("-remember", RememberWrapper, "Usage: wrapper for the
 
 void MainMenu(const CCommand &args)
 {
-	if (g_pAnarchyManager->IsInitialized())
+	if (g_pAnarchyManager->IsInitialized()) {
 		g_pAnarchyManager->RunAArcade();
+	}
 }
 ConCommand main_menu("main_menu", MainMenu, "Usage: runs AArcade");	// used from Main Menu
+
+void CycleStaggerPattern(const CCommand &args)
+{
+	g_pAnarchyManager->CycleStaggerPattern();
+	aaPetStaggerPattern staggerPattern = g_pAnarchyManager->GetCurrentStaggerPattern();
+	int currentPattern = static_cast<int>(staggerPattern);
+	DevMsg("Cycled to pattern: %i\n", currentPattern);
+	g_pAnarchyManager->AddToastMessage(VarArgs("Cycled to pattern: %i\n", currentPattern));
+}
+ConCommand cycle_stagger_pattern("cycle_stagger_pattern", CycleStaggerPattern, "Usage: Cycles the pet stagger pattern.");
 
 void ShowConnect(const CCommand &args)
 {
@@ -5829,10 +5946,10 @@ void cam_cut(const CCommand &args)
 			else
 			{
 				Vector origin = C_BasePlayer::GetLocalPlayer()->EyePosition();
-				position = VarArgs("%.10f %.10f %.10f", origin.x, origin.y, origin.z);
+				position = VarArgs("%.10g %.10g %.10g", origin.x, origin.y, origin.z);
 
 				QAngle angles = C_BasePlayer::GetLocalPlayer()->EyeAngles();
-				rotation = VarArgs("%.10f %.10f %.10f", angles.x, angles.y, angles.z);
+				rotation = VarArgs("%.10g %.10g %.10g", angles.x, angles.y, angles.z);
 			}
 
 			if (position != "" && rotation != "")
@@ -5892,6 +6009,85 @@ void cam_cut(const CCommand &args)
 	}
 }
 ConCommand camCut("camcut", cam_cut, "Usage: Parameters are position then rotation.");
+
+static const size_t KV_STRING_TABLE_LIMIT = 4 * 1024 * 1024; // 4 MB
+void kvDumpKeys(const CCommand &args)
+{
+	/*DevMsg("==== KeyValues String Table Dump ====\n");
+
+	// Get whichever lookup function KeyValues is currently using (classic or growable)
+	const char *(*pGetStringForSymbol)(int) = KeyValues::CallGetStringForSymbol;
+	if (!pGetStringForSymbol)
+	{
+		DevMsg("KeyValues string table not initialized yet.\n");
+		return;
+	}
+
+	int count = 0;
+
+	for (int i = 0;; ++i)
+	{
+		const char *name = pGetStringForSymbol(i);
+		if (!name)
+			break;
+
+		DevMsg("[%05d] %s\n", i, name);
+		++count;
+	}
+
+	DevMsg("---- Total key name symbols: %d ----\n", count);*/
+
+	static unsigned int s_kvDebugCounter = 0;
+
+	char debugName[64];
+	Q_snprintf(debugName, sizeof(debugName), "__kv_debug_%u", s_kvDebugCounter++);
+
+	// Force creation of a new symbol at the end of the current pool
+	int symbol = KeyValues::CallGetSymbolForString(debugName, true);
+	const char *stored = KeyValues::CallGetStringForSymbol(symbol);
+
+	if (!stored)
+	{
+		DevMsg("kv_spaceleft: Failed to retrieve debug string from KeyValues table.\n");
+		return;
+	}
+
+	// In classic mode, 'symbol' is effectively the byte offset into the 4MB pool.
+	unsigned int offset = (unsigned int)symbol;
+	unsigned int len = (unsigned int)(Q_strlen(stored) + 1); // include null terminator
+
+	unsigned int used = offset + len;
+	if (used > KV_STRING_TABLE_LIMIT)
+		used = KV_STRING_TABLE_LIMIT;
+
+	unsigned int remaining = (used < KV_STRING_TABLE_LIMIT)
+		? (KV_STRING_TABLE_LIMIT - used)
+		: 0;
+
+	// Percentages
+	float percentUsed = 0.0f;
+	float percentRemaining = 0.0f;
+
+	if (KV_STRING_TABLE_LIMIT > 0u)
+	{
+		percentUsed = ((float)used      * 100.0f) / (float)KV_STRING_TABLE_LIMIT;
+		percentRemaining = ((float)remaining * 100.0f) / (float)KV_STRING_TABLE_LIMIT;
+	}
+
+	DevMsg("==== KeyValues String Table (classic) ====\n");
+	DevMsg(" Approx used:        %u characters\n", used);
+	DevMsg(" Approx remaining:   %u characters\n", remaining);
+	DevMsg(" Total capacity:     %u characters (4 MB)\n", KV_STRING_TABLE_LIMIT);
+	DevMsg(" Percent used:       %.2f%%\n", percentUsed);
+	DevMsg(" Percent remaining:  %.2f%%\n", percentRemaining);
+	DevMsg("==========================================\n");
+
+	if (remaining < 256u * 1024u)
+	{
+		DevMsg(" WARNING: Less than 256 KB remaining in KeyValues string table!\n");
+	}
+}
+ConCommand kv_dump_keys("kvdumpkeysusage", kvDumpKeys, "Lists all unique KeyValues key names currently registered in the global KeyValues string table.");
 
 void cmd_pet_next(const CCommand &args)
 {

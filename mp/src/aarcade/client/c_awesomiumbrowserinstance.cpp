@@ -642,7 +642,7 @@ void C_AwesomiumBrowserInstance::Update()
 		this->OnProxyBind(null);
 }
 
-void C_AwesomiumBrowserInstance::TakeScreenshot()
+void C_AwesomiumBrowserInstance::TakeScreenshot(std::string nextTaskScreenshotName)
 {
 	DevMsg("Take screenshot (C_AwesomiumBrowserInstance)\n");
 }
@@ -1160,6 +1160,8 @@ void C_AwesomiumBrowserInstance::IncrementNumImagesLoading()
 
 void C_AwesomiumBrowserInstance::ResetImagesSession()
 {
+	g_pAnarchyManager->ClearSteamHTTPImageDownloadRequests();
+
 	m_imagesSessionId = g_pAnarchyManager->GenerateUniqueId();
 	this->ClearNumImagesLoading();
 	//m_iNumImagesLoading = 0;

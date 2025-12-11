@@ -170,7 +170,7 @@ CStudioHdr *C_HL2MP_Player::OnNewModel( void )
 /**
  * Orient head and eyes towards m_lookAt.
  */
-#include "../aarcade/client/c_anarchymanager.h"
+#include "../aarcade/client/c_anarchymanager.h"	// Added for Anarchy Arcade
 void C_HL2MP_Player::UpdateLookAt( void )
 {
 	// head yaw

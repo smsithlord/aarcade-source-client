@@ -1395,7 +1395,7 @@ int CBaseEntity::TakeHealth( float flHealth, int bitsDamageType )
 
 // inflict damage on this entity.  bitsDamageType indicates type of damage inflicted, ie: DMG_CRUSH
 
-ConVar no_entity_dmg("no_entity_dmg", "0", FCVAR_ARCHIVE, "Set to 1 to disable entity dmg, for debug purposes.");
+ConVar no_entity_dmg("no_entity_dmg", "0", FCVAR_ARCHIVE, "Set to 1 to disable entity dmg, for debug purposes.");	// Added for Anarchy Arcade
 int CBaseEntity::OnTakeDamage( const CTakeDamageInfo &info )
 {
 	Vector			vecTemp;
