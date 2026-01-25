@@ -260,6 +260,7 @@ C_AnarchyManager::C_AnarchyManager() : CAutoGameSystemPerFrame("C_AnarchyManager
 	m_pMetaverseManager = null;
 	m_pBackpackManager = null;
 	m_pWindowManager = null;
+	//m_pWindowsUtils = null;
 	m_pQuestManager = null;
 	m_pInputManager = null;
 	m_pSelectedEntity = null;
@@ -2245,6 +2246,224 @@ void C_AnarchyManager::ClearPetStaggeredPositions()
 	m_vPetPositions.clear();
 }*/
 
+//-----------------------------------------------------------------------------
+// Stagger pattern methods
+//-----------------------------------------------------------------------------
+Vector C_AnarchyManager::AdjustForMinDist(Vector vPos, float minDist)
+{
+	for (const Vector& otherPos : m_vPetPositions)
+	{
+		if ((vPos - otherPos).Length() < minDist)
+		{
+			Vector dir = (vPos - otherPos);
+			if (dir.Length() > 0.1f)
+			{
+				dir.NormalizeInPlace();
+				vPos += dir * (minDist / 0.5f);
+			}
+		}
+	}
+
+	C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
+	if (pPlayer)
+	{
+		Vector playerOrigin = pPlayer->GetAbsOrigin();
+		if ((vPos - playerOrigin).Length() < minDist)
+		{
+			Vector dir = (vPos - playerOrigin);
+			if (dir.Length() > 0.1f)
+			{
+				dir.NormalizeInPlace();
+				vPos += dir * minDist;
+			}
+		}
+	}
+
+	return vPos;
+}
+
+Vector C_AnarchyManager::ComputeSingleFilePosition(unsigned int u, const Vector& vTargetPos, const QAngle& qTargetRot)
+{
+	const float spacing = 48.0f;
+	Vector vForward;
+	AngleVectors(qTargetRot, &vForward, nullptr, nullptr);
+	return vTargetPos - vForward * (spacing * u);
+}
+
+Vector C_AnarchyManager::ComputeThemeParkLinePosition(unsigned int u, const Vector& vTargetPos, const QAngle& qTargetRot)
+{
+	const float baseSpacing = 48.0f;
+	const float staggerOffset = 16.0f;
+	Vector vForward, vRight;
+	AngleVectors(qTargetRot, &vForward, &vRight, nullptr);
+
+	float row = u / 2;
+	float sideOffset = ((u % 2) ? 1 : -1) * staggerOffset;
+	float forwardOffset = row * baseSpacing;
+
+	return vTargetPos + vForward * forwardOffset + vRight * sideOffset;
+}
+
+Vector C_AnarchyManager::ComputeCirclePosition(unsigned int u, const Vector& vTargetPos)
+{
+	const float radius = 96.0f;
+	float angle = (u * 360.0f / 12.0f) * (M_PI / 180.0f);
+	return vTargetPos + Vector(cos(angle) * radius, sin(angle) * radius, 0);
+}
+
+Vector C_AnarchyManager::ComputeSemiCirclePosition(unsigned int u, const Vector& vTargetPos, const QAngle& qTargetRot)
+{
+	const float radius = 96.0f;
+	Vector vForward, vRight;
+	AngleVectors(qTargetRot, &vForward, &vRight, nullptr);
+
+	float angle = (-90.0f + (u * 180.0f / 10.0f)) * (M_PI / 180.0f);
+	return vTargetPos + vForward * (cos(angle) * radius) + vRight * (sin(angle) * radius);
+}
+
+Vector C_AnarchyManager::ComputeVShapePosition(unsigned int u, const Vector& vTargetPos, const QAngle& qTargetRot)
+{
+	const float baseSpacing = 48.0f;
+	Vector vForward, vRight;
+	AngleVectors(qTargetRot, &vForward, &vRight, nullptr);
+
+	float row = u / 2;
+	float sideOffset = ((u % 2) ? 1 : -1) * (row * baseSpacing);
+	float forwardOffset = row * baseSpacing;
+
+	return vTargetPos + vForward * forwardOffset + vRight * sideOffset;
+}
+
+Vector C_AnarchyManager::ComputeRandomBlobPosition(unsigned int u, const Vector& vTargetPos)
+{
+	float randomX = RandomFloat(-48.0f, 48.0f);
+	float randomY = RandomFloat(-48.0f, 48.0f);
+	return vTargetPos + Vector(randomX, randomY, 0);
+}
+
+void C_AnarchyManager::CycleStaggerPattern(int iDirection)
+{
+	int numPatterns = 6;
+	int currentPattern = static_cast<int>(m_eStaggerPattern);
+	currentPattern = (currentPattern + iDirection + numPatterns) % numPatterns;
+	m_eStaggerPattern = static_cast<aaPetStaggerPattern>(currentPattern);
+}
+
+void C_AnarchyManager::SetNextTaskScreenshot(std::string filepath)
+{
+	m_nextTaskScreenshot = filepath;
+}
+
+std::string C_AnarchyManager::GetNextTaskScreenshot()
+{
+	return m_nextTaskScreenshot;
+}
+
+void C_AnarchyManager::PerformAutoScreenshot()
+{
+	CMatRenderContextPtr pRenderContext(materials);
+
+	const int w = ScreenWidth();
+	const int h = ScreenHeight();
+
+	const int bytesPerPixel = 3; // RGB888
+	const int rowStride = w * bytesPerPixel;
+	const int bufSize = rowStride * h;
+
+	unsigned char *buffer = (unsigned char*)malloc(bufSize);
+	if (!buffer)
+	{
+		DevMsg("Failed to alloc buffer\n");
+		return;
+	}
+
+	// Read from backbuffer
+	pRenderContext->ReadPixels(
+		0, 0,
+		w, h,
+		buffer,
+		IMAGE_FORMAT_RGB888
+		);
+
+	CUtlBuffer outBuf(0, 0, 0);
+
+	bool ok = TGAWriter::WriteToBuffer(
+		buffer,
+		outBuf,
+		w,
+		h,
+		IMAGE_FORMAT_RGB888, // srcFormat
+		IMAGE_FORMAT_RGB888  // dstFormat
+		);
+
+	if (!ok)
+	{
+		DevMsg("TGAWriter::WriteToBuffer failed\n");
+		free(buffer);
+		return;
+	}
+
+	std::string screenshotFolder = "screenshots/auto";
+	g_pFullFileSystem->CreateDirHierarchy(screenshotFolder.c_str(), "DEFAULT_WRITE_PATH");
+
+	const char *pFilename = "viewrender.tga";
+	const char *pPath = VarArgs("%s/%s", screenshotFolder.c_str(), pFilename);
+
+	if (!filesystem->WriteFile(pPath, "DEFAULT_WRITE_PATH", outBuf))
+	{
+		DevMsg("filesystem->WriteFile failed\n");
+	}
+	else
+	{
+		DevMsg("wrote %s (%dx%d)\n", pFilename, w, h);
+	}
+
+	free(buffer);
+}
+
+
+Vector C_AnarchyManager::GetPetStaggeredPosition(unsigned int u, const Vector& vTargetPos, const QAngle& qTargetRot, pet_t* pPet, float minDist)
+{
+	if (!pPet)
+		return vTargetPos;
+
+	Vector vFinalPos;
+
+	switch (m_eStaggerPattern)
+	{
+	case PET_STAGGER_SINGLE_FILE:
+		vFinalPos = ComputeSingleFilePosition(u, vTargetPos, qTargetRot);
+		break;
+	case PET_STAGGER_THEME_PARK_LINE:
+		vFinalPos = ComputeThemeParkLinePosition(u, vTargetPos, qTargetRot);
+		break;
+	case PET_STAGGER_CIRCLE:
+		vFinalPos = ComputeCirclePosition(u, vTargetPos);
+		break;
+	case PET_STAGGER_SEMI_CIRCLE:
+		vFinalPos = ComputeSemiCirclePosition(u, vTargetPos, qTargetRot);
+		break;
+	case PET_STAGGER_V_SHAPE:
+		vFinalPos = ComputeVShapePosition(u, vTargetPos, qTargetRot);
+		break;
+	case PET_STAGGER_RANDOM_BLOB:
+		vFinalPos = ComputeRandomBlobPosition(u, vTargetPos);
+		break;
+	default:
+		vFinalPos = vTargetPos;
+		break;
+	}
+
+	vFinalPos = AdjustForMinDist(vFinalPos, minDist);
+	m_vPetPositions.push_back(vFinalPos);
+
+	return vFinalPos;
+}
+
+void C_AnarchyManager::ClearPetStaggeredPositions()
+{
+	m_vPetPositions.clear();
+}
 
 
 
@@ -2737,226 +2956,6 @@ void C_AnarchyManager::ProcessAllPets()
 // CLAUDE CODE END
 
 #else
-
-//-----------------------------------------------------------------------------
-// Stagger pattern methods
-//-----------------------------------------------------------------------------
-Vector C_AnarchyManager::AdjustForMinDist(Vector vPos, float minDist)
-{
-	for (const Vector& otherPos : m_vPetPositions)
-	{
-		if ((vPos - otherPos).Length() < minDist)
-		{
-			Vector dir = (vPos - otherPos);
-			if (dir.Length() > 0.1f)
-			{
-				dir.NormalizeInPlace();
-				vPos += dir * (minDist / 0.5f);
-			}
-		}
-	}
-
-	C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
-	if (pPlayer)
-	{
-		Vector playerOrigin = pPlayer->GetAbsOrigin();
-		if ((vPos - playerOrigin).Length() < minDist)
-		{
-			Vector dir = (vPos - playerOrigin);
-			if (dir.Length() > 0.1f)
-			{
-				dir.NormalizeInPlace();
-				vPos += dir * minDist;
-			}
-		}
-	}
-
-	return vPos;
-}
-
-Vector C_AnarchyManager::ComputeSingleFilePosition(unsigned int u, const Vector& vTargetPos, const QAngle& qTargetRot)
-{
-	const float spacing = 48.0f;
-	Vector vForward;
-	AngleVectors(qTargetRot, &vForward, nullptr, nullptr);
-	return vTargetPos - vForward * (spacing * u);
-}
-
-Vector C_AnarchyManager::ComputeThemeParkLinePosition(unsigned int u, const Vector& vTargetPos, const QAngle& qTargetRot)
-{
-	const float baseSpacing = 48.0f;
-	const float staggerOffset = 16.0f;
-	Vector vForward, vRight;
-	AngleVectors(qTargetRot, &vForward, &vRight, nullptr);
-
-	float row = u / 2;
-	float sideOffset = ((u % 2) ? 1 : -1) * staggerOffset;
-	float forwardOffset = row * baseSpacing;
-
-	return vTargetPos + vForward * forwardOffset + vRight * sideOffset;
-}
-
-Vector C_AnarchyManager::ComputeCirclePosition(unsigned int u, const Vector& vTargetPos)
-{
-	const float radius = 96.0f;
-	float angle = (u * 360.0f / 12.0f) * (M_PI / 180.0f);
-	return vTargetPos + Vector(cos(angle) * radius, sin(angle) * radius, 0);
-}
-
-Vector C_AnarchyManager::ComputeSemiCirclePosition(unsigned int u, const Vector& vTargetPos, const QAngle& qTargetRot)
-{
-	const float radius = 96.0f;
-	Vector vForward, vRight;
-	AngleVectors(qTargetRot, &vForward, &vRight, nullptr);
-
-	float angle = (-90.0f + (u * 180.0f / 10.0f)) * (M_PI / 180.0f);
-	return vTargetPos + vForward * (cos(angle) * radius) + vRight * (sin(angle) * radius);
-}
-
-Vector C_AnarchyManager::ComputeVShapePosition(unsigned int u, const Vector& vTargetPos, const QAngle& qTargetRot)
-{
-	const float baseSpacing = 48.0f;
-	Vector vForward, vRight;
-	AngleVectors(qTargetRot, &vForward, &vRight, nullptr);
-
-	float row = u / 2;
-	float sideOffset = ((u % 2) ? 1 : -1) * (row * baseSpacing);
-	float forwardOffset = row * baseSpacing;
-
-	return vTargetPos + vForward * forwardOffset + vRight * sideOffset;
-}
-
-Vector C_AnarchyManager::ComputeRandomBlobPosition(unsigned int u, const Vector& vTargetPos)
-{
-	float randomX = RandomFloat(-48.0f, 48.0f);
-	float randomY = RandomFloat(-48.0f, 48.0f);
-	return vTargetPos + Vector(randomX, randomY, 0);
-}
-
-void C_AnarchyManager::CycleStaggerPattern(int iDirection)
-{
-	int numPatterns = 6;
-	int currentPattern = static_cast<int>(m_eStaggerPattern);
-	currentPattern = (currentPattern + iDirection + numPatterns) % numPatterns;
-	m_eStaggerPattern = static_cast<aaPetStaggerPattern>(currentPattern);
-}
-
-void C_AnarchyManager::SetNextTaskScreenshot(std::string filepath)
-{
-	m_nextTaskScreenshot = filepath;
-}
-
-std::string C_AnarchyManager::GetNextTaskScreenshot()
-{
-	return m_nextTaskScreenshot;
-}
-
-void C_AnarchyManager::PerformAutoScreenshot()
-{
-	CMatRenderContextPtr pRenderContext(materials);
-
-	const int w = ScreenWidth();
-	const int h = ScreenHeight();
-
-	const int bytesPerPixel = 3; // RGB888
-	const int rowStride = w * bytesPerPixel;
-	const int bufSize = rowStride * h;
-
-	unsigned char *buffer = (unsigned char*)malloc(bufSize);
-	if (!buffer)
-	{
-		DevMsg("Failed to alloc buffer\n");
-		return;
-	}
-
-	// Read from backbuffer
-	pRenderContext->ReadPixels(
-		0, 0,
-		w, h,
-		buffer,
-		IMAGE_FORMAT_RGB888
-		);
-
-	CUtlBuffer outBuf(0, 0, 0);
-
-	bool ok = TGAWriter::WriteToBuffer(
-		buffer,
-		outBuf,
-		w,
-		h,
-		IMAGE_FORMAT_RGB888, // srcFormat
-		IMAGE_FORMAT_RGB888  // dstFormat
-		);
-
-	if (!ok)
-	{
-		DevMsg("TGAWriter::WriteToBuffer failed\n");
-		free(buffer);
-		return;
-	}
-
-	std::string screenshotFolder = "screenshots/auto";
-	g_pFullFileSystem->CreateDirHierarchy(screenshotFolder.c_str(), "DEFAULT_WRITE_PATH");
-
-	const char *pFilename = "viewrender.tga";
-	const char *pPath = VarArgs("%s/%s", screenshotFolder.c_str(), pFilename);
-
-	if (!filesystem->WriteFile(pPath, "DEFAULT_WRITE_PATH", outBuf))
-	{
-		DevMsg("filesystem->WriteFile failed\n");
-	}
-	else
-	{
-		DevMsg("wrote %s (%dx%d)\n", pFilename, w, h);
-	}
-
-	free(buffer);
-}
-
-
-Vector C_AnarchyManager::GetPetStaggeredPosition(unsigned int u, const Vector& vTargetPos, const QAngle& qTargetRot, pet_t* pPet, float minDist)
-{
-	if (!pPet)
-		return vTargetPos;
-
-	Vector vFinalPos;
-
-	switch (m_eStaggerPattern)
-	{
-	case PET_STAGGER_SINGLE_FILE:
-		vFinalPos = ComputeSingleFilePosition(u, vTargetPos, qTargetRot);
-		break;
-	case PET_STAGGER_THEME_PARK_LINE:
-		vFinalPos = ComputeThemeParkLinePosition(u, vTargetPos, qTargetRot);
-		break;
-	case PET_STAGGER_CIRCLE:
-		vFinalPos = ComputeCirclePosition(u, vTargetPos);
-		break;
-	case PET_STAGGER_SEMI_CIRCLE:
-		vFinalPos = ComputeSemiCirclePosition(u, vTargetPos, qTargetRot);
-		break;
-	case PET_STAGGER_V_SHAPE:
-		vFinalPos = ComputeVShapePosition(u, vTargetPos, qTargetRot);
-		break;
-	case PET_STAGGER_RANDOM_BLOB:
-		vFinalPos = ComputeRandomBlobPosition(u, vTargetPos);
-		break;
-	default:
-		vFinalPos = vTargetPos;
-		break;
-	}
-
-	vFinalPos = AdjustForMinDist(vFinalPos, minDist);
-	m_vPetPositions.push_back(vFinalPos);
-
-	return vFinalPos;
-}
-
-void C_AnarchyManager::ClearPetStaggeredPositions()
-{
-	m_vPetPositions.clear();
-}
-
 void C_AnarchyManager::ProcessAllPets() {
 	C_BasePlayer* pPlayer = C_BasePlayer::GetLocalPlayer();
 	if (!pPlayer)
@@ -6860,6 +6859,10 @@ void C_AnarchyManager::Update(float frametime)
 			m_pWindowManager = new C_WindowManager();
 			m_pWindowManager->Init();
 
+			// Used for getting the DPI of the current HWND monitor (w/o having to include Windows.h anywhere else.)
+			//m_pWindowsUtils = new C_WindowsUtils();
+			//m_pWindowsUtils->Init();
+
 			// let the quest manager get ready, if it needs to.
 			m_pQuestManager = new C_QuestManager();
 			m_pQuestManager->Init();
@@ -7860,34 +7863,32 @@ void C_AnarchyManager::GetViewportBounds(ISourceVirtualReality::VREye eEye, int 
 }
 
 //#include "view.h"
+// Adjusted by Claude
 void C_AnarchyManager::ScreenToWorld(int mousex, int mousey, float fov,
 	const Vector& vecRenderOrigin,
 	const QAngle& vecRenderAngles,
 	Vector& vecPickingRay)
 {
+	// Scale mouse coordinates from 1920x1080 web view space to actual screen space
+	float scaledMouseX = mousex * (float)ScreenWidth() / 1920.0f;
+	float scaledMouseY = mousey * (float)ScreenHeight() / 1080.0f;
+
 	float dx, dy;
 	float c_x, c_y;
 	float dist;
 	Vector vpn, vup, vright;
-
 	float scaled_fov = ScaleFOVByWidthRatio(fov, engine->GetScreenAspectRatio() * 0.75f);
-
 	c_x = ScreenWidth() / 2;
 	c_y = ScreenHeight() / 2;
-
-	dx = (float)mousex - c_x;
+	dx = scaledMouseX - c_x;
 	// Invert Y
-	dy = c_y - (float)mousey;
-
+	dy = c_y - scaledMouseY;
 	// Convert view plane distance
 	dist = c_x / tan(M_PI * scaled_fov / 360.0);
-
 	// Decompose view angles
 	AngleVectors(vecRenderAngles, &vpn, &vright, &vup);
-
 	// Offset forward by view plane distance, and then by pixel offsets
 	vecPickingRay = vpn * dist + vright * (dx)+vup * (dy);
-
 	// Convert to unit vector
 	VectorNormalize(vecPickingRay);
 }
@@ -14514,6 +14515,95 @@ void C_AnarchyManager::ManageWindow()
 	m_fNextWindowManage = engine->Time() + fManageWindowInterval;
 }
 
+// This method was created by ChatGPT
+/*void C_AnarchyManager::ManageWindowWithScale()
+{
+	if (m_bAutoRes)
+	{
+		// DPI / display scale
+		float scale = (this->m_pWindowsUtils) ? this->m_pWindowsUtils->GetWindowScaleFactor() : 1.0f;
+		if (scale <= 0.0f)
+			scale = 1.0f;
+
+		const MaterialSystem_Config_t &config = materials->GetCurrentConfigForVideoCard();
+		if (!config.Windowed() || m_fNextWindowManage == 0)
+		{
+			int myWidth = config.m_VideoMode.m_Width;
+			int myHeight = config.m_VideoMode.m_Height;
+
+			RECT rcDesktop;
+			if (SystemParametersInfo(SPI_GETWORKAREA, 0, &rcDesktop, 0))
+			{
+				// Work area (often effectively "scale==1" space in your pipeline),
+				// so convert to scaled/physical space.
+				int desktopWidth = rcDesktop.right - rcDesktop.left;
+				int desktopHeight = rcDesktop.bottom - rcDesktop.top;
+
+				myWidth = (int)((float)desktopWidth * scale);
+				myHeight = (int)((float)desktopHeight * scale);
+			}
+
+			Msg("FORCING WINDOWED MODE...\n");
+			std::string myResCommand = VarArgs("mat_setvideomode %i %i 1;\n", myWidth, myHeight);
+			engine->ClientCmd(myResCommand.c_str());
+		}
+		else
+		{
+			int desktopWidth = 0;
+			int desktopHeight = 0;
+			int clientWidth = 0;
+			int clientHeight = 0;
+			int windowWidth = 0;
+			int windowHeight = 0;
+			int borderWidth = 0;
+			int borderTop = 0;
+
+			int flags = SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOSIZE | SWP_NOZORDER | SWP_NOOWNERZORDER | SWP_NOREPOSITION;
+
+			// Will we fit in the desktop?
+			RECT rcDesktop;
+			if (SystemParametersInfo(SPI_GETWORKAREA, 0, &rcDesktop, 0))
+			{
+				RECT rcClient;
+				RECT rcWind;
+
+				GetClientRect(m_hwnd, &rcClient);
+				GetWindowRect(m_hwnd, &rcWind);
+
+				// Raw work area
+				desktopWidth = rcDesktop.right - rcDesktop.left;
+				desktopHeight = rcDesktop.bottom - rcDesktop.top;
+
+				// Convert work area to scaled/physical space so it matches window rect units
+				desktopWidth = (int)((float)desktopWidth * scale);
+				desktopHeight = (int)((float)desktopHeight * scale);
+
+				clientWidth = rcClient.right - rcClient.left;
+				clientHeight = rcClient.bottom - rcClient.top;
+				windowWidth = rcWind.right - rcWind.left;
+				windowHeight = rcWind.bottom - rcWind.top;
+
+				borderWidth = (windowWidth - clientWidth) / 2;
+				borderTop = (windowHeight - clientHeight) - borderWidth;
+
+				if (windowWidth > desktopWidth && windowHeight > desktopHeight)
+					flags &= ~0x0002; // (your original magic bit clear)
+			}
+
+			// If we have moved...
+			RECT windowRect;
+			if (!(flags & SWP_NOMOVE) && GetWindowRect(m_hwnd, &windowRect) &&
+				(windowRect.top != -borderTop || windowRect.left != -borderWidth))
+			{
+				SetWindowPos(m_hwnd, null, -borderWidth, -borderTop, 0, 0, flags);
+			}
+		}
+	}
+
+	float fManageWindowInterval = 8.0f;
+	m_fNextWindowManage = engine->Time() + fManageWindowInterval;
+}*/
+
 void C_AnarchyManager::MainMenuLoaded()
 {
 	if (!m_bLevelInitialized || !engine->IsInGame())
@@ -15659,7 +15749,8 @@ bool C_AnarchyManager::CheckStartWithWindows()
 		if (key != ERROR_FILE_NOT_FOUND)
 			bStatus = true;
 
-		RegCloseKey(hKey);
+		//RegCloseKey(hKey);
+		VCRHook_RegCloseKey(hKey);
 	}
 
 	return bStatus;
@@ -15676,7 +15767,8 @@ bool C_AnarchyManager::SetStartWithWindows(bool bValue)
 		DWORD value_length = AA_MAX_STRING;
 		DWORD flags = REG_SZ;
 		RegQueryValueEx(key, "SteamPath", NULL, &flags, (LPBYTE)&value, &value_length);
-		RegCloseKey(key);
+		//RegCloseKey(key);
+		VCRHook_RegCloseKey(key);
 
 		V_FixSlashes(value);
 
@@ -15692,7 +15784,8 @@ bool C_AnarchyManager::SetStartWithWindows(bool bValue)
 				Q_strcpy(szBuf, steamLocation.c_str());
 
 				RegSetValueEx(hkey, "AArcade", 0, REG_SZ, (LPBYTE)szBuf, strlen(szBuf) + 1);
-				RegCloseKey(hkey);
+				//RegCloseKey(hkey);
+				VCRHook_RegCloseKey(hkey);
 				bSuccess = true;
 			}
 		}

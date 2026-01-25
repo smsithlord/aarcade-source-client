@@ -31,7 +31,8 @@ void C_MountManager::Init()
 		DWORD value_length = AA_MAX_STRING;
 		DWORD flags = REG_SZ;
 		RegQueryValueEx(key, "SteamPath", NULL, &flags, (LPBYTE)&value, &value_length);
-		RegCloseKey(key);
+		//RegCloseKey(key);
+		VCRHook_RegCloseKey(key);
 
 		V_FixSlashes(value);
 		/*

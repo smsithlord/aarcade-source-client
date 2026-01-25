@@ -103,17 +103,20 @@ STDMETHODIMP TDropTarget::DragEnter(LPDATAOBJECT pDataObj, DWORD grfKeyState,
 //---------------------------------------------------------------------------
 
 // implement visual feedback if required
-STDMETHODIMP TDropTarget::DragOver(DWORD grfKeyState, POINTL pt, 
-    LPDWORD pdwEffect)
+STDMETHODIMP TDropTarget::DragOver(DWORD grfKeyState, POINTL pt,
+	LPDWORD pdwEffect)
 {
 	if (m_bIsDragging)
 	{
-		float flX = (pt.x * 1.0f) / ScreenWidth();
-		float flY = (pt.y * 1.0f) / ScreenHeight();
-		g_pAnarchyManager->GetInputManager()->MouseMove(flX, flY);
-		return NOERROR;// DROPEFFECT_LINK;
-	}
+		// Convert desktop coords to window-relative coords
+		POINT clientPt = { pt.x, pt.y };
+		VCRHook_ScreenToClient(g_pAnarchyManager->GetHWND(), &clientPt);  // m_hWnd is your game window handle
 
+		float flX = (clientPt.x * 1.0f) / ScreenWidth();
+		float flY = (clientPt.y * 1.0f) / ScreenHeight();
+		g_pAnarchyManager->GetInputManager()->MouseMove(flX, flY);
+		return NOERROR;
+	}
 	return DROPEFFECT_NONE;
 }
 //---------------------------------------------------------------------------

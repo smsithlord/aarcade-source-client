@@ -11,6 +11,7 @@
 #include "c_awesomiumbrowsermanager.h"
 #include "c_inputmanager.h"
 #include "c_mountmanager.h"
+//#include "c_windowsutils.h"
 #include "c_toast.h"
 #include "c_workshopmanager.h"
 #include "c_metaversemanager.h"
@@ -382,6 +383,7 @@ public:
 	void CaptureWindowSnapshotsAll();
 	BYTE* CaptureWindowSnapshot(HWND hwnd, int& iWidth, int& iHeight);
 
+	//void ManageWindowWithScale();	// Not actually used yet because it would break the manual resolution settings that people put before the display scale was being properly figured in.
 	void ManageWindow();
 	void ManageHUDLabels();
 
@@ -809,6 +811,7 @@ public:
 	C_CanvasManager* GetCanvasManager() { return m_pCanvasManager; }
 	C_SteamBrowserManager* GetSteamBrowserManager() { return m_pSteamBrowserManager; }
 	C_WindowManager* GetWindowManager() { return m_pWindowManager; }
+	//C_WindowsUtils* GetWindowsUtils() { return m_pWindowsUtils; }
 	C_QuestManager* GetQuestManager() { return m_pQuestManager; }
 	C_AwesomiumBrowserManager* GetAwesomiumBrowserManager() { return m_pAwesomiumBrowserManager; }
 	//C_AwesomiumBrowserManager* GetAwesomiumBrowserManager() { return m_pAwesomiumBrowserManager; }
@@ -1206,6 +1209,7 @@ private:
 	C_LibretroManager* m_pLibretroManager;
 	C_SteamBrowserManager* m_pSteamBrowserManager;
 	C_WindowManager* m_pWindowManager;
+	//C_WindowsUtils* m_pWindowsUtils;
 	C_QuestManager* m_pQuestManager;
 	C_AwesomiumBrowserManager* m_pAwesomiumBrowserManager;
 	C_InputManager* m_pInputManager;

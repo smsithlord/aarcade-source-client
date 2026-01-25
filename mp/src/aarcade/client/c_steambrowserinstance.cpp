@@ -867,7 +867,8 @@ void C_SteamBrowserInstance::OnBrowserInstanceStartRequest(const char* pchURL, c
 void C_SteamBrowserInstance::OnBrowserInstanceFinishedRequest(const char* pchURL, const char* pchPageTitle)
 {
 	std::string url = pchURL;
-	if (url.find("http://www.anarchyarcade.com/youtube_player.php") == 0 || url.find("http://www.smarcade.net/dlcv2/view_youtube.php") == 0)
+	//if (url.find("http://www.anarchyarcade.com/youtube_player.php") == 0 || url.find("http://www.smarcade.net/dlcv2/view_youtube.php") == 0)
+	if (url.find("youtube_player.php") != std::string::npos )
 		g_pAnarchyManager->GetAccountant()->Action("aa_tubes_watched", 1);
 
 

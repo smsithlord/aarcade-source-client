@@ -1,5 +1,6 @@
 # Files to ignore when considering what GIT should commit.
 
+mp/src/aarcade/client/libretro (minir).h
 mp/src/utils/vrad_launcher/Debug/*
 */Debug/*
 mp/src/utils/vice/Debug/*

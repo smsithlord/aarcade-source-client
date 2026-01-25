@@ -6756,11 +6756,10 @@ JSValue JSHandler::OnMethodCallWithReturnValue(WebView* caller, unsigned int rem
 
 		return response;
 	}
-	else if (methodName == "getObjectPosScreenSpace")
+	else if (methodName == "getObjectPosScreenSpace")	// Adjusted by Claude
 	{
 		// TODO: Maybe we'll want one with entity instead of object?
 		std::string objectId = Awesomium::ToString(args[iArgOffset + 0].ToString());
-
 		C_BaseEntity* pEntity = g_pAnarchyManager->GetInstanceManager()->GetObjectEntity(objectId);
 		if (pEntity)
 		{
@@ -6768,22 +6767,28 @@ JSValue JSHandler::OnMethodCallWithReturnValue(WebView* caller, unsigned int rem
 			int iY = 0;
 			bool bIsOnScreen = GetVectorInScreenSpace(pEntity->GetAbsOrigin(), iX, iY);
 
+			// Scale from actual screen space to 1920x1080 web view space
+			int iScaledX = (int)(iX * 1920.0f / (float)ScreenWidth());
+			int iScaledY = (int)(iY * 1080.0f / (float)ScreenHeight());
 			/*
 			int iCenterX = 0;
 			int iCenterY = 0;
 			IPhysicsObject *pPhysics = pEntity->VPhysicsGetObject();
 			Vector center = pEntity->WorldSpaceCenter();
 			bool bCenterIsOnScreen = GetVectorInScreenSpace(center, iCenterX, iCenterY);
-			*/
 
+			// Scale from actual screen space to 1920x1080 web view space
+			int iScaledCenterX = (int)(iCenterX * 1920.0f / (float)ScreenWidth());
+			int iScaledCenterY = (int)(iCenterY * 1080.0f / (float)ScreenHeight());
+			*/
 			JSObject response;
 			response.SetProperty(WSLit("onScreen"), JSValue(bIsOnScreen));
-			response.SetProperty(WSLit("x"), JSValue(iX));
-			response.SetProperty(WSLit("y"), JSValue(iY));
+			response.SetProperty(WSLit("x"), JSValue(iScaledX));
+			response.SetProperty(WSLit("y"), JSValue(iScaledY));
 			/*
 			response.SetProperty(WSLit("centerOnScreen"), JSValue(bCenterIsOnScreen));
-			response.SetProperty(WSLit("centerX"), JSValue(iX));
-			response.SetProperty(WSLit("centerY"), JSValue(iY));
+			response.SetProperty(WSLit("centerX"), JSValue(iScaledCenterX));
+			response.SetProperty(WSLit("centerY"), JSValue(iScaledCenterY));
 			*/
 			return response;
 			// And maybe use \/ objectHover there for some of this screen space bullshit too bra
@@ -6791,7 +6796,6 @@ JSValue JSHandler::OnMethodCallWithReturnValue(WebView* caller, unsigned int rem
 		}
 		else
 			return JSValue(0);
-
 	}
 	else if (methodName == "getPosScreenSpace")
 	{

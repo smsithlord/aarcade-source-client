@@ -109,9 +109,9 @@
 
 
 #ifndef AA_TVDB_API_KEY
-#define AA_TVDB_API_KEY "order66"
+#define AA_TVDB_API_KEY "FAKE_KEY"
 #endif
 
 #ifndef AA_STEAMWORKS_API_KEY
-#define AA_STEAMWORKS_API_KEY "order66"
+#define AA_STEAMWORKS_API_KEY "FAKE_KEY"
 #endif

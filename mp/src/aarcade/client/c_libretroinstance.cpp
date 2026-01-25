@@ -17,6 +17,10 @@
 #include <algorithm>
 
 #include "XUnzip.h"
+#include "../../7z/7zFile.h"
+#include "../../7z/7zAlloc.h"
+#include "../../7z/7zCrc.h"
+#include "../../7z/7z.h"
 
 #include <mutex>
 
@@ -32,6 +36,15 @@
 #include "tier0/memdbgon.h"
 
 //bool C_LibretroInstance::s_bSoundInitialized = false;
+
+static const size_t kInputBufSize = (1 << 18);  // 256 KB buffer
+
+static bool InitCrc()
+{
+	CrcGenerateTable();
+	return true;
+}
+static bool s_bCrcDummy = InitCrc();  // Runs once at program start
 
 inline const char* WebStringToCharString3(WebString web_string)
 {
@@ -1051,10 +1064,15 @@ bool C_LibretroInstance::LoadGame()
 	g_pAnarchyManager->Tokenize(testerExtensions, tokens, "|");
 
 	bool bIsZip = (fileExtension == "zip");
+	bool bIs7z = (fileExtension == "7z");
 	bool bIsValidExtension = true;
 
-	// If this is NOT a ZIP (or if ZIP is a supported file extension for the core, OR(?) if the core requires fullpath) we can confirm validity RIGHT NOW.
-	if (info->need_fullpath || !bIsZip || std::find(tokens.begin(), tokens.end(), "zip") != tokens.end())	//info->need_fullpath
+	// If this is NOT a ZIP/7z (or if ZIP/7z is a supported file extension for the core, OR(?) if the core requires fullpath) we can confirm validity RIGHT NOW.
+	bool bIsArchive = bIsZip || bIs7z;
+	bool bArchiveIsSupported = (bIsZip && std::find(tokens.begin(), tokens.end(), "zip") != tokens.end()) ||
+		(bIs7z && std::find(tokens.begin(), tokens.end(), "7z") != tokens.end());
+
+	if (info->need_fullpath || !bIsArchive || bArchiveIsSupported)
 	{
 		if (std::find(tokens.begin(), tokens.end(), fileExtension) != tokens.end())
 			DevMsg("Found extension %s within %s\n", fileExtension.c_str(), testerExtensions.c_str());
@@ -1188,6 +1206,128 @@ bool C_LibretroInstance::LoadGame()
 				}
 
 				// if bFailedUnzip is false, we have failed to unzip.
+			}
+			else if (bIs7z)
+			{
+				DevMsg("libretro: 7z file detected. Attempting to extract the 1st file..\n");
+
+				bool bFailed7z = false;
+				if (!g_pFullFileSystem->FileExists(filename.c_str()))
+				{
+					DevMsg("libretro: ABORTED: 7z file does not exist %s\n", pFilename);
+					bFailed7z = true;
+				}
+				else
+				{
+					CFileInStream archiveStream;
+					CLookToRead2 lookStream;
+					CSzArEx db;
+					ISzAlloc allocImp = { SzAlloc, SzFree };
+					ISzAlloc allocTempImp = { SzAllocTemp, SzFreeTemp };
+
+					if (InFile_Open(&archiveStream.file, pFilename) != 0)
+					{
+						DevMsg("libretro: ABORTED: Failed to open 7z file %s\n", pFilename);
+						bFailed7z = true;
+					}
+					else
+					{
+						FileInStream_CreateVTable(&archiveStream);
+						LookToRead2_CreateVTable(&lookStream, False);
+						lookStream.buf = (Byte*)ISzAlloc_Alloc(&allocImp, kInputBufSize);
+						lookStream.bufSize = kInputBufSize;
+						lookStream.realStream = &archiveStream.vt;
+						LookToRead2_INIT(&lookStream);
+
+						SzArEx_Init(&db);
+						SRes res = SzArEx_Open(&db, &lookStream.vt, &allocImp, &allocTempImp);
+
+						if (res != SZ_OK)
+						{
+							DevMsg("libretro: ABORTED: Failed to parse 7z file %s. Error: %d\n", pFilename, res);
+							bFailed7z = true;
+						}
+						else
+						{
+							// Find a valid file in the archive
+							UInt32 foundIndex = (UInt32)-1;
+							for (UInt32 i = 0; i < db.NumFiles; i++)
+							{
+								if (SzArEx_IsDir(&db, i))
+									continue;
+
+								// Get filename
+								size_t nameLen = SzArEx_GetFileNameUtf16(&db, i, NULL);
+								std::vector<UInt16> nameBuf(nameLen);
+								SzArEx_GetFileNameUtf16(&db, i, nameBuf.data());
+
+								// Convert UTF-16 to std::string
+								std::string entryName;
+								for (size_t j = 0; j < nameLen - 1; j++)
+									entryName += (char)nameBuf[j];
+
+								// Check extension
+								std::string entryExt;
+								std::transform(entryName.begin(), entryName.end(), entryName.begin(), ::tolower);
+								size_t extPos = entryName.find_last_of(".");
+								if (extPos != std::string::npos)
+									entryExt = entryName.substr(extPos + 1);
+
+								if (testerExtensions == "" ||
+									(entryExt != "" && std::find(tokens.begin(), tokens.end(), entryExt) != tokens.end()))
+								{
+									foundIndex = i;
+									break;
+								}
+							}
+
+							if (foundIndex == (UInt32)-1)
+							{
+								DevMsg("libretro: ABORTED: Failed to locate a valid file in 7z.\n");
+								bFailed7z = true;
+							}
+							else
+							{
+								// Extract the file
+								UInt32 blockIndex = 0xFFFFFFFF;
+								Byte* outBuffer = NULL;
+								size_t outBufferSize = 0;
+								size_t offset = 0;
+								size_t outSizeProcessed = 0;
+
+								res = SzArEx_Extract(&db, &lookStream.vt, foundIndex,
+									&blockIndex, &outBuffer, &outBufferSize,
+									&offset, &outSizeProcessed,
+									&allocImp, &allocTempImp);
+
+								if (res != SZ_OK)
+								{
+									DevMsg("libretro: ABORTED: Failed to extract from 7z. Error: %d\n", res);
+									bFailed7z = true;
+								}
+								else
+								{
+									// Copy to our own buffer (since outBuffer is managed by allocImp)
+									fileData = malloc(outSizeProcessed);
+									memcpy(fileData, outBuffer + offset, outSizeProcessed);
+									bDataLoaded = true;
+
+									game.data = fileData;
+									game.size = outSizeProcessed;
+									game.meta = NULL;
+
+									bReadyToLoad = true;
+								}
+
+								ISzAlloc_Free(&allocImp, outBuffer);
+							}
+						}
+
+						SzArEx_Free(&db, &allocImp);
+						ISzAlloc_Free(&allocImp, lookStream.buf);
+						File_Close(&archiveStream.file);
+					}
+				}
 			}
 			else
 			{

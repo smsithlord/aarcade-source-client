@@ -100,6 +100,7 @@ void CPropShortcutEntity::Spawn()
 	*/
 
 	this->PlaySequence("inactiveidle");
+	//this->AddEffects(EF_NOINTERP);	// caused models to disappear more often.
 }
 
 void CPropShortcutEntity::UseFunc(CBaseEntity *pActivator, CBaseEntity *pCaller, USE_TYPE useType, float value)

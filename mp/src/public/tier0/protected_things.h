@@ -132,12 +132,10 @@
 
 #if defined( PROTECTED_THINGS_ENABLE ) && !defined( _X360 ) && !defined(DISABLE_PROTECTED_THINGS)
 
-	/* Added for Anarchy Arcade
 	#if defined( GetTickCount )
 		#undef GetTickCount
 	#endif
 	#define GetTickCount		GetTickCount__USE_VCR_MODE
-	*/
 	
 	
 	#if defined( timeGetTime )
@@ -220,13 +218,11 @@
 		#undef RegCreateKey
 	#endif
 	#define RegCreateKey		RegCreateKey__USE_VCR_MODE
-	
-	/* Added for Anarchy Arcade
+
 	#if defined( RegCloseKey )
 		#undef RegCloseKey
 	#endif
 	#define RegCloseKey			RegCloseKey__USE_VCR_MODE
-	*/
 	
 	
 	#if defined( GetNumberOfConsoleInputEvents )

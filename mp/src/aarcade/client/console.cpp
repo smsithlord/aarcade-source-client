@@ -2377,7 +2377,8 @@ void TesterJoint(const CCommand &args)
 	}
 	*/
 
-	g_pAnarchyManager->DownloadSingleFile("https://akns-images.eonline.com/eol_images/Entire_Site/202414/rs_1200x1200-240204170033-1200-taylor-swift-2024-grammys.jpg");
+	//g_pAnarchyManager->DownloadSingleFile("https://akns-images.eonline.com/eol_images/Entire_Site/202414/rs_1200x1200-240204170033-1200-taylor-swift-2024-grammys.jpg");
+	//DevMsg("Windows Scale Factor: %f\n", g_pAnarchyManager->GetWindowsUtils()->GetWindowScaleFactor());
 }
 ConCommand testerjoint("testerjoint", TesterJoint, "Usage: ");
 
