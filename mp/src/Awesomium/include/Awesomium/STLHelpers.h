@@ -64,7 +64,9 @@ inline std::istream& operator>>(std::istream& in, WebString& out) {
 
 // Web String Literal (for quick, inline string definitions)
 inline WebString WSLit(const char* string_literal) {
-  return WebString::CreateFromUTF8(string_literal, strlen(string_literal));
+	if (!string_literal)
+		return WebString();
+	return WebString::CreateFromUTF8(string_literal, strlen(string_literal));
 }
 
 }  // namespace Awesomium

@@ -3,9 +3,9 @@
 
 #include "c_libretroinstance.h"
 #include "c_inputlistenerlibretro.h"
-//#include "c_libretrosurfaceregen.h"
 #include "libretro.h"
 #include <map>
+#include <vector>
 
 enum retro_path_names
 {
@@ -46,7 +46,6 @@ public:
 	void ManageInputUpdate(LibretroInstanceInfo_t* info, unsigned int retroport, unsigned int retrodevice);
 	int GetInputState(LibretroInstanceInfo_t* info, unsigned int retroport, unsigned int retrodevice, unsigned int retroindex, unsigned int retroid);
 	std::string RetroDeviceToString(unsigned int number);
-	//unsigned int StringToRetroKey(std::string text);
 	std::string RetroKeyboardKeyToString(retro_key retrokey);
 	std::string RetroKeyToString(unsigned int retrokey);
 
@@ -66,6 +65,7 @@ public:
 
 	KeyValues* FindOrCreateCoreSettings(std::string coreFile);
 	void SaveCoreSettings();
+	void ResetCoreOptions(std::string coreName);
 	std::string GetLibretroPath(retro_path_names retro_path_name);
 
 	std::string DetermineOverlay(std::string prettyCore, std::string prettyPath);
@@ -110,6 +110,7 @@ private:
 	C_LibretroInstance* m_pFocusedLibretroInstance;
 	std::map<CSysModule*, C_LibretroInstance*> m_libretroInstances;
 	std::map<uint, CSysModule*> m_libretroInstancesModules;
+	std::vector<C_LibretroInstance*> m_pendingInstances;	// Instances awaiting DLL load (not yet in m_libretroInstances)
 	std::map<std::string, unsigned int> m_retroDeviceMap;
 	std::map<std::string, unsigned int> m_retroKeyUnknowndMap;
 	std::map<std::string, unsigned int> m_retroKeyJoypadMap;

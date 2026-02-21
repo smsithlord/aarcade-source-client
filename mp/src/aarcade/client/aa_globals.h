@@ -36,7 +36,15 @@
 #endif
 
 #ifndef AA_LIBRETRO_3D
-#define AA_LIBRETRO_3D false
+#define AA_LIBRETRO_3D true
+#endif
+
+#ifndef AA_LIBRETRO_FFMPEG_3D_ALLOWED
+#define AA_LIBRETRO_FFMPEG_3D_ALLOWED false
+#endif
+
+#ifndef AA_LIBRETRO_3D_ANALOG_INPUT
+#define AA_LIBRETRO_3D_ANALOG_INPUT true
 #endif
 
 #ifndef AA_EMBEDDED_INSTANCE_WIDTH

@@ -10316,7 +10316,7 @@ C_SteamBrowserInstance* C_AnarchyManager::AutoInspect(KeyValues* pItemKV, std::s
 					FileFindHandle_t findHandle;
 					std::string otherFile;
 					const char *pFilename = g_pFullFileSystem->FindFirstEx(VarArgs("%s/*.%s", testPath.c_str(), fileExtension.c_str()), "", &findHandle);
-					while (pFilename != NULL && iNumFiles < 20)
+					while (pFilename != NULL && iNumFiles < 40)
 					{
 						//otherFile = VarArgs("%s/%s", testPath.c_str(), pFilename);
 						otherFiles += VarArgs("&f%i=", iNumFiles) + g_pAnarchyManager->encodeURIComponent(pFilename);// otherFile);
@@ -17515,6 +17515,7 @@ void C_AnarchyManager::OnRebuildSoundCacheCallback()
 
 	this->InitDragDrop(m_hwnd);
 
+	// Auto-Libretro create & destroy to fully initialize (fixes audio failing on 1st-run cores)
 	std::string ffmpegGame = engine->GetGameDirectory();
 	ffmpegGame += "\\resource\\init.mpeg";	// Note that this file does nto actually exist, but that's OK cuz all we are doing is initializing libretro.
 	std::string ffmpegCore = "ffmpeg_libretro.dll";
@@ -17529,6 +17530,7 @@ void C_AnarchyManager::OnRebuildSoundCacheCallback()
 	pLibretroInstance->SetOriginalEntIndex(-1);	// probably NOT needed?? (or maybe so, from here.)
 
 	pLibretroInstance->LoadCore(ffmpegCore);
+
 	//if (!pLibretroInstance->LoadCore(ffmpegCore))	// FIXME: elegantly revert back to autoInspect if loading the core failed!
 	//	DevMsg("ERROR: Failed to load core: %s\n", ffmpegCore.c_str());
 

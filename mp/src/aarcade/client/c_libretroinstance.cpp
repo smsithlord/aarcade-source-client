@@ -2,14 +2,12 @@
 #include "aa_globals.h"
 // ;..\..\portaudio\lib\portaudio_x86.lib
 
-//#include "aa_globals.h"
 #include "c_libretroinstance.h"
 #include "c_anarchymanager.h"
 #include "../../../public/vgui_controls/Controls.h"
 #include "vgui/IInput.h"
 #include "c_canvasregen.h"
 #include "c_embeddedinstance.h"
-//#include "pixelwriter.h"
 
 #include "../../public/bitmap/tgawriter.h"
 #include "../../public/pixelwriter.h"
@@ -24,7 +22,25 @@
 
 #include <mutex>
 
-//#include <glm/glm.hpp>
+// OpenGL includes (only in cpp to avoid header pollution)
+#include <windows.h>
+#include <mmsystem.h>
+#pragma comment(lib, "winmm.lib")
+#include "../../glew/include/GL/glew.h"
+#include "../../glew/include/GL/wglew.h"
+
+// OpenGL context structure (hidden from header to avoid type conflicts)
+struct LibretroGLContext
+{
+	HWND hwnd;                           // Hidden window handle
+	HDC hdc;                             // Device context
+	HGLRC hglrc;                         // OpenGL rendering context
+	GLuint framebuffer;
+	GLuint color_texture;
+	GLuint depth_stencil_renderbuffer;
+	unsigned int hw_render_width;
+	unsigned int hw_render_height;
+};
 
 // for generating timestamps to use in filenmaes of task screenshots (takeScreenshotNow)
 #include <chrono>
@@ -35,9 +51,13 @@
 // memdbgon must be the last include file in a .cpp file!!!
 #include "tier0/memdbgon.h"
 
-//bool C_LibretroInstance::s_bSoundInitialized = false;
-
 static const size_t kInputBufSize = (1 << 18);  // 256 KB buffer
+
+// Active hardware-rendering instance pointer.
+// Only one HW core runs at a time (WGL context is exclusive),
+// so a single static pointer is safe. Allows v3d_get_current_framebuffer()
+// to work from any thread (PPSSPP spawns 32+ internal threads).
+static C_LibretroInstance* s_pActiveHWInstance = null;
 
 static bool InitCrc()
 {
@@ -45,6 +65,257 @@ static bool InitCrc()
 	return true;
 }
 static bool s_bCrcDummy = InitCrc();  // Runs once at program start
+
+// Lock-free SPSC ring buffer helpers for non-blocking audio
+static inline unsigned int RingBuf_Available(const AudioRingBuffer_t* pRing)
+{
+	return (unsigned int)((LONG)pRing->nWritePos - (LONG)pRing->nReadPos);
+}
+
+static inline unsigned int RingBuf_Free(const AudioRingBuffer_t* pRing)
+{
+	return pRing->nCapacity - RingBuf_Available(pRing);
+}
+
+static unsigned int RingBuf_Write(AudioRingBuffer_t* pRing, const int16_t* pData, unsigned int nSamples)
+{
+	unsigned int nFree = RingBuf_Free(pRing);
+	if (nSamples > nFree)
+		nSamples = nFree;
+
+	if (nSamples == 0)
+		return 0;
+
+	unsigned int nWriteIdx = (unsigned int)pRing->nWritePos & pRing->nMask;
+	unsigned int nFirstChunk = pRing->nCapacity - nWriteIdx;
+
+	if (nFirstChunk >= nSamples)
+	{
+		Q_memcpy(pRing->pBuffer + nWriteIdx, pData, nSamples * sizeof(int16_t));
+	}
+	else
+	{
+		Q_memcpy(pRing->pBuffer + nWriteIdx, pData, nFirstChunk * sizeof(int16_t));
+		Q_memcpy(pRing->pBuffer, pData + nFirstChunk, (nSamples - nFirstChunk) * sizeof(int16_t));
+	}
+
+	InterlockedExchangeAdd(&pRing->nWritePos, (LONG)nSamples);
+	return nSamples;
+}
+
+static unsigned int RingBuf_Read(AudioRingBuffer_t* pRing, int16_t* pDest, unsigned int nSamples)
+{
+	unsigned int nAvail = RingBuf_Available(pRing);
+	if (nSamples > nAvail)
+		nSamples = nAvail;
+
+	if (nSamples == 0)
+		return 0;
+
+	unsigned int nReadIdx = (unsigned int)pRing->nReadPos & pRing->nMask;
+	unsigned int nFirstChunk = pRing->nCapacity - nReadIdx;
+
+	if (nFirstChunk >= nSamples)
+	{
+		Q_memcpy(pDest, pRing->pBuffer + nReadIdx, nSamples * sizeof(int16_t));
+	}
+	else
+	{
+		Q_memcpy(pDest, pRing->pBuffer + nReadIdx, nFirstChunk * sizeof(int16_t));
+		Q_memcpy(pDest + nFirstChunk, pRing->pBuffer, (nSamples - nFirstChunk) * sizeof(int16_t));
+	}
+
+	InterlockedExchangeAdd(&pRing->nReadPos, (LONG)nSamples);
+	return nSamples;
+}
+
+// Worker-thread-safe debug output (Source Engine spew is not thread-safe)
+static void WorkerDbgMsg(const char* fmt, ...)
+{
+	char buf[2048];
+	va_list args;
+	va_start(args, fmt);
+	V_vsnprintf(buf, sizeof(buf), fmt, args);
+	va_end(args);
+	OutputDebugStringA(buf);
+}
+
+// SEH wrapper for libretro core calls -- isolated from C++ destructors
+// Returns true on success, false if the core crashed
+static bool SafeRunCore(libretro_raw* raw)
+{
+	__try {
+		raw->run();
+		return true;
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER) {
+		DWORD code = GetExceptionCode();
+		WorkerDbgMsg("libretro: SEH caught exception 0x%08X during run()\n", code);
+		return false;
+	}
+}
+
+// SEH wrapper for libretro core shutdown calls
+static bool SafeCallCore(void(*fn)(void))
+{
+	__try {
+		fn();
+		return true;
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER) {
+		DWORD code = GetExceptionCode();
+		WorkerDbgMsg("libretro: SEH caught exception 0x%08X during core call\n", code);
+		return false;
+	}
+}
+
+// SEH wrapper for retro_load_game -- different signature than SafeCallCore
+static bool SafeLoadGame(bool(*fn)(const struct retro_game_info*), const struct retro_game_info* game)
+{
+	__try {
+		return fn(game);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER) {
+		DWORD code = GetExceptionCode();
+		WorkerDbgMsg("libretro: SEH caught exception 0x%08X during load_game()\n", code);
+		return false;
+	}
+}
+
+// Pre-register callbacks before init() for cores like bsnes that inspect
+// callback pointers during init() to set up video/audio subsystems.
+// Must be in a separate function from __try because MSVC prohibits SEH
+// in functions with C++ automatic destructors.
+static void PreRegisterCallbacksInner(libretro_raw* raw)
+{
+	raw->set_video_refresh(C_LibretroInstance::cbVideoRefresh);
+	raw->set_audio_sample(C_LibretroInstance::cbAudioSample);
+	raw->set_audio_sample_batch(C_LibretroInstance::cbAudioSampleBatch);
+	raw->set_input_poll(C_LibretroInstance::cbInputPoll);
+	if (raw->set_input_state)
+		raw->set_input_state(C_LibretroInstance::cbInputState);
+}
+
+// SEH wrapper for pre-init callback registration.
+// Some cores (e.g., mesen) crash if set_* is called before init() has
+// created internal objects. The SEH wrapper makes this safe to attempt.
+static bool SafePreRegisterCallbacks(libretro_raw* raw)
+{
+	__try {
+		PreRegisterCallbacksInner(raw);
+		return true;
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER) {
+		WorkerDbgMsg("libretro: Pre-init callback registration failed (caught by SEH), will register after init\n");
+		return false;
+	}
+}
+
+// SEH wrapper for Sys_LoadModule -- catches DLLs with crashing DllMain.
+static CSysModule* SafeLoadModule(const char* path)
+{
+	__try {
+		return Sys_LoadModule(path);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER) {
+		WorkerDbgMsg("libretro: SEH caught exception 0x%08X during DLL load of %s\n", GetExceptionCode(), path);
+		return NULL;
+	}
+}
+
+// SEH wrapper for OpenGL resource cleanup after a core crash.
+// Must be a separate function because MyThread has CUtlBuffer objects with
+// destructors, and MSVC prohibits __try in functions with C++ automatic destructors.
+static bool SafeCleanupGL(LibretroGLContext* gl_ctx)
+{
+	__try {
+		if (gl_ctx->framebuffer)
+		{
+			wglMakeCurrent(gl_ctx->hdc, gl_ctx->hglrc);
+			glBindFramebuffer(GL_FRAMEBUFFER, 0);
+			glDeleteFramebuffers(1, &gl_ctx->framebuffer);
+			WorkerDbgMsg("libretro: Deleted framebuffer.\n");
+		}
+
+		if (gl_ctx->color_texture)
+		{
+			glDeleteTextures(1, &gl_ctx->color_texture);
+			WorkerDbgMsg("libretro: Deleted color texture.\n");
+		}
+
+		if (gl_ctx->depth_stencil_renderbuffer)
+		{
+			glDeleteRenderbuffers(1, &gl_ctx->depth_stencil_renderbuffer);
+			WorkerDbgMsg("libretro: Deleted depth/stencil renderbuffer.\n");
+		}
+
+		wglMakeCurrent(NULL, NULL);
+		wglDeleteContext(gl_ctx->hglrc);
+		ReleaseDC(gl_ctx->hwnd, gl_ctx->hdc);
+		DestroyWindow(gl_ctx->hwnd);
+		WorkerDbgMsg("libretro: OpenGL cleanup complete.\n");
+		return true;
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER) {
+		WorkerDbgMsg("libretro: WARNING - Exception 0x%08X during GL cleanup\n", GetExceptionCode());
+		return false;
+	}
+}
+
+// Fallback: try to at least release the GL context and destroy the window
+static void SafeCleanupGLFallback(LibretroGLContext* gl_ctx)
+{
+	__try {
+		wglMakeCurrent(NULL, NULL);
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER) {}
+
+	__try {
+		if (gl_ctx->hwnd)
+		{
+			ReleaseDC(gl_ctx->hwnd, gl_ctx->hdc);
+			DestroyWindow(gl_ctx->hwnd);
+		}
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER) {}
+}
+
+static void ResizeFBO(LibretroGLContext* gl_ctx, unsigned int newWidth, unsigned int newHeight, bool depth, bool stencil)
+{
+	if (newWidth == 0 || newHeight == 0)
+		return;
+	if (newWidth == gl_ctx->hw_render_width && newHeight == gl_ctx->hw_render_height)
+		return;
+
+	WorkerDbgMsg("libretro: Resizing FBO from %ux%u to %ux%u\n",
+		gl_ctx->hw_render_width, gl_ctx->hw_render_height, newWidth, newHeight);
+
+	// Resize color texture
+	glBindTexture(GL_TEXTURE_2D, gl_ctx->color_texture);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, newWidth, newHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+
+	// Resize depth/stencil renderbuffer if present
+	if (gl_ctx->depth_stencil_renderbuffer)
+	{
+		glBindRenderbuffer(GL_RENDERBUFFER, gl_ctx->depth_stencil_renderbuffer);
+		if (depth && stencil)
+			glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, newWidth, newHeight);
+		else if (depth)
+			glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, newWidth, newHeight);
+		else
+			glRenderbufferStorage(GL_RENDERBUFFER, GL_STENCIL_INDEX8, newWidth, newHeight);
+	}
+
+	// Verify FBO completeness
+	glBindFramebuffer(GL_FRAMEBUFFER, gl_ctx->framebuffer);
+	GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+	if (status != GL_FRAMEBUFFER_COMPLETE)
+		WorkerDbgMsg("libretro: WARNING - FBO incomplete after resize! Status: 0x%X\n", status);
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	gl_ctx->hw_render_width = newWidth;
+	gl_ctx->hw_render_height = newHeight;
+}
 
 inline const char* WebStringToCharString3(WebString web_string)
 {
@@ -62,50 +333,37 @@ inline const char* WebStringToCharString3(WebString web_string)
 C_LibretroInstance::C_LibretroInstance()
 {
 	DevMsg("LibretroInstance: Constructor\n");
-	//m_pHud = null;// g_pAnarchyManager->GetAwesomiumBrowserManager()->FindAwesomiumBrowserInstance("hud");
 	m_bTakeScreenshot = false;
 	m_bIsDirty = false;
 	m_iAdjustedStartTime = -1;
-	m_iLastDelta = 0;	// for fast forwarding fake input
-	//m_bAudioIsPlaying = false;
+	m_iLastDelta = 0;
 	m_pProjectorFixConVar = null;
 	m_pTexture = null;
 	m_iLastRenderedFrame = -1;
 	m_iLastVisibleFrame = -1;
 	m_iOriginalEntIndex = -1;
 	m_bGotTime = false;
-
-	//m_iCurrentSeconds = 0;
-	m_iFastForwardSeconds = 0;// 2000;
-
+	m_iFastForwardSeconds = 0;
 	m_fLastMouseX = 0.5;
 	m_fLastMouseY = 0.5;
-
 	m_pLocalVideoBehaviorConVar = cvar->FindVar("local_video_behavior");
-
 	m_bShouldReopen = false;
 	m_info = null;
-
-	//m_pOverlayKV = null;
 	m_pOverlayKV = new KeyValues("overlay");
-
-	//{
-		//std::string id = "PANASONIC.DARK.cfg";
-		//if (id.length() < 5)
-		//id = id.substr(0, id.length() - 4);
-	//}
-	//m_fPositionX = 0.25;// 0;
-	//m_fPositionY = 0.25;// 0;
-	//m_fSizeX = 0.5;// 1;
-	//m_fSizeY = 0.5;// 1;
-	//m_pOverlayKV->deleteThis();
-//	m_pOpenGLManager = null;
 }
 
 C_LibretroInstance::~C_LibretroInstance()
 {
 	DevMsg("LibretroInstance: Destructor\n");
 	this->CleanUpTexture();
+
+	// Delete the info struct (was previously deleted by worker thread, now owned by main thread)
+	// Worker thread cleans up core resources, but leaves info struct for snapshot saving
+	if (m_info)
+	{
+		delete m_info;
+		m_info = null;
+	}
 }
 
 void C_LibretroInstance::ClearOverlay(std::string type, std::string overlayId)
@@ -114,7 +372,6 @@ void C_LibretroInstance::ClearOverlay(std::string type, std::string overlayId)
 	g_pFullFileSystem->CreateDirHierarchy(folder.c_str(), "DEFAULT_WRITE_PATH");
 	std::string file = VarArgs("%s\\%s.cfg", folder.c_str(), overlayId.c_str());
 
-	//m_pOverlayKV
 	std::string prettyCore = m_info->prettycore;
 	std::string prettyGame = m_info->prettygame;
 	KeyValues* pDefaultKV = m_pOverlayKV->FindKey("settings/default", true);
@@ -153,29 +410,16 @@ void C_LibretroInstance::ClearOverlay(std::string type, std::string overlayId)
 
 void C_LibretroInstance::SaveOverlay(std::string type, std::string overlayId, float x, float y, float width, float height)
 {
-	/*
-	if (overlayId == "none")
-	{
-		x = 0;
-		y = 0;
-		width = 1;
-		height = 1;
-	}
-	*/
-
 	std::string folder = "resource\\ui\\html\\overlays";
 	g_pFullFileSystem->CreateDirHierarchy(folder.c_str(), "DEFAULT_WRITE_PATH");
 	std::string file = VarArgs("%s\\%s.cfg", folder.c_str(), overlayId.c_str());
 
-	//m_pOverlayKV
 	std::string prettyCore = m_info->prettycore;
 	std::string prettyGame = m_info->prettygame;
 	std::string preferredOverlayId = g_pAnarchyManager->GetLibretroManager()->DetermineOverlay(prettyCore, prettyGame);
 	KeyValues* pDefaultKV = m_pOverlayKV->FindKey("settings/default", true);
 	KeyValues* pCoreKV = null;
 	KeyValues* pGameKV = null;
-	//KeyValues* pTargetKV = null;
-
 	std::string testerCore;
 	std::string testerGame;
 	for (KeyValues *sub = m_pOverlayKV->FindKey("settings", true)->GetFirstSubKey(); sub; sub = sub->GetNextKey())
@@ -190,15 +434,6 @@ void C_LibretroInstance::SaveOverlay(std::string type, std::string overlayId, fl
 			pCoreKV = sub;
 		else if (testerCore == prettyCore && testerGame == prettyGame)
 			pGameKV = sub;
-		/*
-		if ((type == "core" || type == "default")  && testerCore == prettyCore && testerGame == "")
-			pTargetKV = sub;
-		else if (testerCore == prettyCore && testerGame == prettyGame && (type == "game" || type == "default"))
-		{
-			pTargetKV = sub;
-			break;
-		}
-		*/
 	}
 
 	if (type == "game")
@@ -268,20 +503,13 @@ void C_LibretroInstance::SetOverlay(std::string overlayId)
 	std::string prettyGame = m_info->prettygame;
 
 	std::string preferredOverlayId = g_pAnarchyManager->GetLibretroManager()->DetermineOverlay(prettyCore, prettyGame);
-	//return;
-	//if (preferredOverlayId != goodOverlayId)
-		//return;
 	goodOverlayId = preferredOverlayId;
 
 	if (m_pOverlayKV)
 		m_pOverlayKV->Clear();
 
-	//m_overlayId = goodOverlayId;
 	if (goodOverlayId != "" && goodOverlayId != "none" && m_pOverlayKV->LoadFromFile(g_pFullFileSystem, VarArgs("resource\\ui\\html\\overlays\\%s.cfg", goodOverlayId.c_str()), "MOD"))
 	{
-		//m_overlayId = overlayId;
-		//m_pOverlayKV->SetString("current/overlayId", overlayId.c_str());
-
 		std::string testerCore;
 		std::string testerGame;
 
@@ -295,7 +523,6 @@ void C_LibretroInstance::SetOverlay(std::string overlayId)
 			pDefaultOverlayKV->SetFloat("height", 1);
 		}
 
-		//KeyValues* pBestOverlayKV = null;
 		KeyValues* pCoreOverlayKV = null;
 		KeyValues* pGameOverlayKV = null;
 		for (KeyValues *sub = m_pOverlayKV->FindKey("settings", true)->GetFirstSubKey(); sub; sub = sub->GetNextKey())
@@ -332,7 +559,7 @@ void C_LibretroInstance::SetOverlay(std::string overlayId)
 		m_pOverlayKV->SetFloat("current/height", 1);
 	}
 
-	if ( g_pAnarchyManager->GetInputManager()->GetEmbeddedInstance() == this)
+	if (g_pAnarchyManager->GetInputManager()->GetEmbeddedInstance() == this)
 	{
 		vgui::CInputSlate* pInputSlate = g_pAnarchyManager->GetInputManager()->GetInputSlate();
 		if (pInputSlate)
@@ -366,17 +593,36 @@ void C_LibretroInstance::SelfDestruct()
 	{
 		m_info->libretroinstance = null;
 		m_info->close = true;
+
+		// Two-phase wait for worker thread to finish cleanup
+		if (m_info->hThreadDoneEvent)
+		{
+			DWORD result = g_pVCR->Hook_WaitForSingleObject((HANDLE)m_info->hThreadDoneEvent, 5000);
+			if (result == WAIT_TIMEOUT)
+			{
+				// Worker thread is stuck. Signal it to skip remaining core calls.
+				DevMsg("libretro: WARNING - Worker thread did not exit within 5 seconds, forcing shutdown...\n");
+				InterlockedExchange(&m_info->bForceShutdown, 1);
+
+				// Give it 3 more seconds to finish non-core cleanup and signal
+				result = g_pVCR->Hook_WaitForSingleObject((HANDLE)m_info->hThreadDoneEvent, 3000);
+				if (result == WAIT_TIMEOUT)
+				{
+					// Thread is truly stuck (deadlocked in a core call).
+					// Leak info and event handle to avoid use-after-free.
+					DevMsg("libretro: WARNING - Worker thread still stuck after force shutdown! Leaking resources.\n");
+					m_info = null;
+					goto selfDestruct_finish;
+				}
+			}
+			CloseHandle((HANDLE)m_info->hThreadDoneEvent);
+			m_info->hThreadDoneEvent = NULL;
+		}
 	}
 
+selfDestruct_finish:
 	if (m_pOverlayKV)
 		m_pOverlayKV->deleteThis();
-	/*
-	if (m_pLastFrameData)
-		free(m_pLastFrameData);
-
-	if (m_pPostData)
-		free(m_pPostData);
-	*/
 
 	engine->ClientCmd("exec 360controller");
 	delete this;
@@ -389,7 +635,7 @@ void C_LibretroInstance::CleanUpTexture()
 		m_pTexture->SetTextureRegenerator(null);
 
 		// save the last rendered image out as a TGA to use as a thumbnail
-		if (m_info->lastframedata && !g_pAnarchyManager->GetCanvasManager()->GetItemTexture(m_originalItemId, "screen"))	// Note: This makes it so "always_refresh_snapshots" is useless.
+		if (m_info && m_info->lastframedata && !g_pAnarchyManager->GetCanvasManager()->GetItemTexture(m_originalItemId, "screen"))	// Note: This makes it so "always_refresh_snapshots" is useless.
 		{
 			std::string filePath = "cache/snapshots";
 			std::string fileName = filePath + "/";
@@ -407,10 +653,9 @@ void C_LibretroInstance::CleanUpTexture()
 				// Get the data from the render target and save to disk bitmap bits
 				unsigned char *pImage = (unsigned char *)malloc(width * height * depth);
 
-
-				//this->ResizeFrameFromRGB888(m_info->lastframedata, pImage, m_info->lastframewidth, m_info->lastframeheight, m_info->lastframepitch, m_info->depth, width, height, pitch, depth);
-
-				if (m_info->videoformat == RETRO_PIXEL_FORMAT_RGB565)
+				if (AA_LIBRETRO_3D && m_info->context_type != RETRO_HW_CONTEXT_NONE)
+					this->ResizeFrameFromXRGB8888(m_info->lastframedata, pImage, m_info->lastframewidth, m_info->lastframeheight, m_info->lastframepitch, 4, width, height, pitch, depth, m_info->bottom_left_origin);
+				else if (m_info->videoformat == RETRO_PIXEL_FORMAT_RGB565)
 					this->ResizeFrameFromRGB565(m_info->lastframedata, pImage, m_info->lastframewidth, m_info->lastframeheight, m_info->lastframepitch, 3, width, height, pitch, depth);
 				else if (m_info->videoformat == RETRO_PIXEL_FORMAT_XRGB8888)
 					this->ResizeFrameFromXRGB8888(m_info->lastframedata, pImage, m_info->lastframewidth, m_info->lastframeheight, m_info->lastframepitch, 4, width, height, pitch, depth);
@@ -418,25 +663,13 @@ void C_LibretroInstance::CleanUpTexture()
 					this->ResizeFrameFromRGB1555(m_info->lastframedata, pImage, m_info->lastframewidth, m_info->lastframeheight, m_info->lastframepitch, 3, width, height, pitch, depth);
 
 				// allocate a buffer to write the tga into
-				int iMaxTGASize = (width * height * depth);	// + 1024
+				int iMaxTGASize = (width * height * depth) + 1024;
 				void *pTGA = malloc(iMaxTGASize);
 				CUtlBuffer buffer(pTGA, iMaxTGASize);
 
-				if (m_info->videoformat == RETRO_PIXEL_FORMAT_RGB565)
-				{
-					if (!TGAWriter::WriteToBuffer(pImage, buffer, width, height, IMAGE_FORMAT_RGB565, IMAGE_FORMAT_RGBA8888))
-						DevMsg("Couldn't write bitmap data.\n");
-				}
-				else if (m_info->videoformat == RETRO_PIXEL_FORMAT_XRGB8888)
-				{
-					if (!TGAWriter::WriteToBuffer(pImage, buffer, width, height, IMAGE_FORMAT_BGRA8888, IMAGE_FORMAT_RGBA8888))
-						DevMsg("Couldn't write bitmap data.\n");
-				}
-				else
-				{
-					if (!TGAWriter::WriteToBuffer(pImage, buffer, width, height, IMAGE_FORMAT_BGRX5551, IMAGE_FORMAT_RGBA8888))
-						DevMsg("Couldn't write bitmap data.\n");
-				}
+				// pImage is always BGRA8888 after ResizeFrame* conversion, regardless of core's native format
+				if (!TGAWriter::WriteToBuffer(pImage, buffer, width, height, IMAGE_FORMAT_BGRA8888, IMAGE_FORMAT_RGBA8888))
+					DevMsg("Couldn't write bitmap data.\n");
 
 				free(pImage);
 
@@ -461,6 +694,14 @@ void C_LibretroInstance::CleanUpTexture()
 		g_pAnarchyManager->GetCanvasManager()->DoOrDeferTextureCleanup(m_pTexture);
 		m_pTexture = null;
 	}
+
+	// Free the frame buffer now that snapshot is saved (or skipped)
+	// This was previously freed by worker thread, but we need it for snapshot saving
+	if (m_info && m_info->lastframedata)
+	{
+		free(m_info->lastframedata);
+		m_info->lastframedata = null;
+	}
 }
 
 void C_LibretroInstance::GoPrevious()
@@ -471,23 +712,6 @@ void C_LibretroInstance::GoPrevious()
 
 void C_LibretroInstance::GoSomewhere(int iDirection)
 {
-
-	//unsigned int numArgs = args.size() - iArgOffset;
-
-	// TODO:
-	// Get the item ID
-	// Get the item KV
-	// Get the full file path to the local file.
-	// Separate the path from the filename.
-	//// OBSOLETE: Separate the file extension from the filename.
-	// Search the folder for all supported Libretro video types. (No need to restrict file searching to same file extension as the current file. This means the search algo must be improved some.)
-	// Feed the dir & file extension into the code below...
-	// And then... finish w/ the C++, so create the GoPrevious function too.
-	// Finally, improve the UI in the HTML so that the next/previous buttons only appear on video files.
-
-
-	//std::string fullFile = "V:\\TV\\Beast Wars\\Beast Machines 1x05 - Forbidden Fruit.avi";
-
 	LibretroInstanceInfo_t* info = this->GetInfo();
 	std::string fileName = "";
 	std::string fileFull = info->game;// "Beast Machines 1x05 - Forbidden Fruit.avi";
@@ -524,15 +748,6 @@ void C_LibretroInstance::GoSomewhere(int iDirection)
 		return;
 	}
 
-	//std::string testerExtensions = info->valid_extensions;
-	//std::transform(testerExtensions.begin(), testerExtensions.end(), testerExtensions.begin(), ::tolower);
-	//std::vector<std::string> tokens;
-	//g_pAnarchyManager->Tokenize(testerExtensions, tokens, "|");
-
-
-
-	//std::string fileExtension = "avi";	// TODO: get the real file extension for this LibretroInstance's item.
-
 	std::vector<std::string> files;
 
 	unsigned int uFoundIndex = -1;
@@ -563,14 +778,6 @@ void C_LibretroInstance::GoSomewhere(int iDirection)
 	}
 	else
 	{
-		/*DevMsg("Sibling Files:\n");
-		for (unsigned int i = 0; i < files.size(); i++) {
-			if (i == uFoundIndex)
-				DevMsg(">\t%s\n", files[i].c_str());
-			else
-				DevMsg("\t%s\n", files[i].c_str());
-		}*/
-
 		unsigned int uNextFileIndex = uFoundIndex + iDirection;
 		if (uNextFileIndex >= files.size())
 			uNextFileIndex = 0;
@@ -586,72 +793,7 @@ void C_LibretroInstance::GoSomewhere(int iDirection)
 		this->SetShouldReopen(true);	// NOTE: The LibretroManager needs to know the file we want to override to somehow. (Because this libretro instance is about to be destroyed.)
 		g_pAnarchyManager->GetLibretroManager()->SetNextLoadOverrideForInstance(this, nextFileFull);
 		g_pAnarchyManager->GetLibretroManager()->DestroyLibretroInstance(this);
-
-		// mp3-style playlist logic:
-		// TODO:
-		// It is not currently possible to switch games currently running in the libretro instance, but that would be the ideal way to manage switching games during runtime of the same core.
-		// Cross-thread communication is difficult to keep in sync w/ all the pointer references. This approach may lead to lots of side effects.
-
-		// RE-ROLL LOGIC:
-		// TODO:
-		// Check if an item already exists for the nextFileFull		//var goodItem = aaapi.cmdEx("findLibraryItem", "file", nextFileFull);
-		// If so, aaapi.cmd("assignObjectItem", entityInfo.object.id, goodItem.info.id);
-		// Otherwise...
-		// Generate an item title for the new item
-		// Give it the same type as the sibling item
-		// Save the item, and then... aaapi.cmd("assignObjectItem", entityInfo.object.id, goodItem.info.id);
 	}
-
-	//response.SetProperty(WSLit("amount"), JSValue(iAmount));
-	//response.SetProperty(WSLit("files"), files);
-
-
-	/*
-	// IF this is a LOCAL file that is also an MP3, then try to give all sibling files in the URL request.
-	std::string otherFiles = "";
-
-	if (m_pLocalAutoPlaylistsConVar->GetBool())
-	{
-	std::string file = pActiveKV->GetString("file");
-	if (file.find(':') == 1)
-	{
-	std::string testPath = file;
-	std::transform(testPath.begin(), testPath.end(), testPath.begin(), ::tolower);
-	std::replace(testPath.begin(), testPath.end(), '\\', '/');
-
-	size_t foundTestPathSlash = testPath.find_last_of("/");
-	if (foundTestPathSlash != std::string::npos)
-	{
-	testPath = testPath.substr(0, foundTestPathSlash);
-
-	std::string fileExtension = file;
-	std::transform(fileExtension.begin(), fileExtension.end(), fileExtension.begin(), ::tolower);
-
-	size_t extensionFound = fileExtension.find_last_of(".");
-	if (extensionFound != std::string::npos)
-	fileExtension = fileExtension.substr(extensionFound + 1);
-	else
-	fileExtension = "";
-
-	if (fileExtension == "mp3" && g_pFullFileSystem->FileExists(file.c_str()))
-	{
-	int iNumFiles = 0;
-	FileFindHandle_t findHandle;
-	std::string otherFile;
-	const char *pFilename = g_pFullFileSystem->FindFirstEx(VarArgs("%s/*.%s", testPath.c_str(), fileExtension.c_str()), "", &findHandle);
-	while (pFilename != NULL && iNumFiles < 20)
-	{
-	//otherFile = VarArgs("%s/%s", testPath.c_str(), pFilename);
-	otherFiles += VarArgs("&f%i=", iNumFiles) + g_pAnarchyManager->encodeURIComponent(pFilename);// otherFile);
-	iNumFiles++;
-	pFilename = g_pFullFileSystem->FindNext(findHandle);
-	}
-	g_pFullFileSystem->FindClose(findHandle);
-	}
-	}
-	}
-	}
-	*/
 }
 
 void C_LibretroInstance::GoNext()
@@ -662,22 +804,13 @@ void C_LibretroInstance::GoNext()
 
 void C_LibretroInstance::OnMouseMove(float x, float y)
 {
-	//unsigned int width = (m_id == "hud") ? AA_HUD_INSTANCE_WIDTH : AA_EMBEDDED_INSTANCE_WIDTH;
-	//unsigned int height = (m_id == "hud") ? AA_HUD_INSTANCE_HEIGHT : AA_EMBEDDED_INSTANCE_HEIGHT;
-
-	//int goodX = (width * x) / 1;
-	//int goodY = (height * y) / 1;
 	m_fLastMouseX = x;
 	m_fLastMouseY = y;
-
-	//steamapicontext->SteamHTMLSurface()->MouseMove(m_unHandle, goodX, goodY);
 }
 
 void C_LibretroInstance::Init(std::string id, std::string title, int iEntIndex)
 {
 	this->SetAdjustedStartTime();
-
-	//m_pHud = g_pAnarchyManager->GetAwesomiumBrowserManager()->FindAwesomiumBrowserInstance("hud");
 
 	std::string goodTitle = (title != "") ? title : "Untitled Libretro Tab";
 	m_title = goodTitle;
@@ -701,13 +834,6 @@ void C_LibretroInstance::Init(std::string id, std::string title, int iEntIndex)
 	if (g_pAnarchyManager->ShouldTextureClamp())
 		flags |= (0x0004 | 0x0008);
 
-	//int iWidth = 1920;
-	//int iHeight = 1080;
-
-	//m_pTexture = g_pMaterialSystem->FindTexture(textureName.c_str(), TEXTURE_GROUP_VGUI, false, 1);
-
-	//if (!m_pTexture)
-
 	int multiplyer = 1.0;// g_pAnarchyManager->GetDynamicMultiplyer();
 	if (!g_pMaterialSystem->IsTextureLoaded(textureName.c_str()))
 		m_pTexture = g_pMaterialSystem->CreateProceduralTexture(textureName.c_str(), TEXTURE_GROUP_VGUI, iWidth * multiplyer, iHeight * multiplyer, IMAGE_FORMAT_BGR888, flags);
@@ -719,7 +845,6 @@ void C_LibretroInstance::Init(std::string id, std::string title, int iEntIndex)
 
 	// get the regen and assign it
 	CCanvasRegen* pRegen = g_pAnarchyManager->GetCanvasManager()->GetOrCreateRegen();
-	//pRegen->SetEmbeddedInstance(this);
 	m_pTexture->SetTextureRegenerator(pRegen);
 
 	m_raw = new libretro_raw();
@@ -738,23 +863,19 @@ void C_LibretroInstance::Init(std::string id, std::string title, int iEntIndex)
 	}
 }
 
-/*
-void C_LibretroInstance::Reinit()
-{
-	//LibretroInstanceInfo_t* pLibretroInstanceInfo = pLibretroInstance->GetInfo();
-}
-*/
-
 void C_LibretroInstance::Update()
 {
-	if (g_pAnarchyManager->GetSuspendEmbedded() && m_id != "init" )
+	if (!m_info)
+		return;
+
+	if (g_pAnarchyManager->GetSuspendEmbedded() && m_id != "init")
 		return;
 
 	if (m_info->state == 1)
 	{
 		OnCoreLoaded();
 	}
-	else if (m_info->state == 5 )// && m_info->audiostream)	// added m_info to try and detect failed video loads!! (FIXME: Should be removed after proper failed video load is added elsewhere.
+	else if (m_info->state == 5)// && m_info->audiostream)	// added m_info to try and detect failed video loads!! (FIXME: Should be removed after proper failed video load is added elsewhere.
 	{
 		unsigned int numPorts = m_info->numports;
 		if (numPorts == 0)
@@ -765,23 +886,10 @@ void C_LibretroInstance::Update()
 		}
 
 		for (unsigned int i = 0; i < numPorts; i++)
+		{
 			g_pAnarchyManager->GetLibretroManager()->ManageInputUpdate(m_info, i, RETRO_DEVICE_JOYPAD);
-
-		/*
-		// update input state
-		m_info->inputstate["RETRO_DEVICE_ID_JOYPAD_SELECT"] = vgui::input()->IsKeyDown(KEY_XBUTTON_BACK);
-		m_info->inputstate["RETRO_DEVICE_ID_JOYPAD_START"] = vgui::input()->IsKeyDown(KEY_XBUTTON_START) || vgui::input()->IsKeyDown(KEY_ENTER);
-		m_info->inputstate["RETRO_DEVICE_ID_JOYPAD_UP"] = vgui::input()->IsKeyDown(KEY_XBUTTON_UP);
-		m_info->inputstate["RETRO_DEVICE_ID_JOYPAD_DOWN"] = vgui::input()->IsKeyDown(KEY_XBUTTON_DOWN);
-		m_info->inputstate["RETRO_DEVICE_ID_JOYPAD_LEFT"] = vgui::input()->IsKeyDown(KEY_XBUTTON_LEFT);
-		m_info->inputstate["RETRO_DEVICE_ID_JOYPAD_RIGHT"] = vgui::input()->IsKeyDown(KEY_XBUTTON_RIGHT);
-		m_info->inputstate["RETRO_DEVICE_ID_JOYPAD_A"] = vgui::input()->IsKeyDown(KEY_XBUTTON_B);
-		m_info->inputstate["RETRO_DEVICE_ID_JOYPAD_B"] = vgui::input()->IsKeyDown(KEY_XBUTTON_A);
-		m_info->inputstate["RETRO_DEVICE_ID_JOYPAD_X"] = vgui::input()->IsKeyDown(KEY_XBUTTON_Y);
-		m_info->inputstate["RETRO_DEVICE_ID_JOYPAD_Y"] = vgui::input()->IsKeyDown(KEY_XBUTTON_X);
-		m_info->inputstate["RETRO_DEVICE_ID_JOYPAD_L"] = vgui::input()->IsKeyDown(KEY_XBUTTON_LEFT_SHOULDER);
-		m_info->inputstate["RETRO_DEVICE_ID_JOYPAD_R"] = vgui::input()->IsKeyDown(KEY_XBUTTON_RIGHT_SHOULDER);
-		*/
+			g_pAnarchyManager->GetLibretroManager()->ManageInputUpdate(m_info, i, RETRO_DEVICE_ANALOG);
+		}
 
 		if (!m_bGotTime)
 		{
@@ -793,8 +901,6 @@ void C_LibretroInstance::Update()
 				C_AwesomiumBrowserInstance* pNetwork = g_pAnarchyManager->GetAwesomiumBrowserManager()->FindAwesomiumBrowserInstance("network");// static_cast<C_AwesomiumBrowserInstance*>(m_pHudVoid);
 				if (pNetwork)
 				{
-					//DevMsg("Game Hash: %s\n", m_originalGameHash.c_str());
-					//"window.innerWidth"), WSLit(""));
 					JSValue result = pNetwork->GetWebView()->ExecuteJavascriptWithResult(WSLit(VarArgs("localStorage.getItem(\"libtime%s\");", m_originalGameHash.c_str())), WSLit(""));
 					if (!result.IsNull() && result.IsString())
 					{
@@ -811,14 +917,6 @@ void C_LibretroInstance::Update()
 
 		this->OnProxyBind(null);
 
-		/*
-		if (m_raw)
-		{
-			DevMsg("LibretroInstance: Update\n");
-			//m_raw->run();
-			DevMsg("after\n");
-		}
-		*/
 	}
 	else if (m_info->state == 6)
 	{
@@ -893,18 +991,6 @@ void C_LibretroInstance::TakeScreenshotNow(ITexture* pTexture, IVTFTexture *pVTF
 		goodFile = screenshotFolder + "/" + nextTaskScreenshotFile + ".tga";
 	}
 
-	/*
-	unsigned int screenshotNumber = 0;
-	std::string goodFile = screenshotFolder + "/" + "screenshot" + std::string(VarArgs("%04u", screenshotNumber)) + ".tga";
-	while (g_pFullFileSystem->FileExists(goodFile.c_str(), "DEFAULT_WRITE_PATH"))
-	{
-	screenshotNumber++;
-	goodFile = screenshotFolder + "/" + "screenshot" + std::string(VarArgs("%04u", screenshotNumber)) + ".tga";
-	}
-
-	DevMsg("File name: %s\n", goodFile.c_str());
-	*/
-
 	unsigned int bufferSize = width * height * depth;
 	// allocate a buffer to write the tga into
 	int iMaxTGASize = (width * height * depth);
@@ -945,9 +1031,8 @@ bool C_LibretroInstance::LoadCore(std::string coreFile)
 				bReady = true;
 		}
 
-		if ( bReady )
+		if (bReady)
 		{
-			//g_pAnarchyManager->AddToastMessage(VarArgs("Libretro Core Opened (%i running)", g_pAnarchyManager->GetLibretroManager()->GetInstanceCount()));
 			CreateWorkerThread(core);
 			return true;
 		}
@@ -955,21 +1040,11 @@ bool C_LibretroInstance::LoadCore(std::string coreFile)
 
 	g_pAnarchyManager->AddToastMessage("Libretro Core Aborted");
 	return false;
-	/*
-
-	//	struct retro_system_info info;
-	//	s_raw->get_system_info(&info);
-
-	Msg("Successfully loaded libretro module at %s in %i milliseconds.\n", pFilename, pClientArcadeResources->GetSystemTime() - startTime);
-	s_bCoreIsLoaded = true;
-	*/
 }
 
 void C_LibretroInstance::OnGameLoaded()
 {
 	DevMsg("Game finished loading.\n");
-
-	//m_info->state = 5;
 }
 
 
@@ -999,8 +1074,6 @@ void C_LibretroInstance::SetReset(bool bValue)
 	if (pNetwork)
 		pNetwork->GetWebView()->ExecuteJavascript(WSLit(VarArgs("localStorage.setItem(\"libtime%s\", %i)", m_originalGameHash.c_str(), 0)), WSLit(""));
 
-	//this->OnSecondsUpdated();
-
 	if (m_info)
 		m_info->reset = bValue;
 }
@@ -1025,6 +1098,71 @@ bool C_LibretroInstance::GetPause()
 		return m_info->paused;
 }
 
+// Helper function: Parse path components (directory, name, extension)
+static void ParsePathComponents(const std::string& fullPath, std::string& outDir, std::string& outName, std::string& outExt)
+{
+	// Find the last directory separator
+	size_t dirSepPos = fullPath.find_last_of("/\\");
+	if (dirSepPos != std::string::npos)
+	{
+		outDir = fullPath.substr(0, dirSepPos);
+	}
+	else
+	{
+		outDir = "";
+	}
+
+	// Get the filename (everything after the last separator)
+	std::string filename;
+	if (dirSepPos != std::string::npos)
+		filename = fullPath.substr(dirSepPos + 1);
+	else
+		filename = fullPath;
+
+	// Find the extension
+	size_t extPos = filename.find_last_of(".");
+	if (extPos != std::string::npos)
+	{
+		outName = filename.substr(0, extPos);
+		outExt = filename.substr(extPos + 1);
+		// Convert extension to lowercase
+		std::transform(outExt.begin(), outExt.end(), outExt.begin(), ::tolower);
+	}
+	else
+	{
+		outName = filename;
+		outExt = "";
+	}
+}
+
+// Helper function: Apply content override for a given extension
+static bool ApplyContentOverride(LibretroInstanceInfo_t* info, const std::string& extension, bool& outNeedFullpath, bool& outPersistentData)
+{
+	if (!info->has_content_overrides)
+		return false;
+
+	// Search through content overrides for matching extension
+	for (const auto& override : info->content_overrides)
+	{
+		// Parse the pipe-delimited extension list
+		std::string extensionsStr = override.extensions;
+		std::transform(extensionsStr.begin(), extensionsStr.end(), extensionsStr.begin(), ::tolower);
+
+		std::vector<std::string> extensionTokens;
+		g_pAnarchyManager->Tokenize(extensionsStr, extensionTokens, "|");
+
+		// Check if our extension matches
+		if (std::find(extensionTokens.begin(), extensionTokens.end(), extension) != extensionTokens.end())
+		{
+			outNeedFullpath = override.need_fullpath;
+			outPersistentData = override.persistent_data;
+			return true;
+		}
+	}
+
+	return false;
+}
+
 bool C_LibretroInstance::LoadGame()
 {
 	uint uId = ThreadGetCurrentId();
@@ -1036,6 +1174,16 @@ bool C_LibretroInstance::LoadGame()
 	LibretroInstanceInfo_t* info = pLibretroInstance->GetInfo();
 
 	std::string filename = info->game;
+
+	// Parse path components for extended game info
+	ParsePathComponents(filename, info->loaded_dir, info->loaded_name, info->loaded_ext);
+	info->loaded_full_path = filename;
+	info->loaded_archive_path = "";
+	info->loaded_archive_file = "";
+	info->loaded_file_in_archive = false;
+	info->loaded_persistent_data = false;
+	info->loaded_data = NULL;
+	info->loaded_data_size = 0;
 
 	// If this core *requires* a full file path, then we can check if the file extension is supported RIGHT NOW.
 	// OTHERWISE, we might have to open up a ZIP file before we can check the real file extension.
@@ -1050,7 +1198,7 @@ bool C_LibretroInstance::LoadGame()
 
 	if (fileExtension == "")
 	{
-		DevMsg("libretro: ABORTED: The file has no file extension.\n");
+		WorkerDbgMsg("libretro: ABORTED: The file has no file extension.\n");
 		//info->close = true;
 		return false;
 	}
@@ -1072,15 +1220,22 @@ bool C_LibretroInstance::LoadGame()
 	bool bArchiveIsSupported = (bIsZip && std::find(tokens.begin(), tokens.end(), "zip") != tokens.end()) ||
 		(bIs7z && std::find(tokens.begin(), tokens.end(), "7z") != tokens.end());
 
-	if (info->need_fullpath || !bIsArchive || bArchiveIsSupported)
+	// Only validate the archive extension if:
+	// - Not an archive (regular file), OR
+	// - Archive format is explicitly supported by the core (core wants the .zip/.7z directly), OR
+	// - Core requires fullpath AND block_extract is true (core handles archives internally)
+	if (!bIsArchive || bArchiveIsSupported || (info->need_fullpath && info->block_extract))
 	{
 		if (std::find(tokens.begin(), tokens.end(), fileExtension) != tokens.end())
-			DevMsg("Found extension %s within %s\n", fileExtension.c_str(), testerExtensions.c_str());
+			WorkerDbgMsg("Found extension %s within %s\n", fileExtension.c_str(), testerExtensions.c_str());
 		else
 			bIsValidExtension = false;
 	}
+	// Otherwise, if it's an archive that we'll extract, don't validate the archive extension yet
+	// We'll validate the extracted file's extension later
 
-	// FIXME: Why always pick this pixel format???
+	// Default pixel format is 0RGB1555 per libretro spec.
+	// init() and load_game() may override this via SET_PIXEL_FORMAT.
 	info->videoformat = RETRO_PIXEL_FORMAT_0RGB1555;
 
 	//s_bSupportsNoGame
@@ -1091,15 +1246,57 @@ bool C_LibretroInstance::LoadGame()
 
 	struct retro_game_info game;
 	game.path = filename.c_str();
+	std::string adjustedGamePath;	// Holds corrected path after archive extraction (must outlive load_game call)
 
 	if (!bIsValidExtension)
 	{
-		DevMsg("libretro: ABORTED: Invalid file extension %s for this core. Valid extensions for %s are: %s\n", fileExtension.c_str(), info->prettycore.c_str(), testerExtensions.c_str());
+		WorkerDbgMsg("libretro: ABORTED: Invalid file extension %s for this core. Valid extensions for %s are: %s\n", fileExtension.c_str(), info->prettycore.c_str(), testerExtensions.c_str());
 		//info->close = true;
 	}
 	else
 	{
-		if (info->need_fullpath)
+		// Determine whether to extract archives or pass them directly to the core
+		std::string contentExtension = fileExtension;
+		bool needFullpath;
+		bool persistentData = false;
+
+		if (bIsArchive)
+		{
+			// Check if core explicitly supports this archive format or handles archives internally
+			if (bArchiveIsSupported || info->block_extract)
+			{
+				// Core wants the archive file directly (e.g., MAME with ZIP files)
+				// Apply content override to the archive extension itself
+				needFullpath = info->need_fullpath;
+				if (ApplyContentOverride(info, contentExtension, needFullpath, persistentData))
+				{
+					WorkerDbgMsg("libretro: Using content override for archive extension '%s': need_fullpath=%d, persistent_data=%d\n",
+						contentExtension.c_str(), needFullpath, persistentData);
+					info->loaded_persistent_data = persistentData;
+				}
+				WorkerDbgMsg("libretro: Archive format supported by core, passing archive directly\n");
+			}
+			else
+			{
+				// Archive format not supported by core - extract it
+				// Content override will be applied after extraction based on extracted file's extension
+				needFullpath = false;
+				WorkerDbgMsg("libretro: Archive not supported by core, will extract to determine content type\n");
+			}
+		}
+		else
+		{
+			// For non-archives, apply content override to the file extension
+			needFullpath = info->need_fullpath;
+			if (ApplyContentOverride(info, contentExtension, needFullpath, persistentData))
+			{
+				WorkerDbgMsg("libretro: Using content override for extension '%s': need_fullpath=%d, persistent_data=%d\n",
+					contentExtension.c_str(), needFullpath, persistentData);
+				info->loaded_persistent_data = persistentData;
+			}
+		}
+
+		if (needFullpath)
 		{
 			game.data = NULL;
 			game.size = 0;
@@ -1109,7 +1306,7 @@ bool C_LibretroInstance::LoadGame()
 		}
 		else
 		{
-			DevMsg("libretro: File must be loaded by frontend!\n");
+			WorkerDbgMsg("libretro: File must be loaded by frontend!\n");
 
 			// for easy char string access
 			//char pFilename[AA_MAX_STRING];
@@ -1119,12 +1316,12 @@ bool C_LibretroInstance::LoadGame()
 
 			if (bIsZip)
 			{
-				DevMsg("libretro: ZIP file detected. Attempting to extract the 1st file..\n");
+				WorkerDbgMsg("libretro: ZIP file detected. Attempting to extract the 1st file..\n");
 
 				bool bFailedUnzip = false;
 				if (!g_pFullFileSystem->FileExists(filename.c_str()))
 				{
-					DevMsg("libretro: ABORTED: ZIP file does not exist %s\n", pFilename);
+					WorkerDbgMsg("libretro: ABORTED: ZIP file does not exist %s\n", pFilename);
 					bFailedUnzip = true;
 				}
 				else
@@ -1132,7 +1329,7 @@ bool C_LibretroInstance::LoadGame()
 					HZIP hz = OpenZip(pFilename, 0, ZIP_FILENAME);
 					if (!hz)
 					{
-						DevMsg("libretro: ABORTED: Failed to open ZIP file %s\n", pFilename);
+						WorkerDbgMsg("libretro: ABORTED: Failed to open ZIP file %s\n", pFilename);
 						bFailedUnzip = true;
 					}
 					else
@@ -1175,7 +1372,7 @@ bool C_LibretroInstance::LoadGame()
 
 						if (!bFoundFile || result != ZR_OK)
 						{
-							DevMsg("libretro: ABORTED: Failed to locate a valid file in ZIP.");
+							WorkerDbgMsg("libretro: ABORTED: Failed to locate a valid file in ZIP.");
 							bFailedUnzip = true;
 						}
 						else
@@ -1188,7 +1385,7 @@ bool C_LibretroInstance::LoadGame()
 
 							if (result != ZR_OK && result != ZR_MORE)
 							{
-								DevMsg("libretro: ABORTED: Failed to unzip the file. ERROR CODE %i\n", result);
+								WorkerDbgMsg("libretro: ABORTED: Failed to unzip the file. ERROR CODE %i\n", result);
 								bFailedUnzip = true;
 							}
 							else
@@ -1196,6 +1393,47 @@ bool C_LibretroInstance::LoadGame()
 								game.data = fileData;
 								game.size = fileSize;
 								game.meta = NULL;
+
+								// Track archive metadata for RETRO_ENVIRONMENT_GET_GAME_INFO_EXT
+								info->loaded_archive_path = filename;
+								info->loaded_archive_file = zipEntry.name;
+								info->loaded_file_in_archive = true;
+
+								// Parse the extracted file's path components
+								std::string extractedFilename = zipEntry.name;
+								ParsePathComponents(extractedFilename, info->loaded_dir, info->loaded_name, info->loaded_ext);
+								// The directory is still the ZIP's directory
+								info->loaded_dir = info->loaded_dir.empty() ?
+									filename.substr(0, filename.find_last_of("/\\")) :
+									filename.substr(0, filename.find_last_of("/\\"));
+
+								// Now apply content override using the EXTRACTED file's extension
+								bool extractedNeedFullpath = info->need_fullpath;
+								bool extractedPersistentData = false;
+								if (!info->loaded_ext.empty() &&
+									ApplyContentOverride(info, info->loaded_ext, extractedNeedFullpath, extractedPersistentData))
+								{
+									WorkerDbgMsg("libretro: Using content override for extracted file extension '%s': need_fullpath=%d, persistent_data=%d\n",
+										info->loaded_ext.c_str(), extractedNeedFullpath, extractedPersistentData);
+									info->loaded_persistent_data = extractedPersistentData;
+
+									// If the override requires fullpath, we need to abort and reload with fullpath
+									if (extractedNeedFullpath && !needFullpath)
+									{
+										WorkerDbgMsg("libretro: WARNING: Extracted file requires fullpath but archive was loaded in memory. This may cause issues.\n");
+									}
+								}
+
+								// Only adjust game.path for cores that DON'T need fullpath.
+								// Cores with need_fullpath=1 (like bsnes) may open game.path from disk,
+								// so it must point to a real file. Cores with need_fullpath=0 (like mesen)
+								// use game.data but check game.path extension for file type identification.
+								if (!info->need_fullpath && !info->loaded_ext.empty())
+								{
+									adjustedGamePath = info->loaded_dir + "\\" + info->loaded_name + "." + info->loaded_ext;
+									game.path = adjustedGamePath.c_str();
+									WorkerDbgMsg("libretro: Adjusted game.path for extracted file: %s\n", game.path);
+								}
 
 								bReadyToLoad = true;
 							}
@@ -1209,12 +1447,12 @@ bool C_LibretroInstance::LoadGame()
 			}
 			else if (bIs7z)
 			{
-				DevMsg("libretro: 7z file detected. Attempting to extract the 1st file..\n");
+				WorkerDbgMsg("libretro: 7z file detected. Attempting to extract the 1st file..\n");
 
 				bool bFailed7z = false;
 				if (!g_pFullFileSystem->FileExists(filename.c_str()))
 				{
-					DevMsg("libretro: ABORTED: 7z file does not exist %s\n", pFilename);
+					WorkerDbgMsg("libretro: ABORTED: 7z file does not exist %s\n", pFilename);
 					bFailed7z = true;
 				}
 				else
@@ -1227,7 +1465,7 @@ bool C_LibretroInstance::LoadGame()
 
 					if (InFile_Open(&archiveStream.file, pFilename) != 0)
 					{
-						DevMsg("libretro: ABORTED: Failed to open 7z file %s\n", pFilename);
+						WorkerDbgMsg("libretro: ABORTED: Failed to open 7z file %s\n", pFilename);
 						bFailed7z = true;
 					}
 					else
@@ -1244,13 +1482,14 @@ bool C_LibretroInstance::LoadGame()
 
 						if (res != SZ_OK)
 						{
-							DevMsg("libretro: ABORTED: Failed to parse 7z file %s. Error: %d\n", pFilename, res);
+							WorkerDbgMsg("libretro: ABORTED: Failed to parse 7z file %s. Error: %d\n", pFilename, res);
 							bFailed7z = true;
 						}
 						else
 						{
 							// Find a valid file in the archive
 							UInt32 foundIndex = (UInt32)-1;
+							std::string foundEntryName = "";  // Store the found file name for metadata tracking
 							for (UInt32 i = 0; i < db.NumFiles; i++)
 							{
 								if (SzArEx_IsDir(&db, i))
@@ -1277,13 +1516,14 @@ bool C_LibretroInstance::LoadGame()
 									(entryExt != "" && std::find(tokens.begin(), tokens.end(), entryExt) != tokens.end()))
 								{
 									foundIndex = i;
+									foundEntryName = entryName;  // Save the entry name
 									break;
 								}
 							}
 
 							if (foundIndex == (UInt32)-1)
 							{
-								DevMsg("libretro: ABORTED: Failed to locate a valid file in 7z.\n");
+								WorkerDbgMsg("libretro: ABORTED: Failed to locate a valid file in 7z.\n");
 								bFailed7z = true;
 							}
 							else
@@ -1302,7 +1542,7 @@ bool C_LibretroInstance::LoadGame()
 
 								if (res != SZ_OK)
 								{
-									DevMsg("libretro: ABORTED: Failed to extract from 7z. Error: %d\n", res);
+									WorkerDbgMsg("libretro: ABORTED: Failed to extract from 7z. Error: %d\n", res);
 									bFailed7z = true;
 								}
 								else
@@ -1315,6 +1555,44 @@ bool C_LibretroInstance::LoadGame()
 									game.data = fileData;
 									game.size = outSizeProcessed;
 									game.meta = NULL;
+
+									// Track archive metadata for RETRO_ENVIRONMENT_GET_GAME_INFO_EXT
+									info->loaded_archive_path = filename;
+									info->loaded_archive_file = foundEntryName;
+									info->loaded_file_in_archive = true;
+
+									// Parse the extracted file's path components
+									ParsePathComponents(foundEntryName, info->loaded_dir, info->loaded_name, info->loaded_ext);
+									// The directory is still the 7z's directory
+									info->loaded_dir = filename.substr(0, filename.find_last_of("/\\"));
+
+									// Now apply content override using the EXTRACTED file's extension
+									bool extractedNeedFullpath = info->need_fullpath;
+									bool extractedPersistentData = false;
+									if (!info->loaded_ext.empty() &&
+										ApplyContentOverride(info, info->loaded_ext, extractedNeedFullpath, extractedPersistentData))
+									{
+										WorkerDbgMsg("libretro: Using content override for extracted file extension '%s': need_fullpath=%d, persistent_data=%d\n",
+											info->loaded_ext.c_str(), extractedNeedFullpath, extractedPersistentData);
+										info->loaded_persistent_data = extractedPersistentData;
+
+										// If the override requires fullpath, we need to abort and reload with fullpath
+										if (extractedNeedFullpath && !needFullpath)
+										{
+											WorkerDbgMsg("libretro: WARNING: Extracted file requires fullpath but archive was loaded in memory. This may cause issues.\n");
+										}
+									}
+
+									// Only adjust game.path for cores that DON'T need fullpath.
+									// Cores with need_fullpath=1 (like bsnes) may open game.path from disk,
+									// so it must point to a real file. Cores with need_fullpath=0 (like mesen)
+									// use game.data but check game.path extension for file type identification.
+									if (!info->need_fullpath && !info->loaded_ext.empty())
+									{
+										adjustedGamePath = info->loaded_dir + "\\" + info->loaded_name + "." + info->loaded_ext;
+										game.path = adjustedGamePath.c_str();
+										WorkerDbgMsg("libretro: Adjusted game.path for extracted file: %s\n", game.path);
+									}
 
 									bReadyToLoad = true;
 								}
@@ -1338,7 +1616,7 @@ bool C_LibretroInstance::LoadGame()
 				FileHandle_t fileHandle = filesystem->Open(pFilename, "rb");
 				if (!fileHandle)
 				{
-					DevMsg("libretro: ABORTED: Failed to open file %s\n", pFilename);
+					WorkerDbgMsg("libretro: ABORTED: Failed to open file %s\n", pFilename);
 					//info->close = true;
 				}
 				else
@@ -1380,23 +1658,53 @@ bool C_LibretroInstance::LoadGame()
 		}
 		//}
 
-		info->raw->init();	// could take a while
+		// Store loaded data reference so GET_GAME_INFO_EXT can return it during load_game()
+		info->loaded_data = game.data;
+		info->loaded_data_size = game.size;
 
-		if (info->close)	// somebody else could have closed us from a different thread while we were doing that bottleneck above
+		if (!SafeCallCore(info->raw->init))
 		{
-			DevMsg("libretro: ABORTED: Canceled before loading game.\n");
+			WorkerDbgMsg("libretro: CRITICAL - Core crashed during init!\n");
+			info->runninglibretrocores->last_error = "Core Crashed";
+			info->close = true;
+		}
+		else
+		{
+			info->bDidInit = true;
+		}
+
+		// Register callbacks after init for cores where pre-registration
+		// failed in state 3 (e.g. mesen dereferences objects created in init)
+		if (info->bDidInit && !info->bCallbacksRegistered)
+		{
+			info->raw->set_video_refresh(C_LibretroInstance::cbVideoRefresh);
+			info->raw->set_audio_sample(C_LibretroInstance::cbAudioSample);
+			info->raw->set_audio_sample_batch(C_LibretroInstance::cbAudioSampleBatch);
+			info->raw->set_input_poll(C_LibretroInstance::cbInputPoll);
+			if (info->raw->set_input_state)
+				info->raw->set_input_state(C_LibretroInstance::cbInputState);
+			info->bCallbacksRegistered = true;
+		}
+
+		if (!info->bDidInit)
+		{
+			WorkerDbgMsg("libretro: ABORTED: init() failed.\n");
+		}
+		else if (info->close)	// somebody else could have closed us from a different thread while we were doing that bottleneck above
+		{
+			WorkerDbgMsg("libretro: ABORTED: Canceled before loading game.\n");
 			//info->close = true;
 		}
 		else
 		{
-			if (!info->raw->load_game(&game))
+			if (!SafeLoadGame(info->raw->load_game, &game))
 			{
-				DevMsg("libretro: ABORTED: Core could not load game.\n");
+				WorkerDbgMsg("libretro: ABORTED: Core could not load game.\n");
 				//info->close = true;
 			}
 			else
 			{
-				DevMsg("libretro: Finished loading game %s\n", filename.c_str());
+				WorkerDbgMsg("libretro: Finished loading game %s\n", filename.c_str());
 
 				if (!info->close)
 				{
@@ -1405,7 +1713,7 @@ bool C_LibretroInstance::LoadGame()
 				}
 				else
 				{
-					DevMsg("libretro: ABORTED: Canceled while loading game.\n");
+					WorkerDbgMsg("libretro: ABORTED: Canceled while loading game.\n");
 					bSuccess = false;
 					//info->close = true;
 				}
@@ -1413,7 +1721,14 @@ bool C_LibretroInstance::LoadGame()
 		}
 	}
 
-	if (bDataLoaded)
+	// Clear non-persistent data reference (core should have copied it during load_game)
+	if (!info->loaded_persistent_data)
+	{
+		info->loaded_data = NULL;
+		info->loaded_data_size = 0;
+	}
+
+	if (bDataLoaded && !info->loaded_persistent_data)
 		free(fileData);
 
 	//pLibretroInstance->OnGameLoaded();
@@ -1426,7 +1741,7 @@ void C_LibretroInstance::OnCoreLoaded()
 	m_info->state = 2;
 
 	// automatically load a game right away...
-//	m_info->game = "V:/Movies/Flash Gordon (1980).avi";//file
+	//	m_info->game = "V:/Movies/Flash Gordon (1980).avi";//file
 	//m_info->game = "V:/Movies/Jay and silent Bob Strike Back (2001).avi";
 	//"V:\\Movies\\Judge Dredd (1995).mp4";
 }
@@ -1470,69 +1785,39 @@ bool C_LibretroInstance::BuildInterface(libretro_raw* raw, void* pLib)
 	return true;
 }
 
-//float lastAudioFrame = 0;
-/*
-typedef float SAMPLE;
-static int audiocallback(const void *inputBuffer, void *outputBuffer, unsigned long framesPerBuffer, const PaStreamCallbackTimeInfo* timeInfo, PaStreamCallbackFlags statusFlags, void *userData)
+// PortAudio callback for non-blocking audio output (runs on audio thread)
+static int LibretroAudioCallback(
+	const void* pInputBuffer,
+	void* pOutputBuffer,
+	unsigned long nFramesPerBuffer,
+	const PaStreamCallbackTimeInfo* pTimeInfo,
+	PaStreamCallbackFlags statusFlags,
+	void* pUserData)
 {
-	uint uId = ThreadGetCurrentId();
-	//DevMsg("Audio Thread ID: %u\n", uId);
+	(void)pInputBuffer;
+	(void)pTimeInfo;
+	(void)statusFlags;
 
-	LibretroInstanceInfo_t* info = (LibretroInstanceInfo_t*)userData;
-	//	DevMsg("Pos: %i\n", info->audiobufferpos);
-	if (info->audiobufferpos < info->audiobuffersize)
+	LibretroInstanceInfo_t* info = (LibretroInstanceInfo_t*)pUserData;
+	int16_t* pOut = (int16_t*)pOutputBuffer;
+	unsigned int nSamplesRequested = nFramesPerBuffer * 2; // stereo: 2 samples per frame
+
+	if (!info || !info->pAudioRingBuffer)
 	{
-		info->processingaudio = false;
+		memset(pOut, 0, nSamplesRequested * sizeof(int16_t));
 		return paContinue;
 	}
-	//if (info->processingaudio)
-	//		return paContinue;
 
-	//	if (!inputBuffer)
-	//	return paContinue;
+	unsigned int nSamplesRead = RingBuf_Read(info->pAudioRingBuffer, pOut, nSamplesRequested);
 
-	//	if (lastAudioFrame != gpGlobals->framecount)
-	//{
-	//		lastAudioFrame = gpGlobals->framecount;
-	//		lastFrameNumber = gpGlobals->framecount;
-
-	//Q_memcpy(outputBuffer, info->audiobuffer, info->audiobufferframes * 2 * sizeof(int16_t));
-
-	//int16_t* copyBuffer = new int16_t[info->audiobufferpos * 2];
-	//	Q_memcpy(copyBuffer, info->audiobuffer, info->audiobufferpos * 2 * sizeof(int16_t));
-
-	Q_memcpy(outputBuffer, info->audiobuffer, info->audiobufferpos * 2 * sizeof(int16_t));
-	info->audiobufferpos = 0;
-	info->processingaudio = false;
-	//	}
-
-	return paContinue;
-	//Q_memcpy(outputBuffer, inputBuffer, framesPerBuffer * 2 * sizeof(int16_t));
-	*/
-	/*
-	unsigned int i;
-	SAMPLE *out = (SAMPLE*)outputBuffer;
-	if (!inputBuffer)
+	// Fill remainder with silence on underrun
+	if (nSamplesRead < nSamplesRequested)
 	{
-	for (i = 0; i < framesPerBuffer; i++)
-	{
-	*out++ = 0;
-	*out++ = 0;
-	}
-	}
-	else
-	{
-	const SAMPLE *in = (const SAMPLE*)inputBuffer;
-	for (int i = 0; i < framesPerBuffer; i++)
-	{
-	*out++ = *in++;
-	*out++ = *in++;
-	}
+		memset(pOut + nSamplesRead, 0, (nSamplesRequested - nSamplesRead) * sizeof(int16_t));
 	}
 
 	return paContinue;
-	*/
-//}
+}
 
 void C_LibretroInstance::CreateAudioStream()
 {
@@ -1543,104 +1828,148 @@ void C_LibretroInstance::CreateAudioStream()
 	if (!info->soundAllowed)
 		return;
 
-	DevMsg("Sample rate is: %i\n", info->samplerate);
+	WorkerDbgMsg("Sample rate is: %.0f\n", info->samplerate);
+
+	// Determine actual output rate for PortAudio.
+	// Standard sound cards support up to 96kHz. Anything above is a raw emulator
+	// clock (e.g. SameBoy reports 2097152 Hz for Game Boy CPU/2) and needs resampling.
+	float paRate = info->samplerate;
+	if (paRate > 96000.0f)
+	{
+		paRate = 48000.0f;
+		info->outputsamplerate = 48000.0f;
+		info->resampleAccumulator = 0.0;
+		WorkerDbgMsg("Core rate %.0f exceeds 96kHz, will resample to %.0f Hz\n",
+			info->samplerate, paRate);
+	}
+	else
+	{
+		info->outputsamplerate = 0;
+		info->resampleAccumulator = 0.0;
+	}
+
+	// Allocate ring buffer
+	AudioRingBuffer_t* pRing = new AudioRingBuffer_t;
+	pRing->nCapacity = AUDIO_RING_BUFFER_SAMPLES;
+	pRing->nMask = pRing->nCapacity - 1;
+	pRing->pBuffer = new int16_t[pRing->nCapacity];
+	memset(pRing->pBuffer, 0, pRing->nCapacity * sizeof(int16_t));
+	pRing->nWritePos = 0;
+	pRing->nReadPos = 0;
+	info->pAudioRingBuffer = pRing;
 
 	PaStreamParameters outputParameters;
-	outputParameters.device = Pa_GetDefaultOutputDevice(); // default output device
+	outputParameters.device = Pa_GetDefaultOutputDevice();
 
 	if (outputParameters.device == -1)
 	{
-		DevMsg("FAILED TO GET PORT AUDIO DEVICE!! PREPARE FOR CRASH!\n");
+		WorkerDbgMsg("FAILED TO GET PORT AUDIO DEVICE!!\n");
+		delete[] pRing->pBuffer;
+		delete pRing;
+		info->pAudioRingBuffer = NULL;
+		return;
 	}
 
 	outputParameters.channelCount = 2;
 	outputParameters.sampleFormat = paInt16;
-	//outputParameters.suggestedLatency = 0.032;// 0.064;// Pa_GetDeviceInfo(outputParameters.device)->defaultHighOutputLatency;
-	outputParameters.suggestedLatency = Pa_GetDeviceInfo(outputParameters.device)->defaultHighOutputLatency;	// FIXME: Add better error handling here!! sometimes this can't be called!!
-	//outputParameters.suggestedLatency = 1 / (info->framerate * 1.0);
+	outputParameters.suggestedLatency = Pa_GetDeviceInfo(outputParameters.device)->defaultLowOutputLatency;
 	outputParameters.hostApiSpecificStreamInfo = NULL;
 
-	PaStream *stream;
+	PaStream* stream;
 	PaError err = Pa_OpenStream(
 		&stream,
 		NULL,
 		&outputParameters,
-		info->samplerate,
-		paFramesPerBufferUnspecified,
-		paNoFlag,//paClipOff,      // we won't output out of range samples so don't bother clipping them
-		null, //audiocallback no callback, use blocking API
-		info); // no callback, so no callback userData
-
-	info->audiostream = stream;
-
-	//info->audiobuffersize = 1024;
-	//info->audiobuffer = new int16_t[info->audiobuffersize];
-	//info->audiobufferpos = 0;
-
-	//	info->safebuffersize = info->audiobuffersize;
-	//	info->safebuffer = new int16_t[info->safebuffersize];
-	//	info->safebufferpos = 0;
-
+		paRate,
+		256,          // frames per buffer for predictable callback intervals
+		paNoFlag,
+		LibretroAudioCallback,
+		info);
 
 	if (err != paNoError)
-		DevMsg("Failed to open stream.\n");
-	else
-		DevMsg("Opened PA stream!\n");
+	{
+		WorkerDbgMsg("Failed to open stream: %s\n", Pa_GetErrorText(err));
+		delete[] pRing->pBuffer;
+		delete pRing;
+		info->pAudioRingBuffer = NULL;
+		return;
+	}
+
+	info->audiostream = stream;
+	WorkerDbgMsg("Opened PA stream!\n");
 
 	err = Pa_StartStream(stream);
 
 	if (err != paNoError)
-		DevMsg("Failed to start stream.\n");
+	{
+		WorkerDbgMsg("Failed to start stream: %s\n", Pa_GetErrorText(err));
+		Pa_CloseStream(stream);
+		info->audiostream = NULL;
+		delete[] pRing->pBuffer;
+		delete pRing;
+		info->pAudioRingBuffer = NULL;
+	}
 	else
-		DevMsg("Started stream!\n");
+	{
+		WorkerDbgMsg("Started stream!\n");
+	}
 }
 
-void C_LibretroInstance::DestroyAudioStream()
+void C_LibretroInstance::DestroyAudioStream(LibretroInstanceInfo_t* info)
 {
-	uint uId = ThreadGetCurrentId();
-	C_LibretroInstance* pLibretroInstance = g_pAnarchyManager->GetLibretroManager()->FindLibretroInstance(uId);
-	LibretroInstanceInfo_t* info = pLibretroInstance->GetInfo();
-
-	if (!info->soundAllowed || !info->audiostream)
+	if (!info || !info->soundAllowed || !info->audiostream)
 		return;
 
-	PaStream *stream = static_cast<PaStream*>(info->audiostream);
+	PaStream* stream = info->audiostream;
 
-	PaError err = Pa_StopStream(stream);
-
+	PaError err = Pa_AbortStream(stream);
 	if (err != paNoError)
-		DevMsg("Failed to stop stream.\n");
+		WorkerDbgMsg("Failed to abort stream: %s\n", Pa_GetErrorText(err));
 	else
-		DevMsg("Stopped PA stream!\n");
+		WorkerDbgMsg("Aborted PA stream!\n");
 
 	err = Pa_CloseStream(stream);
 	if (err != paNoError)
-		DevMsg("Failed to close stream.\n");
+		WorkerDbgMsg("Failed to close stream: %s\n", Pa_GetErrorText(err));
 	else
-		DevMsg("Closed PA stream!\n");
+		WorkerDbgMsg("Closed PA stream!\n");
+
+	info->audiostream = NULL;
+
+	// Free ring buffer after stream is closed (callback can no longer fire)
+	if (info->pAudioRingBuffer)
+	{
+		if (info->pAudioRingBuffer->pBuffer)
+			delete[] info->pAudioRingBuffer->pBuffer;
+		delete info->pAudioRingBuffer;
+		info->pAudioRingBuffer = NULL;
+	}
 
 	info->samplerate = 0;
-	//	info->audiobufferpos = 0;
+	info->outputsamplerate = 0;
+	info->resampleAccumulator = 0.0;
 }
 
 unsigned MyThread(void *params)
 {
 	bool bDidRun = false;
+	bool bCoreCrashed = false;
+	bool bDidTimeBegin = false;
 
 	LibretroInstanceInfo_t* info = (LibretroInstanceInfo_t*)params; // always use a struct!
+	void* hDoneEvent = info ? info->hThreadDoneEvent : NULL;	// Save before info gets deleted in cleanup
 
 	CSysModule* pModule;
 	bool bDidLoadDll = false;
 	if (info->libretroinstance && !info->close)
 	{
 		bool bDidLoadModule = false;
-		//HMODULE	hModule;
-		pModule = Sys_LoadModule(info->core.c_str());
+		pModule = SafeLoadModule(info->core.c_str());
 		if (!pModule)
 		{
-			DevMsg("libretro: ERROR - Failed to load %s\n", info->core.c_str());
+			WorkerDbgMsg("libretro: ERROR - Failed to load %s\n", info->core.c_str());
 			info->runninglibretrocores->last_error = "Core Load Failed";
-			info->state = 6;
+			info->close = true;
 		}
 		else
 		{
@@ -1648,9 +1977,9 @@ unsigned MyThread(void *params)
 			HMODULE hModule = reinterpret_cast<HMODULE>(pModule);
 			if (!hModule || !C_LibretroInstance::BuildInterface(info->raw, &hModule))
 			{
-				DevMsg("libretro: ERROR - Failed to build interface!\n");
+				WorkerDbgMsg("libretro: ERROR - Failed to build interface!\n");
 				info->runninglibretrocores->last_error = "Core Initialization Failed";
-				info->state = 6;
+				info->close = true;
 			}
 			else
 			{
@@ -1669,58 +1998,57 @@ unsigned MyThread(void *params)
 				info->need_fullpath = system_info.need_fullpath;
 				info->block_extract = system_info.block_extract;
 
-				DevMsg("Loaded libretro core:\n");
-				DevMsg("\tlibrary_name: %s\n", info->library_name.c_str());
-				DevMsg("\tlibrary_version: %s\n", info->library_version.c_str());
-				DevMsg("\tvalid_extensions: %s\n", info->valid_extensions.c_str());
-				DevMsg("\tneed_fullpath: %i\n", info->need_fullpath);
-				DevMsg("\tblock_extract: %i\n", info->block_extract);
+				WorkerDbgMsg("Loaded libretro core:\n");
+				WorkerDbgMsg("\tlibrary_name: %s\n", info->library_name.c_str());
+				WorkerDbgMsg("\tlibrary_version: %s\n", info->library_version.c_str());
+				WorkerDbgMsg("\tvalid_extensions: %s\n", info->valid_extensions.c_str());
+				WorkerDbgMsg("\tneed_fullpath: %i\n", info->need_fullpath);
+				WorkerDbgMsg("\tblock_extract: %i\n", info->block_extract);
 
 				g_pAnarchyManager->GetLibretroManager()->OnLibretroInstanceCreated(info);	// FIXME: If instance is closed by the time this line is reached, might cause the crash!
 
-				DevMsg("Thread: core loaded.\n");
+				WorkerDbgMsg("Thread: core loaded.\n");
 			}
 		}
 
 		bool bIsInit = (info->id == "init");
 		int state;
 		libretro_raw* raw = info->raw;
-		while (!info->close)	//&& glfwWindowShouldClose(window) == 0
+		while (!info->close)
 		{
-			//	glfwPollEvents();
 			state = info->state;
-
-//			if (info->window && glfwWindowShouldClose(info->window))
-//				info->close = true;
 
 			if (state == 2)
 			{
 				CSysModule* myModule = Sys_LoadModule(VarArgs("%s\\bin\\portaudio_x86.dll", engine->GetGameDirectory()));
 				if (myModule)
 				{
-					DevMsg("portaudio_x86.dll loaded successfully.\n");
+					WorkerDbgMsg("portaudio_x86.dll loaded successfully.\n");
 
 					PaError err = Pa_Initialize();
 					if (err != paNoError)
-						DevMsg("Failed to initialize PA.\n");
+						WorkerDbgMsg("Failed to initialize PA.\n");
 					else
-						DevMsg("Initialized PA successfuly!\n");
+						WorkerDbgMsg("Initialized PA successfuly!\n");
 				}
 				else
-					DevMsg("Failed to load portaudio_x86.dll.\n");
+					WorkerDbgMsg("Failed to load portaudio_x86.dll.\n");
+
+				// Improve Sleep() resolution from ~15.6ms to ~1ms for accurate frame pacing
+				timeBeginPeriod(1);
+				bDidTimeBegin = true;
 
 				info->state = 3;
 			}
 			else if (state == 3)
 			{
-				//raw->set_hw_context_reset(C_LibretroInstance::cbHWContextReset);
 				raw->set_environment(C_LibretroInstance::cbEnvironment);
-				raw->set_video_refresh(C_LibretroInstance::cbVideoRefresh);
-				raw->set_audio_sample(C_LibretroInstance::cbAudioSample);
-				raw->set_audio_sample_batch(C_LibretroInstance::cbAudioSampleBatch);
-				raw->set_input_poll(C_LibretroInstance::cbInputPoll);
-				if (raw->set_input_state)
-					raw->set_input_state(C_LibretroInstance::cbInputState);
+
+				// Try to register callbacks before init() (works for most cores).
+				// Cores like mesen crash here because they dereference objects
+				// created in init() — caught by SEH, deferred to after init() in LoadGame().
+				info->bCallbacksRegistered = SafePreRegisterCallbacks(raw);
+
 				info->state = 4;
 			}
 			else if (state == 4)
@@ -1728,24 +2056,13 @@ unsigned MyThread(void *params)
 				// load a game if we have one
 				if (info->game != "")
 				{
-					DevMsg("Load the game next!!\n");
-					//info->state = 5;
+					WorkerDbgMsg("Load the game next!!\n");
 					if (C_LibretroInstance::LoadGame())
 					{
 						if (info->state == 5)
 						{
 							// setup the memory map prior to the 1st call to run
 
-							/*
-							info->memorymap->rtcsize = info->raw->get_memory_size(RETRO_MEMORY_RTC);
-							if (info->memorymap->rtcsize > 0)
-							{
-							info->memorymap->rtcdata = (uint8_t*)info->raw->get_memory_data(RETRO_MEMORY_RTC);
-
-							// data must be altered PRIOR to the 1st run
-							// TODO: work
-							}
-							*/
 							if (true)
 							{
 								info->memorymap->saveramsize = info->raw->get_memory_size(RETRO_MEMORY_SAVE_RAM);
@@ -1766,28 +2083,44 @@ unsigned MyThread(void *params)
 								}
 							}
 
-							/*
-							info->memorymap->systemramsize = info->raw->get_memory_size(RETRO_MEMORY_SYSTEM_RAM);
-							if (info->memorymap->systemramsize > 0)
+							// Make GL context current on worker thread if using hardware rendering
+							if (AA_LIBRETRO_3D && info->gl_context && info->context_type != RETRO_HW_CONTEXT_NONE)
 							{
-							info->memorymap->systemramdata = (uint8_t*)info->raw->get_memory_data(RETRO_MEMORY_SYSTEM_RAM);
+								LibretroGLContext* gl_ctx = (LibretroGLContext*)info->gl_context;
+								if (gl_ctx->hglrc)
+									wglMakeCurrent(gl_ctx->hdc, gl_ctx->hglrc);
 
-							// data must be altered PRIOR to the 1st run
-							// TODO: work
+								// Pre-bind our FBO before context_reset so cores that cache
+								// get_current_framebuffer during init get the correct FBO
+								if (gl_ctx->framebuffer)
+									glBindFramebuffer(GL_FRAMEBUFFER, gl_ctx->framebuffer);
+
+								// Deferred context_reset: must be called AFTER load_game() returns,
+								// not during SET_HW_RENDER, so the core can set its internal flags first.
+								// This matches the libretro spec and RetroArch's behavior.
+								if (info->raw->context_reset)
+								{
+									WorkerDbgMsg("libretro: Calling deferred context_reset...\n");
+									if (!SafeCallCore(info->raw->context_reset))
+									{
+										WorkerDbgMsg("libretro: CRITICAL - Core crashed during context_reset!\n");
+										info->runninglibretrocores->last_error = "Core Crashed";
+										bCoreCrashed = true;
+										info->state = 6;
+										break;
+									}
+									WorkerDbgMsg("libretro: context_reset completed.\n");
+								}
 							}
 
-							info->memorymap->videoramsize = info->raw->get_memory_size(RETRO_MEMORY_VIDEO_RAM);
-							if (info->memorymap->videoramsize > 0)
+							if (!SafeRunCore(info->raw))	// complete the game loading by executing 1 run
 							{
-							info->memorymap->videoramdata = (uint8_t*)info->raw->get_memory_data(RETRO_MEMORY_VIDEO_RAM);
-
-							// data must be altered PRIOR to the 1st run
-							// TODO: work
+								WorkerDbgMsg("libretro: CRITICAL - Core crashed during initial run! Exception code caught by SEH.\n");
+								info->runninglibretrocores->last_error = "Core Crashed";
+								bCoreCrashed = true;
+								info->state = 6;
+								break;
 							}
-							*/
-
-							//DevMsg("Pt A\n");
-							info->raw->run();	// complete the game loading by executing 1 run
 
 
 							// remember old state size
@@ -1810,7 +2143,7 @@ unsigned MyThread(void *params)
 									else if (oldStateSize == currentStateSize)
 									{
 										// load the state already contained within statedata
-										if( raw->unserialize(info->statedata, oldStateSize) )
+										if (raw->unserialize(info->statedata, oldStateSize))
 											info->runninglibretrocores->last_msg = "State Loaded";
 									}
 								}
@@ -1826,15 +2159,13 @@ unsigned MyThread(void *params)
 
 							bDidRun = true;
 
-							//DevMsg("Pt B\n");
 						}
 					}
 					else
 					{
 						info->runninglibretrocores->last_error = "Game Load Failed";
-						info->state = 6;
+						info->close = true;
 					}
-					//	DevMsg("cuatro\n");
 				}
 			}
 			else if (state == 5)
@@ -1843,153 +2174,89 @@ unsigned MyThread(void *params)
 				{
 					info->reset = false;
 					info->paused = false;
-					info->raw->reset();
+
+					// Make GL context current before reset (retro_reset may do GL ops)
+					if (AA_LIBRETRO_3D && info->gl_context && info->context_type != RETRO_HW_CONTEXT_NONE)
+					{
+						LibretroGLContext* gl_ctx = (LibretroGLContext*)info->gl_context;
+						if (gl_ctx->hglrc)
+							wglMakeCurrent(gl_ctx->hdc, gl_ctx->hglrc);
+						if (gl_ctx->framebuffer)
+							glBindFramebuffer(GL_FRAMEBUFFER, gl_ctx->framebuffer);
+					}
+
+					if (!SafeCallCore(info->raw->reset))
+					{
+						WorkerDbgMsg("libretro: CRITICAL - Core crashed during reset!\n");
+						info->runninglibretrocores->last_error = "Core Crashed";
+						bCoreCrashed = true;
+						info->state = 6;
+						break;
+					}
 				}
 				else if (!info->paused)
 				{
-					/*
-					if (!info->processingaudio)
+
+					// Make GL context current on worker thread if using hardware rendering
+					if (AA_LIBRETRO_3D && info->gl_context && info->context_type != RETRO_HW_CONTEXT_NONE)
 					{
-					info->processingaudio = true;
-					info->raw->run();
+						LibretroGLContext* gl_ctx = (LibretroGLContext*)info->gl_context;
+						if (gl_ctx->hglrc)
+							wglMakeCurrent(gl_ctx->hdc, gl_ctx->hglrc);
+
+						// Pre-bind our FBO so cores that don't call get_current_framebuffer()
+						// (or cache a stale FBO 0) still render to the correct target.
+						if (gl_ctx->framebuffer)
+							glBindFramebuffer(GL_FRAMEBUFFER, gl_ctx->framebuffer);
 					}
-					*/
-					//DevMsg("Pt C\n");
 
-					info->raw->run();
-					/*info->runs++;
-
-					while (info->fastforward)// && info->runs < info->startruns)
+					if (!SafeRunCore(info->raw))
 					{
-						info->raw->run();
-						info->runs++;
+						WorkerDbgMsg("libretro: CRITICAL - Core crashed during run! Exception code caught by SEH.\n");
+						info->runninglibretrocores->last_error = "Core Crashed";
+						bCoreCrashed = true;
+						info->state = 6;
+						break;
+					}
 
-						if (info->runs >= info->startruns)
-							info->fastforward = false;
-					}*/
-
-					if (AA_LIBRETRO_3D)
+					// Frame pacing: wait if ring buffer is filling up (audio-driven throttle)
+					// This replaces the implicit pacing that the old blocking Pa_WriteStream provided.
+					if (info->pAudioRingBuffer && info->audiostream)
 					{
-						/*
-						info->lastrendered = gpGlobals->curtime;
-
-						if (info->readyfornextframe && !info->copyingframe)
+						unsigned int nThreshold = 2048; // Target ~21ms max latency at 48kHz stereo
+						while (!info->close && !info->paused &&
+							RingBuf_Available(info->pAudioRingBuffer) > nThreshold)
 						{
-							info->readyfornextframe = false;
-							info->readytocopyframe = false;
-
-							if (info->samplerate == 0)
-							{
-								DevMsg("Get AV info\n");
-								struct retro_system_av_info avinfo;
-								info->raw->get_system_av_info(&avinfo);
-
-								if (avinfo.timing.sample_rate > 0)
-								{
-									info->samplerate = int(avinfo.timing.sample_rate);
-									info->framerate = int(avinfo.timing.fps);
-									C_LibretroInstance::CreateAudioStream();
-								}
-							}
-
-
-							//glDisable(GL_DEPTH_TEST); // here for illustrative purposes, depth test is initially DISABLED (key!)
-							//glClearColor(0.3f, 0.4f, 0.1f, 1.0f);
-							//glClear(GL_COLOR_BUFFER_BIT);
-							//glfwMakeContextCurrent(info->window);
-							//glfwSwapBuffers(info->window);
-							//glfwPollEvents();	// this is what makes the window actually be responsive
-
-
-							//WORD red_mask = 0xF800;
-							//WORD green_mask = 0x7E0;
-							//WORD blue_mask = 0x1F;
-
-							//DevMsg("Doin it\n");
-
-							//DevMsg("video refresh\n");
-
-							unsigned int width = info->lastframewidth;
-							unsigned int height = info->lastframeheight;
-							size_t pitch = info->lastframepitch;
-							if (!info->lastframedata)
-								info->lastframedata = malloc(pitch*height);
-							//void* dest = malloc(pitch*height);
-							if (AA_LIBRETRO_3D && info->context_type != RETRO_HW_CONTEXT_NONE)
-							{
-								//DevMsg("Format is: %i %i x %i\n", info->videoformat, pitch, height);
-								//glfwSwapBuffers(info->window);
-								glReadPixels(0, 0, pitch / 3, height, GL_RGB, GL_UNSIGNED_BYTE, info->lastframedata);// GL_RGBA8
-								//glfwSwapBuffers(info->window);
-							}
-
-							//if (info->lastframedata)
-								//free(info->lastframedata);
-
-							//info->lastframedata = dest;
-							info->readytocopyframe = true;
+							Sleep(1);
 						}
-						*/
+					}
+					else if (info->framerate > 0)
+					{
+						// No audio stream -- coarse timer-based pacing fallback
+						Sleep((DWORD)(1000.0f / info->framerate));
 					}
 
 					if (bIsInit)
 						info->state = 6;
-					/*
-					if (info->window)
-					{
-					//DevMsg("Pt 1\n");
-					// background color
-					glDisable(GL_DEPTH_TEST); // here for illustrative purposes, depth test is initially DISABLED (key!)
-					glClearColor(0.3f, 0.4f, 0.1f, 1.0f);
-					glClear(GL_COLOR_BUFFER_BIT);
-					//DevMsg("Pt 2\n");
-					glfwSwapBuffers(info->window);
-					//DevMsg("Pt 3\n");
-					glfwPollEvents();
-					//DevMsg("Pt 4\n");
-					}
-					*/
-
-					/*
-					bool bShouldRender = false;
-					if (lastFrameNumber != gpGlobals->framecount)
-					{
-					lastFrameNumber = gpGlobals->framecount;
-
-					if (info->framerate == 0)
-					bShouldRender = true;
-					else
-					{
-					float dif = 1 / (info->framerate * 1.0);
-					if (gpGlobals->curtime - info->lastrendered >= dif * 1.5 || true)	// sense the blocking audio API is being used, we should render every chance we get to be synced to audio.
-					bShouldRender = true;
-					}
-
-					if (bShouldRender)
-					{
-					//				info->lastrendered = gpGlobals->curtime;
-					//				if (info->readyfornextframe)
-					info->raw->run();
-					}
-					}
-					*/
 				}
 			}
 			else if (state == 6) // waiting to die (requested by the libretro core)
 			{
-				// do nothing
+				Sleep(16);	// ~60Hz check, avoid burning CPU while waiting for close signal
 			}
 		}
 	}
 
+	// Restore default Sleep() resolution (only if we called timeBeginPeriod)
+	if (bDidTimeBegin)
+		timeEndPeriod(1);
+
 	if (info)
 	{
 		// save any current state contained in the core to a file.
-		if (bDidRun)
+		// Skip if core crashed -- calling serialize() on corrupted state would hang or produce garbage.
+		if (bDidRun && !bCoreCrashed && !info->bForceShutdown)
 		{
-			//g_pFullFileSystem->
-			//filesystem->WriteFile(char* name, char* path, CUtlBuffer &buf)
-
 			if (info->statesize > 0 && info->settings && info->settings->GetBool("statesaves"))
 			{
 				info->raw->serialize(info->statedata, info->statesize);
@@ -2020,21 +2287,95 @@ unsigned MyThread(void *params)
 
 		info->statesize = 0;
 
-		// clean up the memory
-		if (bDidLoadDll)//info->module)
+		// Call core's context_destroy callback before unload (needs GL context active and raw valid)
+		// Skip if core crashed -- calling into corrupted core state can deadlock.
+		if (AA_LIBRETRO_3D && info->gl_context && info->raw && info->raw->context_destroy && !bCoreCrashed && !info->bForceShutdown)
 		{
-			Sys_UnloadModule(pModule);
-			DevMsg("Unloaded Libretro core.\n");
+			LibretroGLContext* gl_ctx = (LibretroGLContext*)info->gl_context;
+			if (gl_ctx->hglrc)
+			{
+				WorkerDbgMsg("libretro: Calling core's context_destroy callback...\n");
+				wglMakeCurrent(gl_ctx->hdc, gl_ctx->hglrc);
+				info->raw->context_destroy();
+			}
 		}
 
-		if (info->lastframedata)
-			free(info->lastframedata);
-
-		/*if (AA_LIBRETRO_3D && info->framebuffer)
+		// Properly shut down the libretro core before unloading DLL
+		// Skip if core crashed -- unload_game/deinit on corrupted state can deadlock (SEH can't catch that).
+		// Only call if init() actually succeeded (bDidInit) -- calling on uninitialized core is undefined.
+		if (info->bDidInit && info->raw && !bCoreCrashed && !info->bForceShutdown)
 		{
-			//glBindFramebuffer(GL_FRAMEBUFFER, 0);
-			//glDeleteFramebuffers(1, &info->framebuffer);
-		}*/
+			if (info->raw->unload_game)
+			{
+				if (!SafeCallCore(info->raw->unload_game))
+					WorkerDbgMsg("libretro: WARNING - unload_game crashed\n");
+			}
+			if (info->raw->deinit)
+			{
+				if (!SafeCallCore(info->raw->deinit))
+					WorkerDbgMsg("libretro: WARNING - deinit crashed\n");
+			}
+		}
+
+		// Destroy audio stream after core shutdown calls.
+		// Must happen AFTER unload_game/deinit because cores may call cbAudioSampleBatch
+		// during shutdown (e.g. to flush audio buffers). Destroying audio first causes the
+		// callback to return 0, which some cores interpret as "blocked" and busy-wait.
+		if (info->audiostream)
+		{
+			C_LibretroInstance::DestroyAudioStream(info);
+		}
+
+		// Unload the DLL.
+		// Skip if core crashed -- FreeLibrary can deadlock on the loader lock
+		// if the DLL has internal threads that haven't exited. Leaking the DLL
+		// is acceptable; the address space cost is small and reclaimed on process exit.
+		if (bDidLoadDll && !bCoreCrashed && !info->bForceShutdown)
+		{
+			Sys_UnloadModule(pModule);
+			WorkerDbgMsg("Unloaded Libretro core.\n");
+		}
+		else if (bDidLoadDll && (bCoreCrashed || info->bForceShutdown))
+		{
+			WorkerDbgMsg("libretro: Skipping DLL unload -- %s (DLL leaked to avoid deadlock)\n",
+				bCoreCrashed ? "core crashed" : "force shutdown");
+		}
+
+		// Free the raw function pointer struct (allocated in Init, function pointers are invalid after DLL unload)
+		if (info->raw)
+		{
+			delete info->raw;
+			info->raw = NULL;
+		}
+
+		// NOTE: lastframedata is NOT freed here - destructor needs it for snapshot saving
+		// It will be freed in CleanUpTexture() after the snapshot is saved
+
+		// Clear active HW instance pointer before GL cleanup
+		if (s_pActiveHWInstance && s_pActiveHWInstance->GetInfo() == info)
+			s_pActiveHWInstance = null;
+
+		// Clean up OpenGL resources if hardware rendering was used.
+		// Uses SEH wrapper since GL driver state may be corrupted after a core crash.
+		if (AA_LIBRETRO_3D && info->gl_context)
+		{
+			LibretroGLContext* gl_ctx = (LibretroGLContext*)info->gl_context;
+
+			if (gl_ctx->hglrc)
+			{
+				WorkerDbgMsg("libretro: Cleaning up OpenGL resources...\n");
+
+				if (!SafeCleanupGL(gl_ctx))
+				{
+					WorkerDbgMsg("libretro: GL cleanup failed, attempting fallback...\n");
+					SafeCleanupGLFallback(gl_ctx);
+				}
+			}
+
+			// Free the context struct (always -- this is our memory)
+			delete gl_ctx;
+			info->gl_context = NULL;
+		}
 
 		info->libretrokeybinds->deleteThis();
 		info->corekeybinds->deleteThis();
@@ -2043,11 +2384,31 @@ unsigned MyThread(void *params)
 		info->coreCoreOptions->deleteThis();
 		info->gameCoreOptions->deleteThis();
 
-		delete info->memorymap;
-		delete info;
+		// Clean up allocated variable strings to prevent memory leaks
+		for (unsigned int i = 0; i < info->allocated_variable_strings.size(); i++)
+		{
+			delete[] info->allocated_variable_strings[i];
+		}
+		info->allocated_variable_strings.clear();
 
-		pRunningLibretroCores->count--;
+		// Clean up allocated game_info_ext structures
+		for (unsigned int i = 0; i < info->allocated_game_info_ext.size(); i++)
+		{
+			delete info->allocated_game_info_ext[i];
+		}
+		info->allocated_game_info_ext.clear();
+
+		delete info->memorymap;
+		// NOTE: info struct is NOT deleted here - destructor needs it for snapshot saving
+		// It will be deleted in the destructor after CleanUpTexture() completes
+
+		InterlockedDecrement(&pRunningLibretroCores->count);
 	}
+
+	// Signal main thread that worker is completely done
+	// Save handle before delete since info is freed above
+	if (hDoneEvent)
+		SetEvent((HANDLE)hDoneEvent);
 
 	return 0;
 }
@@ -2092,47 +2453,28 @@ void C_LibretroInstance::Close()
 
 void C_LibretroInstance::GetFullscreenInfo(float& fPositionX, float& fPositionY, float& fSizeX, float& fSizeY, std::string& overlayId)
 {
-	fPositionX = m_pOverlayKV->GetFloat("current/x", 0);// m_fPositionX;
-	fPositionY = m_pOverlayKV->GetFloat("current/y", 0);// m_fPositionY;
-	fSizeX = m_pOverlayKV->GetFloat("current/width", 1);// m_fSizeX;
-	fSizeY = m_pOverlayKV->GetFloat("current/height", 1);// m_fSizeY;
-	//file = m_pOverlayKV->GetString("file", "");// m_file;
-	overlayId = m_overlayId;// m_pOverlayKV->GetString("current/overlayId", "");// m_overlayId;
+	fPositionX = m_pOverlayKV->GetFloat("current/x", 0);
+	fPositionY = m_pOverlayKV->GetFloat("current/y", 0);
+	fSizeX = m_pOverlayKV->GetFloat("current/width", 1);
+	fSizeY = m_pOverlayKV->GetFloat("current/height", 1);
+	overlayId = m_overlayId;
 }
 
 bool C_LibretroInstance::CreateWorkerThread(std::string core)
 {
-	/*
-	CSysModule* pModule = Sys_LoadModule(core.c_str());
-
-	if (!pModule)
-	{
-		Msg("Failed to load %s\n", core.c_str());
-		// FIXME FIX ME Probably need to clean up!
-		return false;
-	}
-
-	HMODULE	hModule = reinterpret_cast<HMODULE>(pModule);
-	if (!C_LibretroInstance::BuildInterface(m_raw, &hModule))
-	{
-		DevMsg("libretro: Failed to build interface!\n");
-		// FIXME FIX ME Probably need to clean up!
-		return false;
-	}
-	*/
-
 	std::string corePath = core.substr(0, core.find_last_of("/\\") + 1);
 
 	m_info = new LibretroInstanceInfo_t;
-	//m_info->runs = 0;
-	//m_info->startruns = 6000;
-	//m_info->fastforward = true;
 	m_info->soundAllowed = g_pAnarchyManager->GetLibretroManager()->IsSoundAllowed();
 	m_info->runninglibretrocores = g_pAnarchyManager->GetLibretroManager()->GetLibretroRunningCores();
 	m_info->state = 0;
 	m_info->paused = false;
 	m_info->reset = false;
 	m_info->close = false;
+	m_info->hThreadDoneEvent = CreateEvent(NULL, TRUE, FALSE, NULL);	// manual-reset, initially unsignaled
+	m_info->bForceShutdown = 0;
+	m_info->bDidInit = false;
+	m_info->bCallbacksRegistered = false;
 	m_info->id = "";
 	m_info->ready = false;
 
@@ -2140,9 +2482,9 @@ bool C_LibretroInstance::CreateWorkerThread(std::string core)
 	if (volume > 1.0)
 		volume = 1.0;
 	m_info->volume = volume;
-	m_info->readyfornextframe = true;
-	m_info->copyingframe = false;
-	m_info->readytocopyframe = false;
+	InterlockedExchange(&m_info->readyfornextframe, 1);
+	InterlockedExchange(&m_info->copyingframe, 0);
+	InterlockedExchange(&m_info->readytocopyframe, 0);
 	m_info->coreloaded = false;
 	m_info->gameloaded = false;
 	m_info->raw = m_raw;
@@ -2156,30 +2498,24 @@ bool C_LibretroInstance::CreateWorkerThread(std::string core)
 	m_info->core = core;
 	m_info->game = m_originalGame;
 	m_info->lastframedata = null;
+	m_info->lastframebuffersize = 0;
 	m_info->lastframewidth = 0;
 	m_info->lastframeheight = 0;
 	m_info->lastframepitch = 0;
 	m_info->videoformat = RETRO_PIXEL_FORMAT_UNKNOWN;
 	m_info->optionshavechanged = false;
-	//m_info->numOptions = 0;
-//	m_info->audiobuffer = null;
-//	m_info->audiobuffersize = 1024;
-//	m_info->audiobufferpos = 0;
 	m_info->audiostream = null;
+	m_info->pAudioRingBuffer = NULL;
 	m_info->samplerate = 0;
+	m_info->outputsamplerate = 0;
+	m_info->resampleAccumulator = 0.0;
 	m_info->framerate = 30;
 	m_info->lastrendered = 0;
-//	m_info->audiobuffer = null;
-	//m_info->audiobuffersize = 0;
-	//m_info->audiobufferpos = 0;
-	//m_info->safebuffer = null;
-	//m_info->safebuffersize = 0;
-	//m_info->safebufferpos = 0;
-	m_info->processingaudio = false;
-	/*m_info->window = null;
-	m_info->framebuffer = null;*/
+
+	// OpenGL hardware rendering (allocated on-demand by SET_HW_RENDER handler)
+	m_info->gl_context = NULL;
+
 	m_info->portdata = null;
-	//m_info->currentPortTypes;
 	m_info->numports = 0;
 
 	// hardware acceleration stuff
@@ -2198,6 +2534,19 @@ bool C_LibretroInstance::CreateWorkerThread(std::string core)
 	m_info->valid_extensions = "";
 	m_info->need_fullpath = true;
 	m_info->block_extract = false;
+
+	// content info override support
+	m_info->has_content_overrides = false;
+
+	// extended game info tracking
+	m_info->loaded_full_path = "";
+	m_info->loaded_archive_path = "";
+	m_info->loaded_archive_file = "";
+	m_info->loaded_dir = "";
+	m_info->loaded_name = "";
+	m_info->loaded_ext = "";
+	m_info->loaded_file_in_archive = false;
+	m_info->loaded_persistent_data = false;
 
 	// state stuff
 	m_info->statesize = 0;
@@ -2222,7 +2571,7 @@ bool C_LibretroInstance::CreateWorkerThread(std::string core)
 	// CORE-SPECIFIC KEYBINDS
 	std::string prettyCore = m_info->core;
 	size_t found = prettyCore.find_last_of("/\\");
-	if ( found != std::string::npos )
+	if (found != std::string::npos)
 		prettyCore = prettyCore.substr(found + 1);
 
 	found = prettyCore.find_last_of(".");
@@ -2231,7 +2580,6 @@ bool C_LibretroInstance::CreateWorkerThread(std::string core)
 	prettyCore.erase(std::remove(prettyCore.begin(), prettyCore.end(), '.'), prettyCore.end());
 
 	std::string kvPath = VarArgs("libretro\\user\\%s", prettyCore.c_str());
-	//g_pFullFileSystem->CreateDirHierarchy(kvPath.c_str(), "DEFAULT_WRITE_PATH");
 
 	kv = new KeyValues("keybinds");
 	kv->LoadFromFile(g_pFullFileSystem, VarArgs("%s\\keybinds.key", kvPath.c_str()), "MOD");
@@ -2250,9 +2598,8 @@ bool C_LibretroInstance::CreateWorkerThread(std::string core)
 
 	m_info->prettygame = prettyGame;
 	m_info->prettycore = prettyCore;
-	
+
 	kvPath = VarArgs("libretro\\user\\%s\\%s", prettyCore.c_str(), prettyGame.c_str());
-	//g_pFullFileSystem->CreateDirHierarchy(kvPath.c_str(), "DEFAULT_WRITE_PATH");
 
 	kv = new KeyValues("keybinds");
 	kv->LoadFromFile(g_pFullFileSystem, VarArgs("%s\\keybinds.key", kvPath.c_str()), "MOD");
@@ -2262,7 +2609,6 @@ bool C_LibretroInstance::CreateWorkerThread(std::string core)
 	m_info->inputstate = new KeyValues("keybinds");	// just like the other structs, but holds backbuffer input values instead of source engine key enums.
 
 	// CORE-SPECIFIC OPTIONS
-	//kvPath = VarArgs("libretro\\user\\%s", prettyCore.c_str());
 	kvPath = "libretro\\user\\" + prettyCore + "\\options.key";
 
 	kv = new KeyValues("options");
@@ -2293,88 +2639,20 @@ bool C_LibretroInstance::CreateWorkerThread(std::string core)
 		}
 	}
 
-	//std::string prettyCore = m_info->prettycore;
-	//std::string prettyGame = m_info->prettygame;
 	std::string overlayId = g_pAnarchyManager->GetLibretroManager()->DetermineOverlay(prettyCore, prettyGame);
 	this->SetOverlay(overlayId);
 	g_pAnarchyManager->HudStateNotify();
 
-	m_info->runninglibretrocores->count++;
+	InterlockedIncrement(&m_info->runninglibretrocores->count);
 	g_pAnarchyManager->AddToastMessage(VarArgs("Libretro Opened (%i running)", m_info->runninglibretrocores->count));
 	CreateSimpleThread(MyThread, m_info);
 
-	//ThreadId_t pThreadId = 420L;
-	//CreateSimpleThread(MyThread, m_info, &pThreadId, 0U);
-
-	/*
-	if (!g_CMyAsyncThread.IsAlive())
-		g_CMyAsyncThread.Start();
-
-	if (!g_CMyAsyncThread.IsAlive())
-		DevMsg("CreateAThreadAndCallTheFunction() failed to start the thread!\n");
-
-	// Thread safety: make some local copies! The real ones could be deleted/changed while we execute.
-	char* NewParameter1 = "init";// FUNCTION_THAT_CREATES_A_COPY_OF_THE_MEMORY(Parameter1);
-	char* NewParameter2 = "Another test";// FUNCTION_THAT_CREATES_A_COPY_OF_THE_MEMORY(Parameter1);
-
-	g_CMyAsyncThread.CallThreadFunction(NewParameter1, NewParameter2);
-	g_CMyAsyncThread.CallWorker(CMyAsyncThread::EXIT);
-	*/
 	return true;
 }
-
-/*
-bool CMyAsyncThread::FunctionToBeRunFromInsideTheThread(char* Parameter1, char* Parameter2)
-{
-	if (!Q_strcmp(Parameter1, "init"))
-	{
-		//DevMsg("Thread yo: %s %s\n", Parameter1, Parameter2);
-		C_LibretroInstance* pLibretroInstance = g_pAnarchyManager->GetLibretroManager()->GetSelectedLibretroInstance();
-		if (pLibretroInstance)
-		{
-			libretro_raw* raw = pLibretroInstance->GetRaw();
-			raw->set_environment(&this->cbEnvironment);
-		}
-	}
-	return true;
-}
-
-void CMyAsyncThread::Update()
-{
-	DevMsg("once?\n");
-	C_LibretroInstance* pLibretroInstance = g_pAnarchyManager->GetLibretroManager()->GetSelectedLibretroInstance();
-	if (pLibretroInstance)
-	{
-		DevMsg("Yarbles\n");
-		libretro_raw* raw = pLibretroInstance->GetRaw();
-	//	raw->run();
-	}
-}
-*/
-/*
-unsigned C_LibretroInstance::Worker(void *params)
-{
-	DevMsg("whaaaaat\n");
-}
-*/
-
-/*
-int16_t C_LibretroInstance::GetInputState(LibretroInstanceInfo_t* info, unsigned int port, unsigned int device, unsigned int index, unsigned int id)
-{
-	return g_pAnarchyManager->GetLibretroManager()->GetInputState(info, port, device, index, id);
-}
-*/
-/*
-void C_LibretroInstance::cbRetroFrameTime(retro_usec_t usec)
-{
-	DevMsg("Value: %llu\n", (uint64)usec);
-}
-*/
 void C_LibretroInstance::cbMessage(enum retro_log_level level, const char * fmt, ...)
 {
 	va_list args;
 
-	//char* msg = new char[AA_MAX_STRING];
 	char msg[AA_MAX_STRING];
 
 	va_start(args, fmt);
@@ -2385,23 +2663,8 @@ void C_LibretroInstance::cbMessage(enum retro_log_level level, const char * fmt,
 	if (buf.at(buf.length() - 1) != '\n')
 		buf += "\n";
 
-	DevMsg("libretro: %s", buf.c_str());
-
-	//delete[] msg;
+	WorkerDbgMsg("libretro: %s", buf.c_str());
 }
-
-///*
-HMODULE GetCurrentModule()
-{ // NB: XP+ solution!
-	HMODULE hModule = NULL;
-	GetModuleHandleEx(
-		GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
-		(LPCTSTR)GetCurrentModule,
-		&hModule);
-
-	return hModule;
-}
-//*/
 
 // http://stackoverflow.com/questions/215963/how-do-you-properly-use-widechartomultibyte
 // Convert a wide Unicode string to an UTF8 string
@@ -2436,69 +2699,68 @@ const char* GetFormatName(int format)
 		return "UNKOWN";
 }
 
-/*
-retro_hw_context_reset_t context_destroy;
-
-void v3d_context_destroy()
-{
-	DevMsg("Destroy the context!\n");
-}
-
-void v3d_context_reset()
-{
-	DevMsg("Reset the context!\n");
-}
-*/
-
-/*
 static retro_proc_address_t v3d_get_proc_address(const char * sym)
 {
-	//DevMsg("Getting proc address for %s\n", sym);
-	GLFWglproc proc = glfwGetProcAddress(sym);
-	//DevMsg("Found proc: %u\n", (bool)(proc));
-	return proc;
-	//return 0;
+	// First try wglGetProcAddress for OpenGL extensions
+	PROC proc = wglGetProcAddress(sym);
+
+	// If NULL, try GetProcAddress for core OpenGL 1.1 functions
+	// (wglGetProcAddress only works for extensions on Windows)
+	if (!proc)
+	{
+		HMODULE opengl32 = GetModuleHandleA("opengl32.dll");
+		if (opengl32)
+			proc = GetProcAddress(opengl32, sym);
+	}
+
+	return (retro_proc_address_t)proc;
 }
-*/
 
-//static uintptr_t v3d_get_current_framebuffer()
-//{
-	//return 0;
-	//return 0;	// alcaro says this is related to shaders, and even tho cores don't explicity expect 0 as a response, they handle it well.
-
-	//DevMsg("Getting frame buffer...\n");
-	//return (uintptr_t)0;
-	/*
-	uint uId = ThreadGetCurrentId();
-	C_LibretroInstance* pLibretroInstance = g_pAnarchyManager->GetLibretroManager()->FindLibretroInstance(uId);
+static uintptr_t v3d_get_current_framebuffer()
+{
+	// Use the global active HW instance pointer instead of thread-ID lookup.
+	// Cores like PPSSPP call this from internal rendering threads that don't
+	// match our registered worker thread ID -- thread-ID lookup returns null
+	// and we'd return 0 (FBO 0 = hidden window backbuffer), causing black screen.
+	C_LibretroInstance* pLibretroInstance = s_pActiveHWInstance;
 
 	if (!pLibretroInstance)
-		return false;
+	{
+		// Fallback: thread-ID lookup (works for well-behaved single-threaded cores)
+		uint uId = ThreadGetCurrentId();
+		pLibretroInstance = g_pAnarchyManager->GetLibretroManager()->FindLibretroInstance(uId);
+	}
+
+	if (!pLibretroInstance)
+	{
+		WorkerDbgMsg("libretro: WARNING - get_current_framebuffer called but no active HW instance (thread %u)\n", ThreadGetCurrentId());
+		return 0;
+	}
 
 	LibretroInstanceInfo_t* info = pLibretroInstance->GetInfo();
 
-	DevMsg("2nd pitt stop: %u\n", info->framebuffer);
+	if (info->gl_context && info->context_type != RETRO_HW_CONTEXT_NONE)
+	{
+		LibretroGLContext* gl_ctx = (LibretroGLContext*)info->gl_context;
 
-//	int width, height;
-//	glfwGetFramebufferSize(info->window, &width, &height);
-//	DevMsg("Width: %i Height: %i\n", width, height);
+		// One-time diagnostic: log FBO handle and thread info
+		static bool s_bLoggedFBO = false;
+		if (!s_bLoggedFBO)
+		{
+			WorkerDbgMsg("libretro: get_current_framebuffer() returning FBO %u (calling thread %u)\n",
+				gl_ctx->framebuffer, ThreadGetCurrentId());
+			s_bLoggedFBO = true;
+		}
 
-	return (uintptr_t)info->framebuffer;//(uintptr_t)GL_FRAMEBUFFER;// (uintptr_t)info->framebuffer;// info->framebuffer;
-	//return GL_FRAMEBUFFER;// info->framebuffer;// GL_FRAMEBUFFER;// glfwGetCurrentContext();
-	*/
-//}
+		return (uintptr_t)gl_ctx->framebuffer;
+	}
 
-/*
-void framebuffer_size_callback(GLFWwindow* window, int width, int height)
-{
-	DevMsg("OpenGL framebuffer size has changed to: %i x %i\n", width, height);
-	glViewport(0, 0, width, height);
+	return 0;
 }
-*/
+
 
 bool set_rumble_state(unsigned port, enum retro_rumble_effect effect, uint16_t strength)
 {
-	//DevMsg("libretro: Ignoring %s rumble effect on port %u w/ strength %u\n", (effect == 0) ? "STRONG" : "WEAK", port, strength);
 	return true;
 }
 
@@ -2512,20 +2774,18 @@ bool C_LibretroInstance::cbEnvironment(unsigned cmd, void* data)
 
 	LibretroInstanceInfo_t* info = pLibretroInstance->GetInfo();
 
-	//	DevMsg("libretro: Environment called %u.\n", (unsigned int)cmd);
-
 	//1 SET_ROTATION, no known supported core uses that. Cores are expected to deal with failures, anyways.
 	//2 GET_OVERSCAN, I have no opinion. Use the default.
 	if (cmd == RETRO_ENVIRONMENT_GET_OVERSCAN) //2
 	{
-		DevMsg("libretro: Asking frontend if overscan should be included or cropped.\n");
+		WorkerDbgMsg("libretro: Asking frontend if overscan should be included or cropped.\n");
 		*(bool*)data = false;
 		return true;
 	}
 
 	if (cmd == RETRO_ENVIRONMENT_GET_CAN_DUPE) //3
 	{
-		DevMsg("libretro: Asking frontend if CAN_DUPE.\n");
+		WorkerDbgMsg("libretro: Asking frontend if CAN_DUPE.\n");
 		*(bool*)data = true;
 		return true;
 	}
@@ -2537,7 +2797,15 @@ bool C_LibretroInstance::cbEnvironment(unsigned cmd, void* data)
 	{
 		const struct retro_message* msg = (const struct retro_message*)data;
 		std::string text = msg->msg;
-		DevMsg("libretro: Set Message (%u): %s\n", msg->frames, text.c_str());
+		WorkerDbgMsg("libretro: Set Message (%u): %s\n", msg->frames, text.c_str());
+		return true;
+	}
+
+	if (cmd == 60) // RETRO_ENVIRONMENT_SET_MESSAGE_EXT
+	{
+		const struct retro_message_ext* msg = (const struct retro_message_ext*)data;
+		if (msg && msg->msg)
+			WorkerDbgMsg("libretro: Set Message Ext: %s (duration=%ums, level=%d, target=%d)\n", msg->msg, msg->duration, msg->level, msg->target);
 		return true;
 	}
 
@@ -2545,9 +2813,7 @@ bool C_LibretroInstance::cbEnvironment(unsigned cmd, void* data)
 	//8 SET_PERFORMANCE_LEVEL, ignored because I don't support a wide range of powers.
 	if (cmd == RETRO_ENVIRONMENT_GET_CORE_ASSETS_DIRECTORY || cmd == RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY || cmd == RETRO_ENVIRONMENT_GET_LIBRETRO_PATH || cmd == RETRO_ENVIRONMENT_GET_CONTENT_DIRECTORY || cmd == RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY) // note that libretro path might be wanting a full file location including extension, but ignore that for now and treat it like the others.
 	{
-		// FIXME: MEMORY LEAK
-		// FIXME: there needs to be book keeping so that these temp const char*'s can be cleaned up!!!
-		DevMsg("String requested...\n");
+		WorkerDbgMsg("String requested...\n");
 		std::string folder;
 
 		if (cmd == RETRO_ENVIRONMENT_GET_CORE_ASSETS_DIRECTORY || cmd == RETRO_ENVIRONMENT_GET_CONTENT_DIRECTORY)
@@ -2565,59 +2831,27 @@ bool C_LibretroInstance::cbEnvironment(unsigned cmd, void* data)
 		char* buf = new char[AA_MAX_STRING];
 		Q_strcpy(buf, folder.c_str());
 
+		// Track this allocation for later cleanup
+		info->allocated_variable_strings.push_back(buf);
+
 		//V_FixSlashes(buf, '/');
 
-		DevMsg("libretro: Returning string for ");
+		WorkerDbgMsg("libretro: Returning string for ");
 		if (cmd == RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY)
-			DevMsg("system");
+			WorkerDbgMsg("system");
 		else if (cmd == RETRO_ENVIRONMENT_GET_LIBRETRO_PATH)
-			DevMsg("libretro");
+			WorkerDbgMsg("libretro");
 		else if (cmd == RETRO_ENVIRONMENT_GET_CORE_ASSETS_DIRECTORY)
-			DevMsg("core assets");
+			WorkerDbgMsg("core assets");
 		else if (cmd == RETRO_ENVIRONMENT_GET_CONTENT_DIRECTORY)
-			DevMsg("content");
+			WorkerDbgMsg("content");
 
-		DevMsg(" directory %s\n", buf);
+		WorkerDbgMsg(" directory %s\n", buf);
 
 		(*(const char**)data) = buf;
 
-		//delete[] buf;		// Are we SURE we don't have to delete this on our end now? We probably do not. The core probably manages it from here on in.
 		return true;
 	}
-
-	/*
-	if (cmd == RETRO_ENVIRONMENT_SET_VARIABLES)//16
-	{
-		//HMODULE hModule = GetCurrentModule();	// client.dll
-		//HINSTANCE hInstance = GetModuleHandle(0);	// AArcade.exe
-		WCHAR  cwBuffer[2048] = { 0 };
-		LPWSTR pszBuffer = cwBuffer;
-		DWORD  dwMaxChars = _countof(cwBuffer);
-		DWORD  dwLength = 0;
-
-		GetModuleFileNameW(hModule, pszBuffer, dwMaxChars);
-
-		std::wstring wString = cwBuffer;
-		std::string result = utf8_encode(wString);
-		DevMsg("Result: %s\n", result.c_str());
-
-		//long threadId = GetCurrentThreadId();
-		//DevMsg("ID is: %l\n", threadId);
-		//ThreadSetDebugName()
-
-		//DevMsg("Value is: %s\n", m_info->id.c_str());
-//		GetThreadHandle();
-
-		if (ThreadInMainThread())
-			DevMsg("MAIN THREAD!\n");
-		else
-			DevMsg("CHILD THREAD!\n");
-
-		uint uId = ThreadGetCurrentId();
-		C_LibretroInstance* pLibretroInstance = g_pAnarchyManager->GetLibretroManager()->FindLibretroInstance(uId);
-		DevMsg("Size is: %i\n", pLibretroInstance->GetInfo()->options.size());
-	}
-	*/
 
 	if (cmd == RETRO_ENVIRONMENT_SET_PIXEL_FORMAT) //10
 	{
@@ -2625,341 +2859,345 @@ bool C_LibretroInstance::cbEnvironment(unsigned cmd, void* data)
 		if (newfmt == RETRO_PIXEL_FORMAT_0RGB1555 || newfmt == RETRO_PIXEL_FORMAT_XRGB8888 ||
 			newfmt == RETRO_PIXEL_FORMAT_RGB565)
 		{
-			DevMsg("libretro: Setting video format to %s\n", GetFormatName(newfmt));
+			WorkerDbgMsg("libretro: Setting video format to %s\n", GetFormatName(newfmt));
 			info->videoformat = newfmt;
 			return true;
 		}
 		else
 		{
-			DevMsg("libretro: Failed at setting video to format %s\n", GetFormatName(newfmt));
+			WorkerDbgMsg("libretro: Failed at setting video to format %s\n", GetFormatName(newfmt));
 			return false;
 		}
 	}
 
 	if (cmd == RETRO_ENVIRONMENT_SET_HW_RENDER) //14
 	{
+		// Check if hardware rendering is enabled (controlled by AA_LIBRETRO_3D define)
 		if (!AA_LIBRETRO_3D)
 		{
-			DevMsg("libretro: Denying request for OpenGL context.\n");
+			WorkerDbgMsg("libretro: Hardware rendering disabled (AA_LIBRETRO_3D not defined), denying HW context request\n");
 			return false;
+		}
+
+		// ffmpeg core doesn't need hardware rendering - deny it unless AA_LIBRETRO_FFMPEG_3D_ALLOWED is set
+		if (!AA_LIBRETRO_FFMPEG_3D_ALLOWED && info->core.find("ffmpeg") != std::string::npos)
+		{
+			WorkerDbgMsg("libretro: Denying hardware context for ffmpeg core (AA_LIBRETRO_FFMPEG_3D_ALLOWED is false)\n");
+			return false;
+		}
+
+		WorkerDbgMsg("libretro: Core requesting HW context: ");
+
+		struct retro_hw_render_callback * render = (struct retro_hw_render_callback*)data;
+
+		// Store core's lifecycle callbacks
+		info->raw->context_reset = (retro_hw_context_reset_t)render->context_reset;
+		info->raw->context_destroy = (retro_hw_context_reset_t)render->context_destroy;
+
+		// Store rendering configuration
+		info->context_type = render->context_type;
+		info->depth = render->depth;
+		info->stencil = render->stencil;
+		info->bottom_left_origin = render->bottom_left_origin;
+		info->cache_context = render->cache_context;
+		info->debug_context = render->debug_context;
+
+		// Determine GL API type and version
+		switch (info->context_type)
+		{
+		case RETRO_HW_CONTEXT_NONE:
+			WorkerDbgMsg("NONE (UNSUPPORTED)\n");
+			info->version_major = 0;
+			info->version_minor = 0;
+			break;
+
+		case RETRO_HW_CONTEXT_OPENGL:
+			WorkerDbgMsg("OpenGL (2.x)\n");
+			info->version_major = 2;
+			info->version_minor = 0;
+			break;
+
+		case RETRO_HW_CONTEXT_OPENGLES2:
+			WorkerDbgMsg("OpenGL ES (2.0)\n");
+			info->version_major = 2;
+			info->version_minor = 0;
+			break;
+
+		case RETRO_HW_CONTEXT_OPENGL_CORE:
+			WorkerDbgMsg("OpenGL (%u.%u)\n", render->version_major, render->version_minor);
+			info->version_major = render->version_major;
+			info->version_minor = render->version_minor;
+			break;
+
+		case RETRO_HW_CONTEXT_OPENGLES3:
+			WorkerDbgMsg("OpenGL ES (3.0)\n");
+			info->version_major = 3;
+			info->version_minor = 0;
+			break;
+
+		case RETRO_HW_CONTEXT_OPENGLES_VERSION:
+			WorkerDbgMsg("OpenGL ES (%u.%u)\n", render->version_major, render->version_minor);
+			info->version_major = render->version_major;
+			info->version_minor = render->version_minor;
+			break;
+
+		case RETRO_HW_CONTEXT_VULKAN:
+			WorkerDbgMsg("Vulkan (UNSUPPORTED)\n");
+			info->version_major = 0;
+			info->version_minor = 0;
+			break;
+
+		default:
+			WorkerDbgMsg("UNKNOWN (UNSUPPORTED)\n");
+			info->version_major = 0;
+			info->version_minor = 0;
+			break;
+		}
+
+		WorkerDbgMsg("\tdepth: %i\n", info->depth);
+		WorkerDbgMsg("\tstencil: %i\n", info->stencil);
+		WorkerDbgMsg("\tbottom_left_origin: %i\n", info->bottom_left_origin);
+		WorkerDbgMsg("\tversion_major: %u\n", info->version_major);
+		WorkerDbgMsg("\tversion_minor: %u\n", info->version_minor);
+		WorkerDbgMsg("\tcache_context: %i\n", info->cache_context);
+		WorkerDbgMsg("\tdebug_context: %i\n", info->debug_context);
+
+		// Allocate GL context structure if needed
+		if (!info->gl_context)
+		{
+			info->gl_context = new LibretroGLContext();
+			memset(info->gl_context, 0, sizeof(LibretroGLContext));
+		}
+
+		// Initialize GLFW and create OpenGL context
+		// Create a hidden dummy window for WGL context
+		LibretroGLContext* gl_ctx = (LibretroGLContext*)info->gl_context;
+
+		WNDCLASSA wc = {};
+		wc.style = CS_OWNDC;
+		wc.lpfnWndProc = DefWindowProcA;
+		wc.lpszClassName = "AArcadeGLHelper";
+		RegisterClassA(&wc);
+
+		gl_ctx->hwnd = CreateWindowExA(
+			0, "AArcadeGLHelper", "AArcade OpenGL Helper",
+			WS_POPUP, 0, 0, 1, 1,
+			NULL, NULL, NULL, NULL
+			);
+
+		if (!gl_ctx->hwnd)
+		{
+			WorkerDbgMsg("libretro: Failed to create dummy window.\n");
+			return false;
+		}
+
+		gl_ctx->hdc = GetDC(gl_ctx->hwnd);
+		if (!gl_ctx->hdc)
+		{
+			WorkerDbgMsg("libretro: Failed to get device context.\n");
+			DestroyWindow(gl_ctx->hwnd);
+			return false;
+		}
+
+		// Set up pixel format
+		PIXELFORMATDESCRIPTOR pfd = {};
+		pfd.nSize = sizeof(PIXELFORMATDESCRIPTOR);
+		pfd.nVersion = 1;
+		pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
+		pfd.iPixelType = PFD_TYPE_RGBA;
+		pfd.cColorBits = 32;
+		pfd.cDepthBits = info->depth ? 24 : 0;
+		pfd.cStencilBits = info->stencil ? 8 : 0;
+		pfd.iLayerType = PFD_MAIN_PLANE;
+
+		int pixelFormat = ChoosePixelFormat(gl_ctx->hdc, &pfd);
+		if (!pixelFormat)
+		{
+			WorkerDbgMsg("libretro: Failed to choose pixel format.\n");
+			ReleaseDC(gl_ctx->hwnd, gl_ctx->hdc);
+			DestroyWindow(gl_ctx->hwnd);
+			return false;
+		}
+
+		if (!SetPixelFormat(gl_ctx->hdc, pixelFormat, &pfd))
+		{
+			WorkerDbgMsg("libretro: Failed to set pixel format.\n");
+			ReleaseDC(gl_ctx->hwnd, gl_ctx->hdc);
+			DestroyWindow(gl_ctx->hwnd);
+			return false;
+		}
+
+		// Create a temporary context for GLEW initialization
+		HGLRC tempContext = wglCreateContext(gl_ctx->hdc);
+		if (!tempContext)
+		{
+			WorkerDbgMsg("libretro: Failed to create temporary GL context.\n");
+			ReleaseDC(gl_ctx->hwnd, gl_ctx->hdc);
+			DestroyWindow(gl_ctx->hwnd);
+			return false;
+		}
+
+
+		wglMakeCurrent(gl_ctx->hdc, tempContext);
+
+		// Initialize GLEW
+		glewExperimental = GL_TRUE;
+		GLenum glewError = glewInit();
+		if (glewError != GLEW_OK)
+		{
+			WorkerDbgMsg("libretro: Failed to initialize GLEW: %s\n", glewGetErrorString(glewError));
+			wglMakeCurrent(NULL, NULL);
+			wglDeleteContext(tempContext);
+			ReleaseDC(gl_ctx->hwnd, gl_ctx->hdc);
+			DestroyWindow(gl_ctx->hwnd);
+			return false;
+		}
+
+		// Create the actual context with specific version if needed
+		if (info->version_major > 2 && WGLEW_ARB_create_context)
+		{
+			// Use wglCreateContextAttribsARB for OpenGL 3.0+ contexts
+			int attribs[] = {
+				WGL_CONTEXT_MAJOR_VERSION_ARB, (int)info->version_major,
+				WGL_CONTEXT_MINOR_VERSION_ARB, (int)info->version_minor,
+				WGL_CONTEXT_FLAGS_ARB, info->debug_context ? WGL_CONTEXT_DEBUG_BIT_ARB : 0,
+				WGL_CONTEXT_PROFILE_MASK_ARB, WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
+				0
+			};
+
+			gl_ctx->hglrc = wglCreateContextAttribsARB(gl_ctx->hdc, NULL, attribs);
+			if (!gl_ctx->hglrc)
+			{
+				WorkerDbgMsg("libretro: Failed to create versioned GL context, using compatibility context...\n");
+				gl_ctx->hglrc = tempContext;
+				tempContext = NULL;
+			}
+			else
+			{
+				wglMakeCurrent(NULL, NULL);
+				wglDeleteContext(tempContext);
+				wglMakeCurrent(gl_ctx->hdc, gl_ctx->hglrc);
+			}
 		}
 		else
 		{
-			DevMsg("libretro: Core requesting HW context: ");
-			/*
-			struct retro_hw_render_callback * render = (struct retro_hw_render_callback*)data;
-			//render->get_current_framebuffer = v3d_get_current_framebuffer;
-			//render->get_proc_address = v3d_get_proc_address;
+			// Use the temporary context for OpenGL 2.x
+			gl_ctx->hglrc = tempContext;
+		}
 
-			info->raw->context_reset = (retro_hw_context_reset_t)render->context_reset;
-			info->raw->context_destroy = (retro_hw_context_reset_t)render->context_destroy;
-			info->context_type = render->context_type;
-			info->depth = render->depth;
-			info->stencil = render->stencil;
-			info->bottom_left_origin = render->bottom_left_origin;
-			//info->version_major;
-			//info->version_minor;
-			info->cache_context = render->cache_context;
-			info->debug_context = render->debug_context;
-
-			//GLFW_ORIGIN_UL_BIT;
-			//glfwReadImage with the GLFW_ORIGIN_UL_BIT
-
-			unsigned api;
-			switch (info->context_type)
-			{
-				case RETRO_HW_CONTEXT_NONE:
-					DevMsg("NONE (UNSUPPORTED)\n");
-					api = GLFW_NO_API;
-					info->version_major = 0;
-					info->version_minor = 0;
-					break;
-
-				case RETRO_HW_CONTEXT_OPENGL:
-					DevMsg("OpenGL (2.x)\n");
-					api = GLFW_OPENGL_API;
-					info->version_major = 2;
-					info->version_minor = 0;
-					break;
-
-				case RETRO_HW_CONTEXT_OPENGLES2:
-					DevMsg("OpenGL ES (2.0)\n");
-					api = GLFW_OPENGL_ES_API;
-					info->version_major = 2;
-					info->version_minor = 0;
-					break;
-
-				case RETRO_HW_CONTEXT_OPENGL_CORE:
-					DevMsg("OpenGL (%u.%u)\n", render->version_major, render->version_minor);
-					api = GLFW_OPENGL_API;
-					info->version_major = render->version_major;
-					info->version_minor = render->version_minor;
-					break;
-
-				case RETRO_HW_CONTEXT_OPENGLES3:
-					DevMsg("OpenGL ES (3.0)\n");
-					api = GLFW_OPENGL_ES_API;
-					info->version_major = 3;
-					info->version_minor = 0;
-					break;
-
-				case RETRO_HW_CONTEXT_OPENGLES_VERSION:
-					DevMsg("OpenGL ES (%u.%u)\n", render->version_major, render->version_minor);
-					api = GLFW_OPENGL_ES_API;
-					info->version_major = render->version_major;
-					info->version_minor = render->version_minor;
-					break;
-
-				case RETRO_HW_CONTEXT_VULKAN:
-					DevMsg("Vulkan (UNSUPPORTED)\n");
-					api = GLFW_NO_API;
-					info->version_major = 0;
-					info->version_minor = 0;
-					break;
-
-				default:
-					DevMsg("UNKNOWN (UNSUPPORTED)\n");
-					api = GLFW_NO_API;
-					info->version_major = 0;
-					info->version_minor = 0;
-					break;
-			}
-
-			DevMsg("\tdepth: %i\n", info->depth);
-			DevMsg("\tstencil: %i\n", info->stencil);
-			DevMsg("\tbottom_left_origin: %i\n", info->bottom_left_origin);
-			DevMsg("\tversion_major: %u\n", info->version_major);
-			DevMsg("\tversion_minor: %u\n", info->version_minor);
-			DevMsg("\tcache_context: %i\n", info->cache_context);
-			DevMsg("\tdebug_context: %i\n", info->debug_context);
-			
-			// init 3d
-			if (glfwInit())
-			{
-				//glfwWindowHint(GLFW_SAMPLES, 4);
-				//glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-				//glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
-				glfwWindowHint(GLFW_CLIENT_API, api);
-				glfwWindowHint(GLFW_CONTEXT_CREATION_API, GLFW_NATIVE_CONTEXT_API);
-				glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, info->version_major);
-				glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, info->version_minor);
-				glfwWindowHint(GLFW_RESIZABLE, GL_FALSE);
-				glfwWindowHint(GLFW_DECORATED, GL_FALSE);
-				//glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE); // To make MacOS happy; should not be needed
-				//glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_COMPAT_PROFILE);// GLFW_OPENGL_ANY_PROFILE);// GLFW_OPENGL_CORE_PROFILE);
-				glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);	// invisible window
-
-				//GLFWwindow* window = glfwCreateWindow(640, 480, "", NULL, NULL);
-				//HWND myHWnd = FindWindow(null, "AArcade: Source");
-				GLFWwindow* window = glfwCreateWindow(1280, 720, "My OPENGL", NULL, NULL);
-				//glfwGetWGLContext(window);
-
-				if (window)
-				{
-				//	render->get_current_framebuffer = v3d_get_current_framebuffer;
-					//render->get_proc_address = v3d_get_proc_address;
-				//	return true;
-
-					glewExperimental = GL_TRUE; // Needed in core profile
-					glfwMakeContextCurrent(window);
-					glewInit();
-
-					DevMsg("Window created!\n");
-					info->window = window;
-					glfwSetFramebufferSizeCallback(info->window, framebuffer_size_callback);	// to detect framebuffer size changes (probably not needed for libretro)
-					
-					//glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);	// to detect framebuffer size changes (probably not needed for libretro)
-
-					// get version info
-					const GLubyte* renderer = glGetString(GL_RENDERER); // get renderer string
-					const GLubyte* version = glGetString(GL_VERSION); // version as a string
-					DevMsg("Renderer: %s\n", renderer);
-					DevMsg("OpenGL version supported %s\n", version);
-					DevMsg("=========================\n");
-
-					//info->framebuffer = new GLuint[1];
-					//glGenFramebuffers(1, &info->framebuffer[0]);
-					//glBindFramebuffer(GL_FRAMEBUFFER, info->framebuffer[0]);
-					*/
-
-					/*
-					info->framebuffer = new GLuint[1];
-					GLuint* tex = new GLuint[1];
-					glGenTextures(1, tex);
-					glBindTexture(GL_TEXTURE_2D, tex[0]);
-					glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1280, 720, 0, GL_RGB8, GL_UNSIGNED_BYTE, null);	// GL_RGB
-					glGenFramebuffers(1, &info->framebuffer[0]);
-					glBindFramebuffer(GL_FRAMEBUFFER, info->framebuffer[0]);
-					glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, tex[0], 0);
-					if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-						DevMsg("Something went wrong.\n");
-					else
-					{
-						int width, height;
-						glfwGetFramebufferSize(window, &width, &height);
-						DevMsg("Frame buffer ready: %i x %i\n", width, height);
-					}
-					*/
-
-					//glfwPollEvents();
-
-					//glDisable(GL_DEPTH_TEST); // here for illustrative purposes, depth test is initially DISABLED (key!)
-					//glClearColor(0.3f, 0.4f, 0.1f, 1.0f);
-					//glClear(GL_COLOR_BUFFER_BIT);
-					//glfwSwapBuffers(info->window);
-					//glfwPollEvents();
-
-					//render->context_reset = v3d_context_reset;
-					//render->context_destroy = v3d_context_destroy;
-/*
-					glDisable(GL_DEPTH_TEST);
-					*/
-					//glfwSwapInterval(1);
-
-					// The depth buffer
-					/*
-					GLuint depthrenderbuffer;
-					glGenRenderbuffers(1, &depthrenderbuffer);
-					glBindRenderbuffer(GL_RENDERBUFFER, depthrenderbuffer);
-					glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, 1280, 720);
-					glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depthrenderbuffer);
-					glEnable(GL_DEPTH_TEST);
-					*/
-
-					//glEnable(GL_DOUBLEBUFFER);
-					//glEnable(GL_RGB);
-					//glPixelStorei(GL_PACK_ALIGNMENT, 3);
-/*
-					glClearColor(0.3f, 0.4f, 0.1f, 1.0f);
-					*/
-					/*
-					if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-						DevMsg("Something went wrong.\n");
-					else
-					{
-						int width, height;
-						glfwGetFramebufferSize(window, &width, &height);
-						DevMsg("Frame buffer ready: %i x %i\n", width, height);
-					}
-					*/
-
-					//glViewport(0, 0, 1280, 720); // Render on the whole framebuffer, complete from the lower left corner to the upper right
-					// reset the context (TODO: Make sure the window is ready to reset its context!
-/*
-info->raw->context_reset();
-
-					DevMsg("done.\n");
-					*/
-
-
-
-
-
-
-
-					// The texture we're going to render to
-					//GLuint renderedTexture;
-					//glGenTextures(1, &renderedTexture);
-					
-					// "Bind" the newly created texture : all future texture functions will modify this texture
-					//glBindTexture(GL_TEXTURE_2D, renderedTexture);
-
-					// Give an empty image to OpenGL ( the last "0" )
-					//glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 1024, 1024, 0, GL_RGB, GL_UNSIGNED_BYTE, 0);
-
-					// Poor filtering. Needed !
-					//glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-					//glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-
-					// just make sure to tell glfw you want depth/stencil buffers; if you're using fb0, you can't change that after creating the window
-					// Alcaro: glfw deals with context creation, if you're using that then you can ignore anything in the ifdefs
-
-					// The depth buffer
-					//GLuint depthrenderbuffer;
-					//glGenRenderbuffers(1, &depthrenderbuffer);
-					//glBindRenderbuffer(GL_RENDERBUFFER, depthrenderbuffer);
-					//glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, 1024, 1024);
-					//glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depthrenderbuffer);
-
-					// Set "renderedTexture" as our colour attachement #0
-					//glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, renderedTexture, 0);
-
-					// Set the list of draw buffers.
-					//GLenum DrawBuffers[1] = { GL_COLOR_ATTACHMENT0 };
-					//glGenFramebuffers(1, &info->framebuffer);
-					//glBindFramebuffer(GL_FRAMEBUFFER, info->framebuffer);
-					//glDrawBuffers(1, DrawBuffers); // "1" is the size of DrawBuffers
-
-					// Always check that our framebuffer is ok
-					//if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-					//{
-					////	DevMsg("Something went wrong.\n");
-					//}
-					//else
-					//	DevMsg("Frame buffer ready.\n");
-
-					// Render to our framebuffer
-					//glBindFramebuffer(GL_FRAMEBUFFER, info->framebuffer);
-					//glViewport(0, 0, 1024, 1024); // Render on the whole framebuffer, complete from the lower left corner to the upper right
-
-					//glCreateContex()
-
-					//glfwGetWGLContext(window);
-
-					//glfwGetWGLContext
-
-					//DevMsg("done changing frame buffer.\n");
-		/*		}
-				else
-					DevMsg("Failed to create openGL window.\n");*/
-
-				//if (info->window)
-				//{
-					//DevMsg("Painting initial frame...\n");
-					/*
-					// background color
-					glDisable(GL_DEPTH_TEST); // here for illustrative purposes, depth test is initially DISABLED (key!)
-					glClearColor(0.3f, 0.4f, 0.1f, 1.0f);
-					glClear(GL_COLOR_BUFFER_BIT);
-
-					glfwSwapBuffers(info->window);
-					glfwPollEvents();
-					*/
-
-					//glfwPollEvents();
-					//render->context_reset = v3d_context_reset;
-					//render->context_destroy = v3d_context_destroy;
-					//render->get_current_framebuffer = //(uintptr_t)GL_FRAMEBUFFER;// (uintptr_t)info->framebuffer;// info->framebuffer;
-					//render->get_current_framebuffer = v3d_get_current_framebuffer;
-					//render->get_proc_address = v3d_get_proc_address;
-				//}
-/*
-				DevMsg("Fin\n");
-				return true;
-			}*/
-
+		if (!gl_ctx->hglrc)
+		{
+			WorkerDbgMsg("libretro: Failed to create GL context.\n");
+			ReleaseDC(gl_ctx->hwnd, gl_ctx->hdc);
+			DestroyWindow(gl_ctx->hwnd);
 			return false;
 		}
-		/*
-		if (!this->create3d) return false;
-		struct retro_hw_render_callback * render = (struct retro_hw_render_callback*)data;
-		this->v3d = this->create3d(render);
-		if (!this->v3d) return false;
+
+		WorkerDbgMsg("libretro: OpenGL context created successfully.\n");
+
+		// Log OpenGL information
+		const GLubyte* renderer = glGetString(GL_RENDERER);
+		const GLubyte* version = glGetString(GL_VERSION);
+		WorkerDbgMsg("\tRenderer: %s\n", renderer);
+		WorkerDbgMsg("\tOpenGL version: %s\n", version);
+		WorkerDbgMsg("=========================\n");
+
+		// Create Framebuffer Object (FBO) for offscreen rendering
+		// Note: FBO will be created with initial size, and resized when core specifies actual dimensions
+		gl_ctx->hw_render_width = 1280;
+		gl_ctx->hw_render_height = 720;
+
+		// Generate and bind FBO
+		glGenFramebuffers(1, &gl_ctx->framebuffer);
+		glBindFramebuffer(GL_FRAMEBUFFER, gl_ctx->framebuffer);
+
+		// Create color texture
+		glGenTextures(1, &gl_ctx->color_texture);
+		glBindTexture(GL_TEXTURE_2D, gl_ctx->color_texture);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, gl_ctx->hw_render_width, gl_ctx->hw_render_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, gl_ctx->color_texture, 0);
+
+		// Create depth/stencil renderbuffer if requested
+		if (info->depth || info->stencil)
+		{
+			glGenRenderbuffers(1, &gl_ctx->depth_stencil_renderbuffer);
+			glBindRenderbuffer(GL_RENDERBUFFER, gl_ctx->depth_stencil_renderbuffer);
+
+			if (info->depth && info->stencil)
+			{
+				glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, gl_ctx->hw_render_width, gl_ctx->hw_render_height);
+				glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, gl_ctx->depth_stencil_renderbuffer);
+			}
+			else if (info->depth)
+			{
+				glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, gl_ctx->hw_render_width, gl_ctx->hw_render_height);
+				glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, gl_ctx->depth_stencil_renderbuffer);
+			}
+			else // stencil only
+			{
+				glRenderbufferStorage(GL_RENDERBUFFER, GL_STENCIL_INDEX8, gl_ctx->hw_render_width, gl_ctx->hw_render_height);
+				glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER, gl_ctx->depth_stencil_renderbuffer);
+			}
+		}
+
+		// Check FBO completeness
+		GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+		if (status != GL_FRAMEBUFFER_COMPLETE)
+		{
+			WorkerDbgMsg("libretro: Framebuffer is incomplete! Status: 0x%X\n", status);
+			glBindFramebuffer(GL_FRAMEBUFFER, 0);
+			glDeleteFramebuffers(1, &gl_ctx->framebuffer);
+			glDeleteTextures(1, &gl_ctx->color_texture);
+			if (gl_ctx->depth_stencil_renderbuffer)
+				glDeleteRenderbuffers(1, &gl_ctx->depth_stencil_renderbuffer);
+			wglMakeCurrent(NULL, NULL);
+			wglDeleteContext(gl_ctx->hglrc);
+			ReleaseDC(gl_ctx->hwnd, gl_ctx->hdc);
+			DestroyWindow(gl_ctx->hwnd);
+			return false;
+		}
+
+		WorkerDbgMsg("libretro: Framebuffer created successfully (%u x %u)\n", gl_ctx->hw_render_width, gl_ctx->hw_render_height);
+
+		// Unbind FBO (will be bound by core during rendering)
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+		// Wire up callbacks for core
 		render->get_current_framebuffer = v3d_get_current_framebuffer;
 		render->get_proc_address = v3d_get_proc_address;
-		*/
-		//return true;
 
-		//return false;
+		// NOTE: context_reset is NOT called here. Per the libretro spec, context_reset
+		// must be called AFTER retro_load_game() returns, not during SET_HW_RENDER.
+		// Cores like mupen64plus-next set internal flags after SET_HW_RENDER returns
+		// that context_reset depends on. Calling it here would be too early.
+		// The deferred call happens in the worker thread after LoadGame() completes.
+
+		// Register as active HW instance so get_current_framebuffer works from any thread
+		s_pActiveHWInstance = pLibretroInstance;
+
+		return true;
 	}
 
 	if (cmd == RETRO_ENVIRONMENT_GET_VARIABLE) //15
 	{
 		struct retro_variable * variable = (struct retro_variable*)data;
 
-		variable->value = NULL;
+		// Force-disable flycast threaded rendering to prevent crashes on internal thread.
+		// Flycast's internal rendering thread has no SEH protection from our frontend,
+		// and crashes there kill the entire process. Disabling makes retro_run() synchronous.
+		// NOTE: Commented out - flycast is incompatible with 32-bit frontend (nvmem pointer wrapping).
+		// Keeping code for reference in case a future flycast build fixes the 32-bit issue.
+		//if (std::string(variable->key) == "reicast_threaded_rendering")
+		//{
+		//	static const char* disabled_val = "disabled";
+		//	variable->value = disabled_val;
+		//	WorkerDbgMsg("Requesting variable: %s = %s (FORCED - threaded rendering disabled for stability)\n", variable->key, variable->value);
+		//	return true;
+		//}
 
-		DevMsg("Requesting variable: %s = ", variable->key);
+		variable->value = NULL;
 
 		bool bFoundVal = false;
 		std::string val;
@@ -2983,12 +3221,15 @@ info->raw->context_reset();
 		}
 		else if (index < numOptions)
 		{
-			val = info->options[index]->values[0].c_str();
+			if (!info->options[index]->default_value.empty())
+				val = info->options[index]->default_value.c_str();
+			else
+				val = info->options[index]->values[0].c_str();
 			bFoundVal = true;
 		}
 		else
 		{
-			DevMsg("WARNING: Libretro core requested a variable that it did not tell us about before hand!: %s\n", variable->key);
+			WorkerDbgMsg("WARNING: Libretro core requested a variable that it did not tell us about before hand!: %s\n", variable->key);
 
 			// try to reply with a default response (even tho we dont know what a default response is cuz this core never told us shit.)
 			if (info->core.find("mame") != std::string::npos)
@@ -3000,16 +3241,17 @@ info->raw->context_reset();
 
 		if (bFoundVal)
 		{
-			// FIXME: MEMORY LEAK
-			// FIXME: there needs to be book keeping so that these temp const char*'s can be cleaned up!!!
+			// Allocate buffer and track it for later cleanup
 			char* buf = new char[AA_MAX_STRING];
 			Q_strcpy(buf, val.c_str());
 			variable->value = buf;
-			DevMsg("%s\n", buf);
 
-			//V_FixSlashes(buf, '/');
-			//(*(const char**)data) = buf;
-			//delete[] buf;
+			// Track this allocation so we can clean it up later
+			info->allocated_variable_strings.push_back(buf);
+
+			// Output as single atomic DevMsg to prevent interleaving with other threads
+			WorkerDbgMsg("Requesting variable: %s = %s\n", variable->key, buf);
+
 		}
 		else
 			variable->value = null;
@@ -3020,14 +3262,12 @@ info->raw->context_reset();
 
 	if (cmd == RETRO_ENVIRONMENT_SET_VARIABLES)//16
 	{
-		DevMsg("libretro: RETRO_ENVIRONMENT_SET_VARIABLES\n");
+		WorkerDbgMsg("libretro: RETRO_ENVIRONMENT_SET_VARIABLES\n");
 		const struct retro_variable * variables = (const struct retro_variable*)data;
 
 		// variables are stored as const chars and must be manually dealloc OBSOLTETE: i think they are strings now.
 		while (!info->options.empty())
 		{
-		//	libretro_core_option* pOption = info->options[info->options.size() - 1];
-		//	free(pOption->name_display);
 			info->options.pop_back();
 		}
 
@@ -3038,14 +3278,12 @@ info->raw->context_reset();
 
 		bool bOptionListHasChanged = true;
 		bool bOptionsHaveChanged = true;
-		DevMsg("Num vars is: %i\n", numvars);
+		WorkerDbgMsg("Num vars is: %i\n", numvars);
 		for (unsigned int i = 0; i<numvars; i++)
 		{
 			// Initialize to 0 index for this variable's value
 
-//			info->optionscurrentvalues.push_back(0);
-
-			DevMsg("libretro: Setting up environment variable %s with definition %s of %u\n", variables[i].key, variables[i].value, i);
+			WorkerDbgMsg("libretro: Setting up environment variable %s with definition %s of %u\n", variables[i].key, variables[i].value, i);
 
 			libretro_core_option* pOption = new libretro_core_option();
 			pOption->name_internal = variables[i].key;
@@ -3055,19 +3293,6 @@ info->raw->context_reset();
 			//if the value does not contain "; ", the core is broken, and broken cores can break shit in whatever way they want, anyways.
 			//let's segfault.
 			// In other words, values would be null and a crash would occur when we tried to use it.
-			//pOption->name_display = VarArgs("%s", variables[i].value);
-
-			/*
-			unsigned int namelen = values - variables[i].value;
-			values += 2;
-
-			char* name = (char*)malloc(namelen + 1);
-			memcpy(name, variables[i].value, namelen);
-			name[namelen] = '\0';
-			pOption->name_display = name;
-			*/
-
-			//buf = VarArgs("%s", variables[i].value);
 			pOption->name_display = variables[i].value;
 			size_t found = pOption->name_display.find("; ");
 			if (found != std::string::npos)
@@ -3105,16 +3330,186 @@ info->raw->context_reset();
 		return true;
 	}
 
+	if (cmd == RETRO_ENVIRONMENT_SET_CORE_OPTIONS) //53
+	{
+		WorkerDbgMsg("libretro: RETRO_ENVIRONMENT_SET_CORE_OPTIONS\n");
+		const struct retro_core_option_definition * def = (const struct retro_core_option_definition*)data;
+
+		// Clear existing options
+		while (!info->options.empty())
+			info->options.pop_back();
+
+		// Count definitions
+		unsigned int numvars = 0;
+		const struct retro_core_option_definition * def_count = def;
+		while (def_count->key) { def_count++; numvars++; }
+
+		WorkerDbgMsg("Num vars is: %i\n", numvars);
+
+		for (unsigned int i = 0; i < numvars; i++)
+		{
+			WorkerDbgMsg("libretro: Setting up core option v1 %s with desc %s of %u\n", def[i].key, def[i].desc, i);
+
+			libretro_core_option* pOption = new libretro_core_option();
+			pOption->name_internal = def[i].key;
+			pOption->name_display = def[i].desc;
+			if (def[i].default_value)
+				pOption->default_value = def[i].default_value;
+
+			// Parse all possible values
+			for (unsigned int j = 0; j < RETRO_NUM_CORE_OPTION_VALUES_MAX; j++)
+			{
+				if (def[i].values[j].value == NULL)
+					break;
+				pOption->values.push_back(def[i].values[j].value);
+			}
+
+			info->options.push_back(pOption);
+		}
+
+		return true;
+	}
+
+	if (cmd == RETRO_ENVIRONMENT_SET_CORE_OPTIONS_INTL) //54
+	{
+		WorkerDbgMsg("libretro: RETRO_ENVIRONMENT_SET_CORE_OPTIONS_INTL\n");
+		const struct retro_core_options_intl* options_intl = (const struct retro_core_options_intl*)data;
+
+		// Use the US/English options (always non-NULL per spec)
+		const struct retro_core_option_definition* def = options_intl->us;
+		if (!def)
+			return false;
+
+		// Same logic as SET_CORE_OPTIONS handler above
+		while (!info->options.empty())
+			info->options.pop_back();
+
+		unsigned int numvars = 0;
+		const struct retro_core_option_definition* def_count = def;
+		while (def_count->key) { def_count++; numvars++; }
+
+		WorkerDbgMsg("Num vars is: %i\n", numvars);
+
+		for (unsigned int i = 0; i < numvars; i++)
+		{
+			WorkerDbgMsg("libretro: Setting up core option v1 intl %s with desc %s of %u\n", def[i].key, def[i].desc, i);
+
+			libretro_core_option* pOption = new libretro_core_option();
+			pOption->name_internal = def[i].key;
+			pOption->name_display = def[i].desc;
+			if (def[i].default_value)
+				pOption->default_value = def[i].default_value;
+
+			for (unsigned int j = 0; j < RETRO_NUM_CORE_OPTION_VALUES_MAX; j++)
+			{
+				if (def[i].values[j].value == NULL)
+					break;
+				pOption->values.push_back(def[i].values[j].value);
+			}
+
+			info->options.push_back(pOption);
+		}
+
+		return true;
+	}
+
+	if (cmd == RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2) //67
+	{
+		WorkerDbgMsg("libretro: RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2\n");
+		const struct retro_core_options_v2 * options_v2 = (const struct retro_core_options_v2*)data;
+
+		// Clear existing options
+		while (!info->options.empty())
+			info->options.pop_back();
+
+		// Parse all options from the definitions array
+		const struct retro_core_option_v2_definition * def = options_v2->definitions;
+		unsigned int numvars = 0;
+
+		// Count definitions
+		const struct retro_core_option_v2_definition * def_count = def;
+		while (def_count->key) { def_count++; numvars++; }
+
+		WorkerDbgMsg("Num vars is: %i\n", numvars);
+
+		for (unsigned int i = 0; i < numvars; i++)
+		{
+			WorkerDbgMsg("libretro: Setting up core option v2 %s with desc %s of %u\n", def[i].key, def[i].desc, i);
+
+			libretro_core_option* pOption = new libretro_core_option();
+			pOption->name_internal = def[i].key;
+			pOption->name_display = def[i].desc;
+			if (def[i].default_value)
+				pOption->default_value = def[i].default_value;
+
+			// Parse all possible values
+			for (unsigned int j = 0; j < RETRO_NUM_CORE_OPTION_VALUES_MAX; j++)
+			{
+				if (def[i].values[j].value == NULL)
+					break;
+				pOption->values.push_back(def[i].values[j].value);
+			}
+
+			info->options.push_back(pOption);
+		}
+
+		return true;
+	}
+
+	if (cmd == RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL) // 68
+	{
+		WorkerDbgMsg("libretro: RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL\n");
+		const struct retro_core_options_v2_intl* options_intl = (const struct retro_core_options_v2_intl*)data;
+
+		// Use the US/English options (always non-NULL per spec)
+		const struct retro_core_options_v2* options_v2 = options_intl->us;
+		if (!options_v2)
+			return false;
+
+		// Same logic as SET_CORE_OPTIONS_V2 handler above
+		while (!info->options.empty())
+			info->options.pop_back();
+
+		const struct retro_core_option_v2_definition* def = options_v2->definitions;
+		unsigned int numvars = 0;
+
+		const struct retro_core_option_v2_definition* def_count = def;
+		while (def_count->key) { def_count++; numvars++; }
+
+		WorkerDbgMsg("Num vars is: %i\n", numvars);
+
+		for (unsigned int i = 0; i < numvars; i++)
+		{
+			WorkerDbgMsg("libretro: Setting up core option v2 intl %s with desc %s of %u\n", def[i].key, def[i].desc, i);
+
+			libretro_core_option* pOption = new libretro_core_option();
+			pOption->name_internal = def[i].key;
+			pOption->name_display = def[i].desc;
+			if (def[i].default_value)
+				pOption->default_value = def[i].default_value;
+
+			for (unsigned int j = 0; j < RETRO_NUM_CORE_OPTION_VALUES_MAX; j++)
+			{
+				if (def[i].values[j].value == NULL)
+					break;
+				pOption->values.push_back(def[i].values[j].value);
+			}
+
+			info->options.push_back(pOption);
+		}
+
+		return true;
+	}
+
 	if (cmd == RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE) //17
 	{
-		//DevMsg("libretro: Fetching if options have changed (%s).\n", (s_bOptionsHaveChanged)?"true":"false");
 		*(bool*)data = info->optionshavechanged;
 		return true;
 	}
 
 	if (cmd == RETRO_ENVIRONMENT_GET_PERF_INTERFACE) //18
 	{
-		DevMsg("libretro: UNHANDLED RETRO_ENVIRONMENT_GET_PERF_INTERFACE\n");
+		WorkerDbgMsg("libretro: UNHANDLED RETRO_ENVIRONMENT_GET_PERF_INTERFACE\n");
 		struct retro_perf_callback *cb = (struct retro_perf_callback*)data;
 
 		cb->get_time_usec = null;
@@ -3128,22 +3523,10 @@ info->raw->context_reset();
 		return false;
 	}
 
-	/*
-	if (cmd == RETRO_ENVIRONMENT_SET_FRAME_TIME_CALLBACK) //21
-	{
-		DevMsg("SetFrameTimeCallback\n");
-		const struct retro_frame_time_callback *info = (const struct retro_frame_time_callback*)data;
-		//info->callback(1000);
-		//info->callback = &C_LibretroInstance::cbRetroFrameTime;
-		//info->reference = 1000;
-		return true;
-	}
-	*/
-
 	if (cmd == RETRO_ENVIRONMENT_GET_RUMBLE_INTERFACE) //23
 	{
 		struct retro_rumble_interface * iface = (struct retro_rumble_interface*)data;
-		DevMsg("libretro: Rumble interface requested.\n");
+		WorkerDbgMsg("libretro: Rumble interface requested.\n");
 		iface->set_rumble_state = set_rumble_state;
 		return true;
 	}
@@ -3158,68 +3541,101 @@ info->raw->context_reset();
 
 	if (cmd == RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO) //32
 	{
-		DevMsg("libretro: acknowledging RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO\n");
+		const struct retro_system_av_info* avinfo = (const struct retro_system_av_info*)data;
+		if (!avinfo)
+		{
+			WorkerDbgMsg("libretro: SET_SYSTEM_AV_INFO with null data\n");
+			return false;
+		}
+
+		float oldSampleRate = info->samplerate;
+		float oldFrameRate = info->framerate;
+
+		if (avinfo->timing.fps > 0)
+			info->framerate = float(avinfo->timing.fps);
+		if (avinfo->timing.sample_rate > 0)
+			info->samplerate = float(avinfo->timing.sample_rate);
+
+		WorkerDbgMsg("libretro: SET_SYSTEM_AV_INFO fps=%.2f->%.2f samplerate=%.0f->%.0f base=%ux%u\n",
+			oldFrameRate, info->framerate, oldSampleRate, info->samplerate,
+			avinfo->geometry.base_width, avinfo->geometry.base_height);
+
+		pLibretroInstance->SetFramerate(info->framerate);
+
+		// Create or recreate audio stream if sample rate changed
+		if (info->samplerate != oldSampleRate && info->samplerate > 0)
+		{
+			if (oldSampleRate > 0 && info->audiostream)
+			{
+				// Sample rate changed with existing stream -- recreate
+				WorkerDbgMsg("libretro: Sample rate changed, recreating audio stream\n");
+				float newSampleRate = info->samplerate;
+				C_LibretroInstance::DestroyAudioStream(info);
+				info->samplerate = newSampleRate;
+				C_LibretroInstance::CreateAudioStream();
+			}
+			else if (!info->audiostream)
+			{
+				// First time we have a valid sample rate -- create stream
+				WorkerDbgMsg("libretro: Creating audio stream (sample rate set to %.0f)\n", info->samplerate);
+				C_LibretroInstance::CreateAudioStream();
+			}
+		}
+
+		// Resize FBO to match core's requested geometry
+		if (AA_LIBRETRO_3D && info->gl_context && info->context_type != RETRO_HW_CONTEXT_NONE)
+		{
+			LibretroGLContext* gl_ctx = (LibretroGLContext*)info->gl_context;
+			if (avinfo->geometry.base_width > 0 && avinfo->geometry.base_height > 0)
+				ResizeFBO(gl_ctx, avinfo->geometry.base_width, avinfo->geometry.base_height, info->depth, info->stencil);
+		}
+
+		return true;
+	}
+
+	if (cmd == RETRO_ENVIRONMENT_SET_GEOMETRY) //37
+	{
+		const struct retro_game_geometry* geom = (const struct retro_game_geometry*)data;
+		if (geom)
+		{
+			WorkerDbgMsg("libretro: SET_GEOMETRY base=%ux%u max=%ux%u aspect=%.2f\n",
+				geom->base_width, geom->base_height, geom->max_width, geom->max_height, geom->aspect_ratio);
+
+			// Resize FBO to match core's requested geometry
+			if (AA_LIBRETRO_3D && info->gl_context && info->context_type != RETRO_HW_CONTEXT_NONE)
+			{
+				LibretroGLContext* gl_ctx = (LibretroGLContext*)info->gl_context;
+				if (geom->base_width > 0 && geom->base_height > 0)
+					ResizeFBO(gl_ctx, geom->base_width, geom->base_height, info->depth, info->stencil);
+			}
+		}
 		return true;
 	}
 
 	if (cmd == RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS)
 	{
-		DevMsg("libretro: RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS\n");
+		WorkerDbgMsg("libretro: RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS\n");
 
 		unsigned controller, typeIndex;
 		const struct retro_input_descriptor *controllerData = (const struct retro_input_descriptor*)data;
 
-		//info->currentPortTypes.clear();
-
 		for (controller = 0; controllerData[controller].description; controller++)
 		{
-			DevMsg("Unhandled Controller info:\n");
-			DevMsg("\tPort: %u\n", controllerData[controller].port);
-			DevMsg("\tDevice: %u\n", controllerData[controller].device);
-			DevMsg("\tIndex: %u\n", controllerData[controller].index);
-			DevMsg("\tID: %u\n", controllerData[controller].id);
-			DevMsg("\tDescription: %u\n", controllerData[controller].description);
+			WorkerDbgMsg("Unhandled Controller info:\n");
+			WorkerDbgMsg("\tPort: %u\n", controllerData[controller].port);
+			WorkerDbgMsg("\tDevice: %u\n", controllerData[controller].device);
+			WorkerDbgMsg("\tIndex: %u\n", controllerData[controller].index);
+			WorkerDbgMsg("\tID: %u\n", controllerData[controller].id);
+			WorkerDbgMsg("\tDescription: %s\n", controllerData[controller].description);
 
-			//info->currentPortTypes.push_back(1);	// set every joystick to use the 1st entry (should always be RetroPad w/ id 1).
-			// NOTE: 0 must ALWAYS gets inserted to the front when the current ports are gotten, which would mean Unplugged.
-			// NOTE: These are vector indecies, NOT retro device IDs
-
-			//for (typeIndex = 0; typeIndex < portData[port].num_types; typeIndex++)
-			//	DevMsg("\t%s (ID: %u)\n", portData[port].types[typeIndex].desc, portData[port].types[typeIndex].id);
 		}
-
-		//free((void*)info->portdata);
-		//info->portdata = (struct retro_controller_info*)
-		//	calloc(port, sizeof(*info->portdata));
-		//memcpy((void*)info->portdata, portData,
-		//	port * sizeof(*info->portdata));
-
-		//info->numports = port;
-
-
-
-		/*
-		if (system)
-		{
-		free(system->ports.data);
-		system->ports.data = (struct retro_controller_info*)
-		calloc(i, sizeof(*system->ports.data));
-		if (!system->ports.data)
-		return false;
-
-		memcpy(system->ports.data, info,
-		i * sizeof(*system->ports.data));
-		system->ports.size = i;
-		}
-		break;
-		*/
 
 		return false;
 	}
 
 	if (cmd == RETRO_ENVIRONMENT_SET_CONTROLLER_INFO) //35
 	{
-		DevMsg("libretro: RETRO_ENVIRONMENT_SET_CONTROLLER_INFO\n");
+		WorkerDbgMsg("libretro: RETRO_ENVIRONMENT_SET_CONTROLLER_INFO\n");
 
 		unsigned port, typeIndex;
 		const struct retro_controller_info *portData = (const struct retro_controller_info*)data;
@@ -3227,13 +3643,13 @@ info->raw->context_reset();
 		info->currentPortTypes.clear();
 		for (port = 0; portData[port].types; port++)
 		{
-			DevMsg("Controller port: %u\n", port + 1);
+			WorkerDbgMsg("Controller port: %u\n", port + 1);
 			info->currentPortTypes.push_back(1);	// set every joystick to use the 1st entry (should always be RetroPad w/ id 1).
 			// NOTE: 0 must ALWAYS gets inserted to the front when the current ports are gotten, which would mean Unplugged.
 			// NOTE: These are vector indecies, NOT retro device IDs
 
 			for (typeIndex = 0; typeIndex < portData[port].num_types; typeIndex++)
-				DevMsg("\t%s (ID: %u)\n", portData[port].types[typeIndex].desc, portData[port].types[typeIndex].id);
+				WorkerDbgMsg("\t%s (ID: %u)\n", portData[port].types[typeIndex].desc, portData[port].types[typeIndex].id);
 		}
 
 		free((void*)info->portdata);
@@ -3242,34 +3658,242 @@ info->raw->context_reset();
 		memcpy((void*)info->portdata, portData,
 			port * sizeof(*info->portdata));
 
-		//info->portdata = portData;
 		info->numports = port;
-		/*
-		if (system)
-		{
-			free(system->ports.data);
-			system->ports.data = (struct retro_controller_info*)
-				calloc(i, sizeof(*system->ports.data));
-			if (!system->ports.data)
-				return false;
-
-			memcpy(system->ports.data, info,
-				i * sizeof(*system->ports.data));
-			system->ports.size = i;
-		}
-		break;
-		*/
 
 		return true;
 	}
 
 	if (cmd == RETRO_ENVIRONMENT_SHUTDOWN)
 	{
-		//info->close = true;
 		info->runninglibretrocores->last_error = "Core Shutdown";
-		//if (info->core.find("ffmpeg_libretro.dll") != (info->core.length()-19))	// ffmpeg cores are gonna restart instead of shutting down.
 		info->state = 6;
 		// should probably show some kind of related items screen when a video ends.
+		return true;
+	}
+
+	// RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE (47 | RETRO_ENVIRONMENT_EXPERIMENTAL)
+	if (cmd == (47 | RETRO_ENVIRONMENT_EXPERIMENTAL))
+	{
+		// Tell the core to always render both audio and video
+		if (data)
+		{
+			int* flags = (int*)data;
+			*flags = (1 << 0) | (1 << 1);  // RETRO_AV_ENABLE_VIDEO | RETRO_AV_ENABLE_AUDIO
+		}
+		return true;
+	}
+
+	// RETRO_ENVIRONMENT_GET_FASTFORWARDING (49 | RETRO_ENVIRONMENT_EXPERIMENTAL)
+	if (cmd == (49 | RETRO_ENVIRONMENT_EXPERIMENTAL))
+	{
+		if (data)
+			*(bool*)data = false;  // We never fast-forward
+		return true;
+	}
+
+	// RETRO_ENVIRONMENT_SET_AUDIO_BUFFER_STATUS_CALLBACK (62)
+	if (cmd == 62)
+	{
+		WorkerDbgMsg("libretro: RETRO_ENVIRONMENT_SET_AUDIO_BUFFER_STATUS_CALLBACK (not implemented)\n");
+		return false;  // Not implemented, core will handle gracefully
+	}
+
+	// RETRO_ENVIRONMENT_SET_MINIMUM_AUDIO_LATENCY (63)
+	if (cmd == 63)
+	{
+		if (data)
+		{
+			const unsigned* latency = (const unsigned*)data;
+			WorkerDbgMsg("libretro: RETRO_ENVIRONMENT_SET_MINIMUM_AUDIO_LATENCY requested %u ms (ignored)\n", *latency);
+		}
+		return true;  // Acknowledge but don't change latency
+	}
+
+	// RETRO_ENVIRONMENT_SET_CONTENT_INFO_OVERRIDE (65)
+	if (cmd == RETRO_ENVIRONMENT_SET_CONTENT_INFO_OVERRIDE)
+	{
+		WorkerDbgMsg("libretro: RETRO_ENVIRONMENT_SET_CONTENT_INFO_OVERRIDE\n");
+
+		const struct retro_system_content_info_override* overrides =
+			(const struct retro_system_content_info_override*)data;
+
+		if (!overrides)
+		{
+			WorkerDbgMsg("libretro: Warning: SET_CONTENT_INFO_OVERRIDE called with NULL data\n");
+			return false;
+		}
+
+		// Clear any existing overrides
+		info->content_overrides.clear();
+
+		// Copy the override array (it's null-terminated)
+		int count = 0;
+		while (overrides[count].extensions != NULL)
+		{
+			WorkerDbgMsg("libretro: Content override for extensions: %s (need_fullpath=%d, persistent_data=%d)\n",
+				overrides[count].extensions,
+				overrides[count].need_fullpath,
+				overrides[count].persistent_data);
+
+			info->content_overrides.push_back(overrides[count]);
+			count++;
+		}
+
+		info->has_content_overrides = (count > 0);
+		WorkerDbgMsg("libretro: Registered %d content info override(s)\n", count);
+
+		return true;
+	}
+
+	// RETRO_ENVIRONMENT_GET_GAME_INFO_EXT (66)
+	if (cmd == RETRO_ENVIRONMENT_GET_GAME_INFO_EXT)
+	{
+		WorkerDbgMsg("libretro: RETRO_ENVIRONMENT_GET_GAME_INFO_EXT\n");
+
+		const struct retro_game_info_ext** game_info_ext_ptr =
+			(const struct retro_game_info_ext**)data;
+
+		if (!game_info_ext_ptr)
+		{
+			WorkerDbgMsg("libretro: GET_GAME_INFO_EXT querying support only\n");
+			return true;  // Just querying support
+		}
+
+		// If called before load_game, we don't have valid data yet
+		if (info->loaded_full_path.empty())
+		{
+			WorkerDbgMsg("libretro: GET_GAME_INFO_EXT called before game loaded, returning NULL\n");
+			*game_info_ext_ptr = NULL;
+			return false;
+		}
+
+		// Allocate a single retro_game_info_ext structure and track it for cleanup
+		struct retro_game_info_ext* game_info_ext = new retro_game_info_ext;
+
+		// Populate from stored metadata
+		game_info_ext->full_path = info->loaded_full_path.empty() ? NULL : info->loaded_full_path.c_str();
+		game_info_ext->archive_path = info->loaded_archive_path.empty() ? NULL : info->loaded_archive_path.c_str();
+		game_info_ext->archive_file = info->loaded_archive_file.empty() ? NULL : info->loaded_archive_file.c_str();
+		game_info_ext->dir = info->loaded_dir.empty() ? NULL : info->loaded_dir.c_str();
+		game_info_ext->name = info->loaded_name.empty() ? NULL : info->loaded_name.c_str();
+		game_info_ext->ext = info->loaded_ext.empty() ? NULL : info->loaded_ext.c_str();
+		game_info_ext->meta = NULL;  // No implementation-specific metadata for now
+		game_info_ext->data = info->loaded_data;
+		game_info_ext->size = info->loaded_data_size;
+		game_info_ext->file_in_archive = info->loaded_file_in_archive;
+		game_info_ext->persistent_data = info->loaded_persistent_data;
+
+		// Track this allocation for later cleanup
+		info->allocated_game_info_ext.push_back(game_info_ext);
+
+		WorkerDbgMsg("libretro: Returning game info ext:\n");
+		WorkerDbgMsg("  full_path: %s\n", game_info_ext->full_path ? game_info_ext->full_path : "(null)");
+		WorkerDbgMsg("  archive_path: %s\n", game_info_ext->archive_path ? game_info_ext->archive_path : "(null)");
+		WorkerDbgMsg("  archive_file: %s\n", game_info_ext->archive_file ? game_info_ext->archive_file : "(null)");
+		WorkerDbgMsg("  dir: %s\n", game_info_ext->dir ? game_info_ext->dir : "(null)");
+		WorkerDbgMsg("  name: %s\n", game_info_ext->name ? game_info_ext->name : "(null)");
+		WorkerDbgMsg("  ext: %s\n", game_info_ext->ext ? game_info_ext->ext : "(null)");
+		WorkerDbgMsg("  file_in_archive: %d\n", game_info_ext->file_in_archive);
+
+		*game_info_ext_ptr = game_info_ext;
+		return true;
+	}
+
+	// RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION (52)
+	if (cmd == RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION)
+	{
+		unsigned* version = (unsigned*)data;
+		*version = 2;
+		return true;
+	}
+
+	// RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY (55)
+	if (cmd == RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY)
+	{
+		return true; // Acknowledge but don't change display
+	}
+
+	// RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER (56)
+	if (cmd == RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER)
+	{
+		unsigned* preferred = (unsigned*)data;
+		*preferred = RETRO_HW_CONTEXT_OPENGL;
+		return true;
+	}
+
+	// RETRO_ENVIRONMENT_GET_MESSAGE_INTERFACE_VERSION (59)
+	if (cmd == 59)
+	{
+		unsigned* version = (unsigned*)data;
+		*version = 1; // 1 = supports SET_MESSAGE_EXT
+		return true;
+	}
+
+	// RETRO_ENVIRONMENT_SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK (69)
+	if (cmd == RETRO_ENVIRONMENT_SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK)
+	{
+		return false; // Not implementing the display update callback
+	}
+
+	// RETRO_ENVIRONMENT_SET_VARIABLE (70) - Core forcibly sets an option value
+	if (cmd == RETRO_ENVIRONMENT_SET_VARIABLE) //70
+	{
+		if (!data)
+			return true; // Available but no data provided
+
+		const struct retro_variable* variable = (const struct retro_variable*)data;
+		if (!variable->key || !variable->value)
+			return false;
+
+		WorkerDbgMsg("libretro: SET_VARIABLE: %s = %s\n", variable->key, variable->value);
+
+		// Find the matching option and validate the value
+		unsigned int numOptions = info->options.size();
+		for (unsigned int i = 0; i < numOptions; i++)
+		{
+			if (info->options[i]->name_internal == variable->key)
+			{
+				bool bValidValue = false;
+				for (unsigned int v = 0; v < info->options[i]->values.size(); v++)
+				{
+					if (info->options[i]->values[v] == variable->value)
+					{
+						bValidValue = true;
+						break;
+					}
+				}
+
+				if (!bValidValue)
+				{
+					WorkerDbgMsg("libretro: SET_VARIABLE: invalid value '%s' for key '%s'\n",
+						variable->value, variable->key);
+					return false;
+				}
+
+				// Update core-level options (not persisted to disk -- runtime-only change)
+				info->coreCoreOptions->SetString(variable->key, variable->value);
+				info->optionshavechanged = true;
+				return true;
+			}
+		}
+
+		WorkerDbgMsg("libretro: SET_VARIABLE: unknown key '%s'\n", variable->key);
+		return false;
+	}
+
+	if (cmd == (36 | RETRO_ENVIRONMENT_EXPERIMENTAL))  // SET_MEMORY_MAPS
+	{
+		const struct retro_memory_map* memmap = (const struct retro_memory_map*)data;
+		if (memmap)
+		{
+			WorkerDbgMsg("libretro: SET_MEMORY_MAPS: %u descriptors\n", memmap->num_descriptors);
+			for (unsigned i = 0; i < memmap->num_descriptors; i++)
+			{
+				const struct retro_memory_descriptor* desc = &memmap->descriptors[i];
+				WorkerDbgMsg("  [%u] ptr=%p offset=0x%X start=0x%X len=0x%X\n",
+					i, desc->ptr, (unsigned)desc->offset, (unsigned)desc->start, (unsigned)desc->len);
+			}
+		}
 		return true;
 	}
 
@@ -3314,6 +3938,37 @@ info->raw->context_reset();
 		"SET_GEOMETRY",
 		"GET_USERNAME",
 		"GET_LANGUAGE",
+		"GET_CURRENT_SOFTWARE_FRAMEBUFFER",        // 40
+		"GET_HW_RENDER_INTERFACE",                 // 41
+		"SET_SUPPORT_ACHIEVEMENTS",                // 42
+		"SET_HW_RENDER_CONTEXT_NEGOTIATION_INTERFACE", // 43
+		"SET_SERIALIZATION_QUIRKS",                // 44
+		"GET_VFS_INTERFACE",                       // 45
+		"GET_LED_INTERFACE",                       // 46
+		"GET_AUDIO_VIDEO_ENABLE",                  // 47
+		"GET_MIDI_INTERFACE",                      // 48
+		"GET_FASTFORWARDING",                      // 49
+		"GET_TARGET_REFRESH_RATE",                 // 50
+		"GET_INPUT_BITMASKS",                      // 51
+		"GET_CORE_OPTIONS_VERSION",                // 52
+		"SET_CORE_OPTIONS",                        // 53
+		"SET_CORE_OPTIONS_INTL",                   // 54
+		"SET_CORE_OPTIONS_DISPLAY",                // 55
+		"GET_PREFERRED_HW_RENDER",                 // 56
+		"GET_DISK_CONTROL_INTERFACE_VERSION",       // 57
+		"SET_DISK_CONTROL_EXT_INTERFACE",           // 58
+		"GET_MESSAGE_INTERFACE_VERSION",            // 59
+		"SET_MESSAGE_EXT",                         // 60
+		"SET_AUDIO_BUFFER_STATUS_CALLBACK",        // 61
+		"SET_MINIMUM_AUDIO_LATENCY",               // 62
+		"(reserved 63)",                           // 63
+		"(reserved 64)",                           // 64
+		"SET_CONTENT_INFO_OVERRIDE",               // 65
+		"GET_GAME_INFO_EXT",                       // 66
+		"SET_CORE_OPTIONS_V2",                     // 67
+		"SET_CORE_OPTIONS_V2_INTL",                // 68
+		"SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK", // 69
+		"SET_VARIABLE",                            // 70
 	};
 
 	if ((cmd&~RETRO_ENVIRONMENT_EXPERIMENTAL) < sizeof(names) / sizeof(*names))
@@ -3326,10 +3981,6 @@ info->raw->context_reset();
 
 void C_LibretroInstance::cbVideoRefresh(const void * data, unsigned width, unsigned height, size_t pitch)
 {
-//	if (!data || AA_LIBRETRO_3D)
-	//	return;
-		//glXSwapBuffers();
-	//DevMsg("Video Refresh: %u %u %i\n", width, height, pitch);
 	uint uId = ThreadGetCurrentId();
 	C_LibretroInstance* pLibretroInstance = g_pAnarchyManager->GetLibretroManager()->FindLibretroInstance(uId);
 	if (!pLibretroInstance)
@@ -3339,16 +3990,10 @@ void C_LibretroInstance::cbVideoRefresh(const void * data, unsigned width, unsig
 	if (info->close)
 		return;
 
-	//if (pLibretroInstance->GetAdjustedStartTime() < 0)
-	//	pLibretroInstance->SetAdjustedStartTime();
-
-	if (!info->readyfornextframe || info->copyingframe || !data || AA_LIBRETRO_3D || pLibretroInstance->FastForwardSeconds() > pLibretroInstance->CurrentSeconds() + 10)
+	if (!InterlockedCompareExchange(&info->readyfornextframe, 0, 0) || InterlockedCompareExchange(&info->copyingframe, 0, 0) || !data || pLibretroInstance->FastForwardSeconds() > pLibretroInstance->CurrentSeconds() + 10)
 	{
 		if (data)
 		{
-			//if (pLibretroInstance->GetNumSkippedFrames() > 10000)
-			//	info->fastforward = false;
-
 			pLibretroInstance->IncrementSkippedFrames();
 		}
 		return;
@@ -3358,108 +4003,180 @@ void C_LibretroInstance::cbVideoRefresh(const void * data, unsigned width, unsig
 	info->lastframeheight = height;
 	info->lastframepitch = pitch;
 
-	//if (AA_LIBRETRO_3D && info->context_type != RETRO_HW_CONTEXT_NONE && data == RETRO_HW_FRAME_BUFFER_VALID)
-		//glfwSwapBuffers(info->window);
-	
-//	if (data == RETRO_HW_FRAME_BUFFER_VALID)
-	//	DevMsg("hardware rendered frame given...\n");
-
-	//glfwSwapBuffers(info->window);
-	//return;
-
 	info->lastrendered = gpGlobals->curtime;
 
-	info->readyfornextframe = false;
-	info->readytocopyframe = false;
+	InterlockedExchange(&info->readyfornextframe, 0);
+	InterlockedExchange(&info->readytocopyframe, 0);
 
 	if (info->samplerate == 0)
 	{
-		DevMsg("Get AV info\n");
+		WorkerDbgMsg("Get AV info\n");
 		struct retro_system_av_info avinfo;
 		info->raw->get_system_av_info(&avinfo);
 
-		if (avinfo.timing.sample_rate > 0)
+		WorkerDbgMsg("Core reports: sample_rate=%.1f fps=%.2f\n", avinfo.timing.sample_rate, avinfo.timing.fps);
+
+		if (avinfo.timing.sample_rate > 0 && avinfo.timing.fps > 0)
 		{
 			info->samplerate = float(avinfo.timing.sample_rate);
 			info->framerate = float(avinfo.timing.fps);
 			pLibretroInstance->SetFramerate(info->framerate);
 			C_LibretroInstance::CreateAudioStream();
+
+			if (info->audiostream)
+				WorkerDbgMsg("Audio stream created at %.0f Hz (core rate: %.0f Hz)\n",
+				info->outputsamplerate > 0 ? info->outputsamplerate : info->samplerate,
+				info->samplerate);
+			else
+				WorkerDbgMsg("WARNING: Audio stream creation failed (core rate: %.0f Hz)\n",
+				info->samplerate);
+			// NOTE: Do NOT set readyfornextframe = true here!
+			// The render synchronization flow will handle this in RegenerateTextureBits()
+		}
+		else
+		{
+			WorkerDbgMsg("WARNING: Core returned invalid AV info (sample_rate=%.1f fps=%.2f), will retry next frame\n",
+				avinfo.timing.sample_rate, avinfo.timing.fps);
+			// NOTE: Do NOT set readyfornextframe = true here!
+			// Let the normal render flow handle synchronization
 		}
 	}
 
-	
-		//glDisable(GL_DEPTH_TEST); // here for illustrative purposes, depth test is initially DISABLED (key!)
-		//glClearColor(0.3f, 0.4f, 0.1f, 1.0f);
-		//glClear(GL_COLOR_BUFFER_BIT);
-		//glfwMakeContextCurrent(info->window);
-		//glfwSwapBuffers(info->window);
-		//glfwPollEvents();	// this is what makes the window actually be responsive
-
-
-	//WORD red_mask = 0xF800;
-	//WORD green_mask = 0x7E0;
-	//WORD blue_mask = 0x1F;
-	
-	//DevMsg("Doin it\n");
-
-	//DevMsg("video refresh\n");
-
-	void* dest = malloc(pitch*height);
-	if (AA_LIBRETRO_3D && info->context_type != RETRO_HW_CONTEXT_NONE && data == RETRO_HW_FRAME_BUFFER_VALID)
+	size_t buffer_size = 0;
+	if (AA_LIBRETRO_3D && info->gl_context && info->context_type != RETRO_HW_CONTEXT_NONE && data == RETRO_HW_FRAME_BUFFER_VALID)
 	{
-		//DevMsg("Format is: %i %i x %i\n", info->videoformat, pitch, height);
-		/*
-		glReadPixels(0, 0, pitch / 3, height, GL_COLOR_INDEX, GL_UNSIGNED_BYTE, dest);// GL_RGBA8	//GL_RGB
-		*/
-		//glfwSwapInterval(1);
-		//glfwSwapBuffers(info->window);
-		//glfwPollEvents();
+		// Hardware rendering - read from FBO on worker thread (GL context already current)
+		WorkerDbgMsg("libretro: Hardware frame - reading from FBO on worker thread\n");
+		LibretroGLContext* gl_ctx = (LibretroGLContext*)info->gl_context;
+
+		// Validate dimensions
+		if (width == 0 || height == 0)
+		{
+			WorkerDbgMsg("libretro: ERROR - Invalid FBO dimensions (%u x %u), skipping frame\n", width, height);
+			return;
+		}
+
+		// Allocate/reuse buffer for RGBA data (4 bytes per pixel)
+		buffer_size = width * height * 4;
+		pitch = width * 4;
+		info->videoformat = RETRO_PIXEL_FORMAT_XRGB8888;
 	}
 	else
 	{
-		Q_memcpy(dest, data, pitch*height);
+		// Software rendering - copy from provided data pointer
+		// Validate dimensions before allocating
+		if (width == 0 || height == 0 || pitch == 0)
+		{
+			WorkerDbgMsg("libretro: ERROR - Invalid software buffer dimensions (w=%u h=%u pitch=%zu), skipping frame\n",
+				width, height, pitch);
+			return;
+		}
+
+		buffer_size = pitch * height;
 	}
 
-	if (info->lastframedata)
-		free(info->lastframedata);
+	// Reuse existing buffer if large enough, otherwise reallocate
+	if (info->lastframebuffersize < buffer_size)
+	{
+		if (info->lastframedata)
+			free(info->lastframedata);
+		info->lastframedata = malloc(buffer_size);
+		if (!info->lastframedata)
+		{
+			info->lastframebuffersize = 0;
+			WorkerDbgMsg("libretro: ERROR - Failed to allocate %zu bytes for frame buffer\n", buffer_size);
+			return;
+		}
+		info->lastframebuffersize = buffer_size;
+	}
 
-	info->lastframedata = dest;
+	if (AA_LIBRETRO_3D && info->gl_context && info->context_type != RETRO_HW_CONTEXT_NONE && data == RETRO_HW_FRAME_BUFFER_VALID)
+	{
+		LibretroGLContext* gl_ctx = (LibretroGLContext*)info->gl_context;
+
+		// GL context is already current on worker thread from run()
+		// Bind the FBO to read from it
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, gl_ctx->framebuffer);
+
+		// Read pixels from FBO (BGRA format to match XRGB8888 byte order on Windows)
+		glReadPixels(0, 0, width, height, GL_BGRA, GL_UNSIGNED_BYTE, info->lastframedata);
+
+		// Check for GL errors
+		GLenum err = glGetError();
+		if (err != GL_NO_ERROR)
+		{
+			WorkerDbgMsg("libretro: glReadPixels error: 0x%X\n", err);
+		}
+
+		// Diagnostic: check first HW frame for all-zero data (black screen detection)
+		static bool s_bLoggedFirstHWFrame = false;
+		if (!s_bLoggedFirstHWFrame)
+		{
+			unsigned char* pixels = (unsigned char*)info->lastframedata;
+			bool bAllZero = true;
+			for (unsigned int i = 0; i < 256 && i < buffer_size; i++)
+			{
+				if (pixels[i] != 0) { bAllZero = false; break; }
+			}
+			WorkerDbgMsg("libretro: First HW frame: %ux%u, FBO=%u, glReadPixels %s\n",
+				width, height, gl_ctx->framebuffer,
+				bAllZero ? "ALL ZEROS (black)" : "has data (OK)");
+			s_bLoggedFirstHWFrame = true;
+		}
+
+		// Unbind FBO (restore default framebuffer)
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+	}
+	else
+	{
+		Q_memcpy(info->lastframedata, data, buffer_size);
+	}
+
 	info->lastframewidth = width;
 	info->lastframeheight = height;
 	info->lastframepitch = pitch;
 
-	info->readytocopyframe = true;
+	InterlockedExchange(&info->readytocopyframe, 1);
 	pLibretroInstance->MarkAsDirty();
 	pLibretroInstance->IncrementRenderedFrames();
-	//pLibretroInstance->m_mutex.unlock();
-	//DevMsg("Child Unlock\n");
 }
 
 void C_LibretroInstance::cbAudioSample(int16_t left, int16_t right)
 {
 	uint uId = ThreadGetCurrentId();
 	C_LibretroInstance* pLibretroInstance = g_pAnarchyManager->GetLibretroManager()->FindLibretroInstance(uId);
+	if (!pLibretroInstance)
+		return;
+
 	LibretroInstanceInfo_t* info = pLibretroInstance->GetInfo();
-	DevMsg("cbAudioSample\n");
-	/*
-	if (info->audiobufferpos < 512)
+	if (!info->soundAllowed || !info->audiostream || !info->pAudioRingBuffer)
+		return;
+
+	// When resampling is active, decimate: only emit every Nth sample
+	if (info->outputsamplerate > 0)
 	{
-	double leftRegular = (int)left * 1.0;// pLibretroVolumeScaleConVar->GetFloat();
-	if (left > 32767)
-	leftRegular = 32767.0;
-	if (left < -32768.0)
-	leftRegular = -32768.0;
-
-	double rightRegular = (int)right * 1.0;// s_pLibretroVolumeScaleConVar->GetFloat();
-	if (right > 32767)
-	rightRegular = 32767.0;
-	if (right < -32768.0)
-	rightRegular = -32768.0;
-
-	info->audiobuffer[info->audiobufferpos++] = (int16_t)leftRegular;
-	info->audiobuffer[info->audiobufferpos++] = (int16_t)rightRegular;
+		double step = (double)info->samplerate / (double)info->outputsamplerate;
+		info->resampleAccumulator += 1.0;
+		if (info->resampleAccumulator < step)
+			return;
+		info->resampleAccumulator -= step;
 	}
-	*/
+
+	float volume = info->volume;
+	double leftVal = (double)left * volume;
+	double rightVal = (double)right * volume;
+
+	if (leftVal > 32767.0) leftVal = 32767.0;
+	else if (leftVal < -32768.0) leftVal = -32768.0;
+
+	if (rightVal > 32767.0) rightVal = 32767.0;
+	else if (rightVal < -32768.0) rightVal = -32768.0;
+
+	int16_t sample[2];
+	sample[0] = (int16_t)leftVal;
+	sample[1] = (int16_t)rightVal;
+
+	RingBuf_Write(info->pAudioRingBuffer, sample, 2);
 }
 
 size_t C_LibretroInstance::cbAudioSampleBatch(const int16_t * data, size_t frames)
@@ -3476,13 +4193,8 @@ size_t C_LibretroInstance::cbAudioSampleBatch(const int16_t * data, size_t frame
 
 	if (pLibretroInstance->FastForwardSeconds() > pLibretroInstance->CurrentSeconds() + 10)
 		return 0;
-	/*
-	if ( info->processingaudio)
-		return 0;
-	else
-		info->processingaudio = true;
-		*/
 
+	// Lazy init: create audio stream on first audio data
 	if (info->samplerate == 0)
 	{
 		struct retro_system_av_info avinfo;
@@ -3490,84 +4202,116 @@ size_t C_LibretroInstance::cbAudioSampleBatch(const int16_t * data, size_t frame
 
 		if (avinfo.timing.sample_rate > 0)
 		{
-			info->samplerate = int(avinfo.timing.sample_rate);
-			info->framerate = int(avinfo.timing.fps);
+			info->samplerate = float(avinfo.timing.sample_rate);
+			info->framerate = float(avinfo.timing.fps);
 			pLibretroInstance->SetFramerate(info->framerate);
 			C_LibretroInstance::CreateAudioStream();
 		}
 	}
 
-	if (info->samplerate <= 0 || frames <= 0 || !info->audiostream ) // || s_threadAudioParams.frames
+	if (info->samplerate <= 0 || frames <= 0 || !info->audiostream || !info->pAudioRingBuffer)
 		return 0;
-	
-	//DevMsg("Writing %u frames: %i\n", frames, data);
 
-	//if ( info->volume > 0.0f )
-
-	/*
-	//float buffer[SAMPLES_PER_BUFFER];
-	//volume in dB 0db = unity gain, no attenuation, full amplitude signal
-	//           -20db = 10x attenuation, significantly more quiet
-	float volumeLevelDb = -6.f; //cut amplitude in half; same as 0.5 above
-	const float VOLUME_REFERENCE = 1.f;
-	const float volumeMultiplier = (VOLUME_REFERENCE * pow(10, (volumeLevelDb / 20.f);
-	for (int i = 0; i < SAMPLES_PER_BUFFER; ++i)
-	{
-		data[i] *= volumeMultiplier;
-	}
-	*/
-
-	//PaError err = Pa_WriteStream(info->audiostream, data, frames);// paFramesPerBufferUnspecified);
-
-	// AMPLIFY THE AUDIO HERE!
 	float volume = info->volume;
-	int16_t sample[2];
-	double leftRegular, rightRegular;
-	int16_t left, right;
 
-	//pLibretroInstance->SetIsAudioPlaying(true);
-	for (int i = 0; i < frames * 2; i = i + 2)
+	if (info->outputsamplerate > 0)
 	{
-		left = data[i];
-		right = data[i + 1];
+		// Resampling path: linear interpolation from core rate to output rate
+		// e.g. SameBoy: 2097152 Hz -> 48000 Hz (ratio ~0.023, step ~43.69)
+		double ratio = (double)info->outputsamplerate / (double)info->samplerate;
+		double step = 1.0 / ratio;
 
-		leftRegular = (double)left * volume;
-		if (left > 32767)
-			leftRegular = 32767.0;
-		if (left < -32768.0)
-			leftRegular = -32768.0;
+		unsigned int nInputFrames = (unsigned int)frames;
+		unsigned int nMaxOutputFrames = (unsigned int)((double)nInputFrames * ratio) + 2;
+		unsigned int nMaxOutputSamples = nMaxOutputFrames * 2;
 
-		rightRegular = (double)right * volume;
-		if (right > 32767)
-			rightRegular = 32767.0;
-		if (right < -32768.0)
-			rightRegular = -32768.0;
+		int16_t stackBuf[4096];
+		int16_t* pOutBuf;
+		bool bHeapAlloc = false;
 
-		sample[0] = (int16_t)leftRegular;
-		sample[1] = (int16_t)rightRegular;
+		if (nMaxOutputSamples <= 4096)
+		{
+			pOutBuf = stackBuf;
+		}
+		else
+		{
+			pOutBuf = new int16_t[nMaxOutputSamples];
+			bHeapAlloc = true;
+		}
 
-		PaError err = Pa_WriteStream(info->audiostream, sample, 1);
+		double srcPos = info->resampleAccumulator;
+		unsigned int nOutIdx = 0;
+
+		while (srcPos < (double)(nInputFrames - 1) && nOutIdx < nMaxOutputSamples)
+		{
+			unsigned int srcIdx = (unsigned int)srcPos;
+			double frac = srcPos - (double)srcIdx;
+
+			double leftSample = (double)data[srcIdx * 2] * (1.0 - frac)
+				+ (double)data[(srcIdx + 1) * 2] * frac;
+			double rightSample = (double)data[srcIdx * 2 + 1] * (1.0 - frac)
+				+ (double)data[(srcIdx + 1) * 2 + 1] * frac;
+
+			leftSample *= volume;
+			rightSample *= volume;
+
+			if (leftSample > 32767.0) leftSample = 32767.0;
+			else if (leftSample < -32768.0) leftSample = -32768.0;
+			if (rightSample > 32767.0) rightSample = 32767.0;
+			else if (rightSample < -32768.0) rightSample = -32768.0;
+
+			pOutBuf[nOutIdx++] = (int16_t)leftSample;
+			pOutBuf[nOutIdx++] = (int16_t)rightSample;
+
+			srcPos += step;
+		}
+
+		// Carry fractional remainder to next call for seamless batch boundaries
+		info->resampleAccumulator = srcPos - (double)nInputFrames;
+		if (info->resampleAccumulator < 0.0)
+			info->resampleAccumulator = 0.0;
+
+		RingBuf_Write(info->pAudioRingBuffer, pOutBuf, nOutIdx);
+
+		if (bHeapAlloc)
+			delete[] pOutBuf;
 	}
-	//pLibretroInstance->SetIsAudioPlaying(false);
+	else
+	{
+		// Normal path: no resampling needed
+		unsigned int nTotalSamples = (unsigned int)(frames * 2); // stereo
+
+		int16_t stackBuf[4096];
+		int16_t* pVolBuf;
+		bool bHeapAlloc = false;
+
+		if (nTotalSamples <= 4096)
+		{
+			pVolBuf = stackBuf;
+		}
+		else
+		{
+			pVolBuf = new int16_t[nTotalSamples];
+			bHeapAlloc = true;
+		}
+
+		for (unsigned int i = 0; i < nTotalSamples; i++)
+		{
+			double val = (double)data[i] * volume;
+			if (val > 32767.0)
+				val = 32767.0;
+			else if (val < -32768.0)
+				val = -32768.0;
+			pVolBuf[i] = (int16_t)val;
+		}
+
+		RingBuf_Write(info->pAudioRingBuffer, pVolBuf, nTotalSamples);
+
+		if (bHeapAlloc)
+			delete[] pVolBuf;
+	}
 
 	return frames;
-	/*
-	int16_t* buffer = info->audiobuffer;
-	unsigned int size = info->audiobuffersize;
-	unsigned int pos = info->audiobufferpos;
-
-	unsigned int processedCount = size - pos;
-	if (processedCount > frames)
-		processedCount = frames;
-
-	if (processedCount > 0)
-	{
-		Q_memcpy(buffer + (pos * 2), data, sizeof(int16_t) * processedCount * 2);
-		info->audiobufferpos += processedCount;
-	}
-
-	return processedCount;
-	*/
 }
 
 void C_LibretroInstance::cbInputPoll(void)
@@ -3589,13 +4333,25 @@ int16_t C_LibretroInstance::cbInputState(unsigned port, unsigned device, unsigne
 	int iCurrentSeconds = pLibretroInstance->CurrentSeconds();
 	LibretroInstanceInfo_t* info = pLibretroInstance->GetInfo();
 
-	// only accept input from port0 device1 index0
-	if (info->close || !info->inputstate || port != 0 || device != 1 || index != 0)
+	if (info->close || !info->inputstate || port != 0)
+		return (int16_t)0;
+
+	// Handle RETRO_DEVICE_ANALOG: direct lookup from inputstate
+	if (device == RETRO_DEVICE_ANALOG)
+	{
+		if (pLibretroInstance->FastForwardSeconds() > iCurrentSeconds + 10)
+			return (int16_t)0;
+
+		std::string keyPath = "port" + std::to_string(port) + "/device" + std::to_string(device) + "/index" + std::to_string(index) + "/key" + std::to_string(id);
+		return (int16_t)info->inputstate->GetInt(keyPath.c_str());
+	}
+
+	// Only accept JOYPAD (device 1) index 0 from here on
+	if (device != RETRO_DEVICE_JOYPAD || index != 0)
 		return (int16_t)0;
 
 	if (pLibretroInstance->FastForwardSeconds() > iCurrentSeconds + 10)
 	{
-		//DevMsg("Dif: %i\n", (pLibretroInstance->FastForwardSeconds() > iCurrentSeconds + 10));
 		if (port == 0 && device == 1 && index == 0)
 		{
 			if (id == 4 && pLibretroInstance->FastForwardSeconds() > iCurrentSeconds + 60)	// 4 = 60 seconds
@@ -3628,9 +4384,6 @@ int16_t C_LibretroInstance::cbInputState(unsigned port, unsigned device, unsigne
 		return (int16_t)0;
 	}
 
-	//int intVal = info->inputstate->GetInt(VarArgs("port%u/device%u/index%u/key%u", port, device, index, id), 0);
-	//return (int16_t)intVal;
-
 	std::string keyPath = "port" + std::to_string(port) + "/device" + std::to_string(device) + "/index" + std::to_string(index) + "/key" + std::to_string(id);
 	int val = (int16_t)info->inputstate->GetInt(keyPath.c_str());
 
@@ -3638,7 +4391,6 @@ int16_t C_LibretroInstance::cbInputState(unsigned port, unsigned device, unsigne
 	{
 		if (id == 4)	// 4 = 60 seconds
 		{
-			//DevMsg("%i vs %i\n", val, pLibretroInstance->GetLastDelta());
 			if (val != 0 && pLibretroInstance->GetLastDelta() == 0)
 				pLibretroInstance->FastForward(60);
 			else if (val == 0 && pLibretroInstance->GetLastDelta() == 60)
@@ -3666,76 +4418,14 @@ int16_t C_LibretroInstance::cbInputState(unsigned port, unsigned device, unsigne
 				pLibretroInstance->SetLastDelta(0);
 		}
 	}
-	//if (info->inputstate->GetInt(keyPath.c_str()))
-	//	DevMsg("KEY: %s\n", keyPath.c_str());
 	return (int16_t)val;
-
-	//KeyValues* kv = info->inputstate->FindKey();
-	//if (!kv)
-//		return (int16_t)0;
-
-	//int intVal = kv->GetInt();
-	//if ( id > 11 && intVal != 0)
-	//	DevMsg("Looking for ID: %u = %i\n", id, intVal);
-
-	//return (int16_t)intVal;
-		//pLibretroInstance->GetInputState(info, port, device, index, id);
-
-	/*
-	#define RETRO_DEVICE_ID_JOYPAD_B        0
-	#define RETRO_DEVICE_ID_JOYPAD_Y        1
-	#define RETRO_DEVICE_ID_JOYPAD_SELECT   2
-	#define RETRO_DEVICE_ID_JOYPAD_START    3
-	#define RETRO_DEVICE_ID_JOYPAD_UP       4
-	#define RETRO_DEVICE_ID_JOYPAD_DOWN     5
-	#define RETRO_DEVICE_ID_JOYPAD_LEFT     6
-	#define RETRO_DEVICE_ID_JOYPAD_RIGHT    7
-	#define RETRO_DEVICE_ID_JOYPAD_A        8
-	#define RETRO_DEVICE_ID_JOYPAD_X        9
-	#define RETRO_DEVICE_ID_JOYPAD_L       10
-	#define RETRO_DEVICE_ID_JOYPAD_R       11
-	#define RETRO_DEVICE_ID_JOYPAD_L2      12
-	#define RETRO_DEVICE_ID_JOYPAD_R2      13
-	#define RETRO_DEVICE_ID_JOYPAD_L3      14
-	#define RETRO_DEVICE_ID_JOYPAD_R3      15
-	*/
-	//DevMsg("libretro: Input State called.\n");
-	//DevMsg("libretro: Input State called with port %u, device %u, index %u, and ID %u.\n", port, device, index, id);
-
-	// only accept input from player 1
-	//if (port != 0 || device != 1 || index != 0)
-	//	return (int16_t)0;
-
-	//DevMsg("%i %i %i\n", port, device, index);
-	// FIXME: index could allow for additional devices PER port, which would require significant changes to support.  However AArcade will rarely be used by more than 1 local player, so support for index probably isn't needed.  supoorting N input ports is enough.
-
-	//std::string retrokey = g_pAnarchyManager->GetLibretroManager()->RetroKeyboardKeyToString((retro_key)index);
-	//std::string retrodevice = g_pAnarchyManager->GetLibretroManager()->RetroDeviceToString(device);
-
-	//int max = 32767;
-	//max *= info->inputstate[retrokey];
-	//int16_t max = 0x7fff;	//32767
-
-
-//	if (info->inputstate.find(retrokey) != info->inputstate.end() )
-//		return (int16_t)info->inputstate[retrokey];
-//	else
-//		return (int16_t)0;
 }
 
 void C_LibretroInstance::ResizeFrameFromRGB565(const void* pSrc, void* pDst, unsigned int sourceWidth, unsigned int sourceHeight, size_t sourcePitch, unsigned int sourceDepth, unsigned int destWidth, unsigned int destHeight, size_t destPitch, unsigned int destDepth)
 {
-//	uint uId = ThreadGetCurrentId();
-//	C_LibretroInstance* pLibretroInstance = g_pAnarchyManager->GetLibretroManager()->FindLibretroInstance(uId);
-//	LibretroInstanceInfo_t* info = pLibretroInstance->GetInfo();
-
 	LibretroInstanceInfo_t* info = m_info;
 	if (!info->lastframedata)
 		return;
-	
-	//info->readyfornextframe = false;
-
-	//	DevMsg("Resizing a %ux%u %iBBP (%i pitch) image to %ux%u %iBBP (%i pitch)\n", sourceWidth, sourceHeight, sourceDepth, sourcePitch, destWidth, destHeight, destDepth, destPitch);
 
 	WORD red_mask = 0xF800;
 	WORD green_mask = 0x7E0;
@@ -3772,22 +4462,13 @@ void C_LibretroInstance::ResizeFrameFromRGB565(const void* pSrc, void* pDst, uns
 		pDstRow += destPitch;
 	}
 
-	//info->readyfornextframe = true;
 }
 
 void C_LibretroInstance::ResizeFrameFromRGB1555(const void* pSrc, void* pDst, unsigned int sourceWidth, unsigned int sourceHeight, size_t sourcePitch, unsigned int sourceDepth, unsigned int destWidth, unsigned int destHeight, size_t destPitch, unsigned int destDepth)
 {
-//	uint uId = ThreadGetCurrentId();
-//	C_LibretroInstance* pLibretroInstance = g_pAnarchyManager->GetLibretroManager()->FindLibretroInstance(uId);
-//	LibretroInstanceInfo_t* info = pLibretroInstance->GetInfo();
-
 	LibretroInstanceInfo_t* info = m_info;
 	if (!info->lastframedata)
 		return;
-
-	//info->readyfornextframe = false;
-
-	//	DevMsg("Resizing a %ux%u %iBBP (%i pitch) image to %ux%u %iBBP (%i pitch)\n", sourceWidth, sourceHeight, sourceDepth, sourcePitch, destWidth, destHeight, destDepth, destPitch);
 
 	WORD red_mask = 0x7C00;
 	WORD green_mask = 0x03E0;
@@ -3824,46 +4505,20 @@ void C_LibretroInstance::ResizeFrameFromRGB1555(const void* pSrc, void* pDst, un
 		pDstRow += destPitch;
 	}
 
-	//info->readyfornextframe = true;
 }
 
-void C_LibretroInstance::ResizeFrameFromXRGB8888(const void* pSrc, void* pDst, unsigned int sourceWidth, unsigned int sourceHeight, size_t sourcePitch, unsigned int sourceDepth, unsigned int destWidth, unsigned int destHeight, size_t destPitch, unsigned int destDepth)
+void C_LibretroInstance::ResizeFrameFromXRGB8888(const void* pSrc, void* pDst, unsigned int sourceWidth, unsigned int sourceHeight, size_t sourcePitch, unsigned int sourceDepth, unsigned int destWidth, unsigned int destHeight, size_t destPitch, unsigned int destDepth, bool bFlip)
 {
-	//DevMsg("Thread ID: %u\n", ThreadGetCurrentId);
-//	uint uId = ThreadGetCurrentId();
-//	C_LibretroInstance* pLibretroInstance = g_pAnarchyManager->GetLibretroManager()->FindLibretroInstance(uId);
-//	LibretroInstanceInfo_t* info = pLibretroInstance->GetInfo();
-	//LibretroInstanceInfo_t* info = m_info;
-
-	//if (!m_info->lastframedata)
-//	DevMsg("Main Lock\n");
 	if (!m_info->lastframedata)
 		return;
 
-//	m_mutex.lock();
-//	if (!m_info->lastframedata || !m_info->readyfornextframe)
-	//	return;
-
-
-	//m_info->readyfornextframe = false;
-
-	//DevMsg("Resizing a %ux%u %iBBP (%i pitch) image to %ux%u %iBBP (%i pitch)\n", sourceWidth, sourceHeight, sourceDepth, sourcePitch, destWidth, destHeight, destDepth, destPitch);
-//	DevMsg("Test: %s\n", pDest);
-
-	unsigned int sourceWidthCopy = sourceWidth;
-	unsigned int sourceHeightCopy = sourceHeight;
-	size_t sourcePitchCopy = sourcePitch;
-	unsigned int sourceDepthCopy = sourceDepth;
-
-	//void* pSrcCopy = malloc(sourcePitchCopy * sourceHeightCopy);
-	//Q_memcpy(pSrcCopy, pSrc, sourcePitchCopy * sourceHeightCopy);
-
-
 	const unsigned char* pRealSrc = (const unsigned char*)pSrc;
 	unsigned char* pDstRow = (unsigned char*)pDst;
 	for (int dstY = 0; dstY<destHeight; dstY++)
 	{
-		unsigned int srcY = dstY * sourceHeight / destHeight;
+		unsigned int srcY = bFlip
+			? (destHeight - 1 - dstY) * sourceHeight / destHeight
+			: dstY * sourceHeight / destHeight;
 		const unsigned char* pSrcRow = pRealSrc + srcY*(sourcePitch);
 
 		unsigned char* pDstCur = pDstRow;
@@ -3882,72 +4537,12 @@ void C_LibretroInstance::ResizeFrameFromXRGB8888(const void* pSrc, void* pDst, u
 
 		pDstRow += destPitch;
 	}
-
-	/*
-	const unsigned char* pRealSrc = (const unsigned char*)pSrc;
-	unsigned char* pDstRow = (unsigned char*)pDst;
-	for (int dstY = 0; dstY<destHeight; dstY++)
-	{
-		unsigned int srcY = dstY * sourceHeight / destHeight;
-		const unsigned char* pSrcRow = pRealSrc + srcY*(sourcePitch);
-
-		unsigned char* pDstCur = pDstRow;
-
-		for (int dstX = 0; dstX<destWidth; dstX++)
-		{
-			int srcX = dstX * sourceWidth / destWidth;
-			pDstCur[0] = pSrcRow[srcX*sourceDepth + 0];
-			pDstCur[1] = pSrcRow[srcX*sourceDepth + 1];
-			pDstCur[2] = pSrcRow[srcX*sourceDepth + 2];
-
-			pDstCur[3] = 255;
-
-			pDstCur += destDepth;
-		}
-
-		pDstRow += destPitch;
-	}
-	*/
-
-//	free(pSrcCopy);
-
-	//m_info->readyfornextframe = true;
-
-//	m_mutex.unlock();
-//	DevMsg("Main Unlock\n");
 }
 
 void C_LibretroInstance::ResizeFrameFromRGB888(const void* pSrc, void* pDst, unsigned int sourceWidth, unsigned int sourceHeight, size_t sourcePitch, unsigned int sourceDepth, unsigned int destWidth, unsigned int destHeight, size_t destPitch, unsigned int destDepth)
 {
-	//DevMsg("Thread ID: %u\n", ThreadGetCurrentId);
-	//	uint uId = ThreadGetCurrentId();
-	//	C_LibretroInstance* pLibretroInstance = g_pAnarchyManager->GetLibretroManager()->FindLibretroInstance(uId);
-	//	LibretroInstanceInfo_t* info = pLibretroInstance->GetInfo();
-	//LibretroInstanceInfo_t* info = m_info;
-
-	//if (!m_info->lastframedata)
-	//	DevMsg("Main Lock\n");
 	if (!m_info->lastframedata)
 		return;
-
-	//	m_mutex.lock();
-	//	if (!m_info->lastframedata || !m_info->readyfornextframe)
-	//	return;
-
-
-	//m_info->readyfornextframe = false;
-
-	//DevMsg("Resizing a %ux%u %iBBP (%i pitch) image to %ux%u %iBBP (%i pitch)\n", sourceWidth, sourceHeight, sourceDepth, sourcePitch, destWidth, destHeight, destDepth, destPitch);
-	//	DevMsg("Test: %s\n", pDest);
-
-	unsigned int sourceWidthCopy = sourceWidth;
-	unsigned int sourceHeightCopy = sourceHeight;
-	size_t sourcePitchCopy = sourcePitch;
-	unsigned int sourceDepthCopy = sourceDepth;
-
-	//void* pSrcCopy = malloc(sourcePitchCopy * sourceHeightCopy);
-	//Q_memcpy(pSrcCopy, pSrc, sourcePitchCopy * sourceHeightCopy);
-
 
 	const unsigned char* pRealSrc = (const unsigned char*)pSrc;
 	unsigned char* pDstRow = (unsigned char*)pDst;
@@ -3972,63 +4567,19 @@ void C_LibretroInstance::ResizeFrameFromRGB888(const void* pSrc, void* pDst, uns
 
 		pDstRow += destPitch;
 	}
-
-	/*
-	const unsigned char* pRealSrc = (const unsigned char*)pSrc;
-	unsigned char* pDstRow = (unsigned char*)pDst;
-	for (int dstY = 0; dstY<destHeight; dstY++)
-	{
-	unsigned int srcY = dstY * sourceHeight / destHeight;
-	const unsigned char* pSrcRow = pRealSrc + srcY*(sourcePitch);
-
-	unsigned char* pDstCur = pDstRow;
-
-	for (int dstX = 0; dstX<destWidth; dstX++)
-	{
-	int srcX = dstX * sourceWidth / destWidth;
-	pDstCur[0] = pSrcRow[srcX*sourceDepth + 0];
-	pDstCur[1] = pSrcRow[srcX*sourceDepth + 1];
-	pDstCur[2] = pSrcRow[srcX*sourceDepth + 2];
-
-	pDstCur[3] = 255;
-
-	pDstCur += destDepth;
-	}
-
-	pDstRow += destPitch;
-	}
-	*/
-
-	//	free(pSrcCopy);
-
-	//m_info->readyfornextframe = true;
-
-	//	m_mutex.unlock();
-	//	DevMsg("Main Unlock\n");
 }
 
 void C_LibretroInstance::CopyLastFrame(unsigned char* dest, unsigned int width, unsigned int height, size_t pitch, unsigned int depth)
 {
-	if ( m_info->copyingframe || !m_info->readytocopyframe || g_pAnarchyManager->GetSuspendEmbedded())
+	if (InterlockedCompareExchange(&m_info->copyingframe, 0, 0) || !InterlockedCompareExchange(&m_info->readytocopyframe, 0, 0) || g_pAnarchyManager->GetSuspendEmbedded())
 		return;
 
-	m_info->copyingframe = true;
-	m_info->readytocopyframe = false;
+	InterlockedExchange(&m_info->copyingframe, 1);
+	InterlockedExchange(&m_info->readytocopyframe, 0);
 
-
-
-	//DevMsg("Render: Do it!\n");
-	//RETRO_PIXEL_FORMAT_0RGB1555
-
-//	uint uId = ThreadGetCurrentId();
-//	C_LibretroInstance* pLibretroInstance = g_pAnarchyManager->GetLibretroManager()->FindLibretroInstance(uId);
-	//LibretroInstanceInfo_t* info = pLibretroInstance->GetInfo();
-	//LibretroInstanceInfo_t* info = m_info;
-
-
-	if (m_info->context_type != RETRO_HW_CONTEXT_NONE)
+	if (AA_LIBRETRO_3D && m_info->context_type != RETRO_HW_CONTEXT_NONE)
 	{
-		this->ResizeFrameFromRGB888(m_info->lastframedata, dest, m_info->lastframewidth, m_info->lastframeheight, m_info->lastframepitch, 3, width, height, pitch, depth);
+		this->ResizeFrameFromXRGB8888(m_info->lastframedata, dest, m_info->lastframewidth, m_info->lastframeheight, m_info->lastframepitch, 4, width, height, pitch, depth, m_info->bottom_left_origin);
 	}
 	else
 	{
@@ -4040,7 +4591,7 @@ void C_LibretroInstance::CopyLastFrame(unsigned char* dest, unsigned int width, 
 			this->ResizeFrameFromRGB1555(m_info->lastframedata, dest, m_info->lastframewidth, m_info->lastframeheight, m_info->lastframepitch, 3, width, height, pitch, depth);
 	}
 
-	m_info->copyingframe = false;
+	InterlockedExchange(&m_info->copyingframe, 0);
 }
 
 void C_LibretroInstance::OnProxyBind(C_BaseEntity* pBaseEntity)
@@ -4048,71 +4599,22 @@ void C_LibretroInstance::OnProxyBind(C_BaseEntity* pBaseEntity)
 	if (g_pAnarchyManager->GetSuspendEmbedded())
 		return;
 
-//	if (m_id == "images")
-//		return;
-
-	/*
-	if ( pBaseEntity )
-	DevMsg("WebTab: OnProxyBind: %i\n", pBaseEntity->entindex());
-	else
-	DevMsg("WebTab: OnProxyBind\n");
-	*/
-
-	// visiblity test
 	if (m_iLastVisibleFrame < gpGlobals->framecount)
 	{
 		m_iLastVisibleFrame = gpGlobals->framecount;
-		//g_pAnarchyManager->GetCanvasManager()->RenderSeen(this);
-		/*
-		if (!g_pAnarchyManager->GetCanvasManager()->IsPriorityEmbeddedInstance(this))
-		{
-		if (!g_pAnarchyManager->GetCanvasManager()->IncrementVisibleCanvasesCurrentFrame(this))
-		return;
-		}
-		else
-		{
-		if (!g_pAnarchyManager->GetCanvasManager()->IncrementVisiblePriorityCanvasesCurrentFrame(this))
-		return;
-		}*/
 
-
-		//if (m_iLastRenderedFrame < gpGlobals->framecount)
-		//{
-			/*
-			if (!g_pAnarchyManager->GetCanvasManager()->IsPriorityEmbeddedInstance(this))
-			g_pAnarchyManager->GetCanvasManager()->IncrementVisibleCanvasesCurrentFrame();
-			else
-			g_pAnarchyManager->GetCanvasManager()->IncrementVisiblePriorityCanvasesCurrentFrame();
-			*/
-
-			//m_info->readytocopyframe
-		// 
 		if (m_bIsDirty && g_pAnarchyManager->GetCanvasManager()->RenderSeen(this) && g_pAnarchyManager->GetCanvasManager()->ShouldRender(this))
 			Render();
-		//}
 	}
 }
 
 bool C_LibretroInstance::IsDirty()
 {
-	//return m_bIsDirty && m_info->readyfornextframe;
-	return m_bIsDirty && !m_info->readyfornextframe && m_info->readytocopyframe;
-
-
-
-	/*if (!!!m_info || !m_info->readytocopyframe)
-		return false;
-	else
-		return true;*/
+	return m_bIsDirty && !InterlockedCompareExchange(&m_info->readyfornextframe, 0, 0) && InterlockedCompareExchange(&m_info->readytocopyframe, 0, 0);
 }
 
 void C_LibretroInstance::Render()
 {
-//	if (m_id == "images")
-	//	return;
-	//DevMsg("Rendering texture: %s\n", m_pTexture->GetName());
-	//	DevMsg("Render Web Tab: %s\n", this->GetTexture()->Ge>GetId().c_str());
-	//DevMsg("WebTab: Render: %s on %i\n", m_id.c_str(), gpGlobals->framecount);
 	g_pAnarchyManager->GetCanvasManager()->GetOrCreateRegen()->SetEmbeddedInstance(this);
 	m_pTexture->Download();
 	g_pAnarchyManager->GetCanvasManager()->GetOrCreateRegen()->SetEmbeddedInstance(null);
@@ -4120,10 +4622,6 @@ void C_LibretroInstance::Render()
 	m_iLastRenderedFrame = gpGlobals->framecount;
 
 	g_pAnarchyManager->GetCanvasManager()->AllowRender(this);
-	//if (g_pAnarchyManager->GetCanvasManager()->IsPriorityEmbeddedInstance(this))
-	//	g_pAnarchyManager->GetCanvasManager()->SetLastPriorityRenderedFrame(gpGlobals->framecount);
-	//else
-	//	g_pAnarchyManager->GetCanvasManager()->SetLastRenderedFrame(gpGlobals->framecount);
 }
 
 void C_LibretroInstance::RegenerateTextureBits(ITexture *pTexture, IVTFTexture *pVTFTexture, Rect_t *pSubRect)
@@ -4131,9 +4629,6 @@ void C_LibretroInstance::RegenerateTextureBits(ITexture *pTexture, IVTFTexture *
 	if (g_pAnarchyManager->GetSuspendEmbedded())
 		return;
 
-	if (!m_info->state == 5)
-		return;
-	
 	this->CopyLastFrame(pVTFTexture->ImageData(0, 0, 0), pSubRect->width, pSubRect->height, pSubRect->width * 4, 4);
 
 	if (m_bTakeScreenshot) {
@@ -4177,7 +4672,7 @@ void C_LibretroInstance::RegenerateTextureBits(ITexture *pTexture, IVTFTexture *
 	}
 
 	m_bIsDirty = false;
-	m_info->readyfornextframe = true;
+	InterlockedExchange(&m_info->readyfornextframe, 1);
 }
 
 C_InputListener* C_LibretroInstance::GetInputListener()
@@ -4217,7 +4712,7 @@ void C_LibretroInstance::SaveLibretroKeybind(std::string type, unsigned int retr
 	if (found != std::string::npos)
 		prettyCore = prettyCore.substr(0, found);
 	prettyCore.erase(std::remove(prettyCore.begin(), prettyCore.end(), '.'), prettyCore.end());
-	
+
 	// pretty GAME
 	std::string prettyGame = m_info->game;
 	found = prettyGame.find_last_of("/\\");
@@ -4228,8 +4723,6 @@ void C_LibretroInstance::SaveLibretroKeybind(std::string type, unsigned int retr
 	if (found != std::string::npos)
 		prettyGame = prettyGame.substr(0, found);
 	prettyGame.erase(std::remove(prettyGame.begin(), prettyGame.end(), '.'), prettyGame.end());
-
-	//std::replace(prettyGame.begin(), prettyGame.end(), '.', '-');
 
 	// now do keybind stuff
 	KeyValues* kv;
@@ -4273,14 +4766,6 @@ void C_LibretroInstance::SaveLibretroKeybind(std::string type, unsigned int retr
 	fresh->SaveToFile(g_pFullFileSystem, VarArgs("%s\\keybinds.key", savePath.c_str()), "DEFAULT_WRITE_PATH");
 	if (type != "libretro")
 		fresh->deleteThis();
-
-	//g_pFullFileSystem->CreateDirHierarchy(savePath.c_str(), "DEFAULT_WRITE_PATH");
-	//kv->SaveToFile(g_pFullFileSystem, VarArgs("%s\\keybinds.key", savePath.c_str()), "DEFAULT_WRITE_PATH");
-
-	// update the ACTIVE keymap of pointers // OBSOLETE: just check all 3 KV's in hiarchy each poll
-	//retro_key retrokeyresolved = g_pAnarchyManager->GetLibretroManager()->StringToRetroKeyEnum(retrokey);
-	//vgui::KeyCode steamkeyresolved = g_pAnarchyManager->GetInputManager()->StringToSteamKeyEnum(steamkey);
-	//m_info->activekeybinds->SetString(VarArgs("port%u/%s/%s", retroport, retrotype.c_str(), retrokey.c_str()), steamkey.c_str());
 }
 
 void C_LibretroInstance::GetLastMouse(float &fMouseX, float &fMouseY)
@@ -4362,8 +4847,6 @@ void C_LibretroInstance::OnSecondsUpdated()
 	int iSeconds = this->CurrentSeconds();
 	if (iSeconds >= m_iFastForwardSeconds)	//iSeconds >
 	{
-		//if (!m_pHudVoid)
-		//	m_pHudVoid = (void*)g_pAnarchyManager->GetAwesomiumBrowserManager()->FindAwesomiumBrowserInstance("hud");
 		m_iFastForwardSeconds = iSeconds;
 		C_AwesomiumBrowserInstance* pNetwork = g_pAnarchyManager->GetAwesomiumBrowserManager()->FindAwesomiumBrowserInstance("network");
 		if (pNetwork)
@@ -4384,7 +4867,6 @@ int C_LibretroInstance::GetLibretroStartSeconds()
 void C_LibretroInstance::SetAdjustedStartTime()
 {
 	m_iAdjustedStartTime = static_cast<int>(ceil(engine->Time()));
-	//DevMsg("Start time: %i (%f)\n", m_iAdjustedStartTime, round(engine->Time()));
 }
 
 void C_LibretroInstance::FastForward(int iAmount, bool bAutoSkip)
@@ -4415,8 +4897,6 @@ void C_LibretroInstance::Rewind(int iAmount, bool bAutoSkip)
 		return;
 
 	m_iAdjustedStartTime -= iAmount;
-	//if (m_iAdjustedStartTime < 0)
-	//	m_iAdjustedStartTime = 0;
 
 	m_iLastDelta = iAmount;
 

@@ -2505,6 +2505,11 @@ void JSHandler::OnMethodCall(WebView* caller, unsigned int remote_object_id, con
 		if (pLibretroInstance)
 			pLibretroInstance->SaveLibretroOption(type, name_internal, value);
 	}
+	else if (methodName == "resetLibretroCoreOptions")
+	{
+		std::string coreName = Awesomium::ToString(args[iArgOffset + 0].ToString());
+		g_pAnarchyManager->GetLibretroManager()->ResetCoreOptions(coreName);
+	}
 	else if (methodName == "spawnNearestObject")
 	{
 		C_AwesomiumBrowserInstance* pHudBrowserInstance = g_pAnarchyManager->GetAwesomiumBrowserManager()->FindAwesomiumBrowserInstance("hud");
@@ -7029,7 +7034,7 @@ JSValue JSHandler::OnMethodCallWithReturnValue(WebView* caller, unsigned int rem
 
 				response.SetProperty(WSLit("core"), WSLit(pInfo->core.c_str()));
 				response.SetProperty(WSLit("game"), WSLit(pInfo->game.c_str()));
-				
+
 				DevMsg("Adding libretro options to response...\n");
 				//std::vector<libretro_core_option*>& libretroOptions = pLibretroInstance->GetAllOptions();
 				JSArray options;
@@ -7046,9 +7051,15 @@ JSValue JSHandler::OnMethodCallWithReturnValue(WebView* caller, unsigned int rem
 				{
 					libretroOption = pInfo->options[i];// libretroOptions[i];
 
+					// V2 options have an explicit default_value; V0 options fall back to values[0]
+					const char* trueDefault = libretroOption->default_value.empty()
+						? libretroOption->values[0].c_str()
+						: libretroOption->default_value.c_str();
+
 					JSObject option;
 					option.SetProperty(WSLit("name_internal"), WSLit(libretroOption->name_internal.c_str()));
 					option.SetProperty(WSLit("name_display"), WSLit(libretroOption->name_display.c_str()));
+					option.SetProperty(WSLit("default_value"), WSLit(trueDefault));
 
 					if (type == "core")
 						kv = pInfo->coreCoreOptions;
@@ -7062,14 +7073,14 @@ JSValue JSHandler::OnMethodCallWithReturnValue(WebView* caller, unsigned int rem
 							kv = pInfo->coreCoreOptions;
 					}
 
-					if (type == "game" || type == "core" )
+					if (type == "game" || type == "core")
 						option.SetProperty(WSLit("current"), WSLit(kv->GetString(libretroOption->name_internal.c_str(), "default")));
 					else
 					{
 						if (Q_strcmp(kv->GetString(libretroOption->name_internal.c_str(), "default"), "default"))
 							option.SetProperty(WSLit("current"), WSLit(kv->GetString(libretroOption->name_internal.c_str(), "default")));
 						else
-							option.SetProperty(WSLit("current"), WSLit(pInfo->options[i]->values[0].c_str()));
+							option.SetProperty(WSLit("current"), WSLit(trueDefault));
 					}
 
 					// add the ACTIVE value
@@ -7080,7 +7091,7 @@ JSValue JSHandler::OnMethodCallWithReturnValue(WebView* caller, unsigned int rem
 					if (Q_strcmp(activekv->GetString(libretroOption->name_internal.c_str(), "default"), "default"))
 						option.SetProperty(WSLit("active"), WSLit(activekv->GetString(libretroOption->name_internal.c_str(), "default")));
 					else
-						option.SetProperty(WSLit("active"), WSLit(pInfo->options[i]->values[0].c_str()));
+						option.SetProperty(WSLit("active"), WSLit(trueDefault));
 
 					// add the DEFAULT value
 					defaultkv = pInfo->coreCoreOptions;
@@ -7088,7 +7099,7 @@ JSValue JSHandler::OnMethodCallWithReturnValue(WebView* caller, unsigned int rem
 					if (type == "game" && Q_strcmp(defaultkv->GetString(libretroOption->name_internal.c_str(), "default"), "default"))
 						option.SetProperty(WSLit("default"), WSLit(defaultkv->GetString(libretroOption->name_internal.c_str(), "default")));
 					else
-						option.SetProperty(WSLit("default"), WSLit(pInfo->options[i]->values[0].c_str()));
+						option.SetProperty(WSLit("default"), WSLit(trueDefault));
 
 					//option.SetProperty(WSLit("current"), WSLit(pLibretroInstance->GetOptionCurrentValue(libretroOption->name_internal).c_str()));
 					//option.SetProperty(WSLit("current"), WSLit(VarArgs("%i", pLibretroInstance->GetOptionCurrentValue(i))));

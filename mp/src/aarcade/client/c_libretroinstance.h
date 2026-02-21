@@ -9,31 +9,9 @@
 #include <vector>
 #include <map>
 
-// openGL stuff
-#include <stdio.h>
-#include <stdlib.h>
-// Include GLEW. Always include it before gl.h and glfw.h, since it's a bit magic.
-/*#include <GL/glew.h>
-#include <GLFW/glfw3.h>
-#define GLFW_EXPOSE_NATIVE_WIN32 true
-#define GLFW_EXPOSE_NATIVE_WGL true
-#include <GLFW/glfw3native.h>*/
-//#include <mutex>
-//#include "c_libretrosurfaceregen.h"
-//#include <map>
-
-/*
-typedef struct
-{
-	float left_phase;
-	float right_phase;
-}
-paTestData;
-*/
-
 struct RunningLibretroCores_t
 {
-	int count;
+	volatile long count;
 	std::string last_error;
 	std::string last_msg;
 };
@@ -73,6 +51,7 @@ struct libretro_raw {
 struct libretro_core_option {
 	std::string name_internal;
 	std::string name_display;
+	std::string default_value;
 	std::vector<std::string> values;
 };
 
@@ -96,20 +75,35 @@ struct memory_map_t {
 	uint8_t* videoramdata;
 };
 
+static const unsigned int AUDIO_RING_BUFFER_SAMPLES = 4096; // Power of 2, ~43ms at 48kHz stereo
+
+struct AudioRingBuffer_t
+{
+	int16_t*      pBuffer;     // Heap-allocated interleaved stereo samples
+	unsigned int  nCapacity;   // Always AUDIO_RING_BUFFER_SAMPLES
+	unsigned int  nMask;       // nCapacity - 1 for fast modulo
+	volatile long nWritePos;   // Producer cursor (monotonically increasing)
+	volatile long nReadPos;    // Consumer cursor (monotonically increasing)
+};
+
 struct LibretroInstanceInfo_t
 {
 	RunningLibretroCores_t* runninglibretrocores;
-	int state;
-	bool paused;
-	bool reset;
-	bool close;
+	volatile int state;
+	volatile bool paused;
+	volatile bool reset;
+	volatile bool close;
+	void* hThreadDoneEvent;		// Windows Event HANDLE - signaled when worker thread exits
+	volatile long bForceShutdown;	// Set by main thread after timeout to skip remaining core calls
+	volatile bool bDidInit;			// True after raw->init() succeeds; gates unload_game/deinit during cleanup
+	volatile bool bCallbacksRegistered;	// True after set_video_refresh/set_audio_* registered; deferred for mesen-like cores
 	std::string id;
-	bool ready;
-	bool readyfornextframe;
-	bool copyingframe;
-	bool readytocopyframe;
-	bool coreloaded;
-	bool gameloaded;
+	volatile bool ready;
+	volatile long readyfornextframe;	// 0 or 1, use InterlockedExchange for writes
+	volatile long copyingframe;			// 0 or 1, use InterlockedExchange for writes
+	volatile long readytocopyframe;		// 0 or 1, use InterlockedExchange for writes
+	volatile bool coreloaded;
+	volatile bool gameloaded;
 	libretro_raw* raw;
 	std::string corepath;
 	std::string assetspath;
@@ -121,77 +115,30 @@ struct LibretroInstanceInfo_t
 	std::string core;
 	std::string game;
 	std::vector<libretro_core_option*> options;
-	//unsigned int numOptions;
-	//std::map<std::string, std::string> optioncurrentvalues;
-	//std::vector<int> optionscurrentvalues;
+	std::vector<char*> allocated_variable_strings; // Track allocated strings for RETRO_ENVIRONMENT_GET_VARIABLE to prevent memory leaks
+	std::vector<retro_game_info_ext*> allocated_game_info_ext; // Track allocated game info ext structures
 	void* lastframedata;
+	size_t lastframebuffersize;		// Allocated size of lastframedata buffer for reuse
 	unsigned int lastframewidth;
 	unsigned int lastframeheight;
 	size_t lastframepitch;
 	retro_pixel_format videoformat;
-	bool optionshavechanged;
-	//int16_t* audiobuffer;
-	//int audiobuffersize;
-	//int audiobufferpos;
-	//void* audiostream;
+	volatile bool optionshavechanged;
 	PaStream* audiostream;
+	AudioRingBuffer_t* pAudioRingBuffer;
 	float samplerate;
+	float outputsamplerate;        // Actual PortAudio output rate (0 = no resampling needed)
+	double resampleAccumulator;    // Fractional source position carried between cbAudioSampleBatch calls
 	float framerate;
 	float lastrendered;
 	float volume;
-	//int16_t* audiobuffer;
-	//unsigned int audiobuffersize;
-	//unsigned int audiobufferpos;
-	//int16_t* safebuffer;
-	//unsigned int safebuffersize;
-	//unsigned int safebufferpos;
-	bool processingaudio;
-	//std::map<std::string, float> inputstate;
-//	GLFWwindow* window;
-//	GLuint* framebuffer;
 
+	// OpenGL hardware rendering (only used when AA_LIBRETRO_3D = true)
+	void* gl_context;                    // Opaque pointer to LibretroGLContext
 
-	//used elements:
-	//context_type - handled
-	//context_reset - TODO
-	//get_current_framebuffer - handled externally
-	//get_proc_address - handled externally
-	//depth - handled
-	//stencil - handled
-	//bottom_left_origin - TODO
-	//version_major - handled
-	//version_minor - handled
-	//cache_context - ignored (treated as always true)
-	//context_destroy - TODO
-	//debug_context - handled
-	/*
-	video* out_chain;
-	sh_vercoordloc;
-	sh_texcoordloc;
-	sh_texcoordbuf;
-	sh_vertexbuf_first;
-	hdc;
-	bool is3d;
-	in_texwidth;
-	in_texheight;
-	in_lastwidth;
-	in_lastheight;
-	out_width;
-	out_height;
-	in_texwidth;
-	in_texheight;
-
-	unsigned int sh_passes;
-	GLuint sh_prog;
-	GLuint sh_tex;
-	GLuint sh_fbo;
-	in2_fmt;
-	in2_type;
-	in2_bytepp;
-	in3;//
-	in3_renderbuffer;
-	*/
-
+	// HW context fields used: context_type, context_reset, get_current_framebuffer,
+	// get_proc_address, depth, stencil, version_major/minor, debug_context
+	// TODO: bottom_left_origin, context_destroy
 
 	const retro_controller_info* portdata;
 	std::vector<int> currentPortTypes;
@@ -220,6 +167,22 @@ struct LibretroInstanceInfo_t
 	bool need_fullpath;	// If true, retro_load_game() is guaranteed to provide a valid pathname in retro_game_info::path. ::data and ::size are both invalid. If false, ::data and ::size are guaranteed to be valid, but ::path might not be valid. This is typically set to true for libretro implementations that must load from file. Implementations should strive for setting this to false, as it allows the frontend to perform patching, etc.
 	bool block_extract;	// If true, the frontend is not allowed to extract any archives before loading the real content. Necessary for certain libretro implementations that load games from zipped archives.
 
+	// Content info override support (RETRO_ENVIRONMENT_SET_CONTENT_INFO_OVERRIDE)
+	std::vector<retro_system_content_info_override> content_overrides;
+	bool has_content_overrides;
+
+	// Extended game info tracking (RETRO_ENVIRONMENT_GET_GAME_INFO_EXT)
+	std::string loaded_full_path;        // Full path to the loaded content file
+	std::string loaded_archive_path;     // Path to archive file (if file_in_archive = true)
+	std::string loaded_archive_file;     // Name of file within archive
+	std::string loaded_dir;              // Directory containing the content/archive
+	std::string loaded_name;             // Canonical name (basename without extension)
+	std::string loaded_ext;              // File extension in lowercase
+	bool loaded_file_in_archive;         // True if content was extracted from an archive
+	bool loaded_persistent_data;         // Whether data buffer remains valid after load_game
+	const void* loaded_data;             // Pointer to loaded game data buffer (valid during load_game)
+	size_t loaded_data_size;             // Size of loaded game data buffer
+
 	size_t statesize;
 	void* statedata;// = malloc(pitch*height);
 
@@ -232,7 +195,6 @@ struct LibretroInstanceInfo_t
 	bool soundAllowed;
 
 
-	//KeyValues* activekeybinds;
 };
 
 class C_LibretroInstance : public C_EmbeddedInstance
@@ -256,7 +218,6 @@ public:
 	void SaveOverlay(std::string type, std::string overlayId, float x, float y, float width, float height);
 	void ClearOverlay(std::string type, std::string overlayId);
 	void Init(std::string id, std::string title, int iEntIndex);
-	//void Reinit();
 	bool CreateWorkerThread(std::string core);
 	void Update();
 	void TakeScreenshot(std::string nextTaskScreenshotName = "");
@@ -271,10 +232,9 @@ public:
 	void OnCoreLoaded();
 	std::string GetLibretroCore();
 	std::string GetLibretroFile();
-	//float GetLibretroVolume();
 	static bool BuildInterface(libretro_raw* raw, void* pLib);
 	static void CreateAudioStream();
-	static void DestroyAudioStream();
+	static void DestroyAudioStream(LibretroInstanceInfo_t* info);
 	std::string GetOriginalItemId() { return m_originalItemId; }
 	int GetOriginalEntIndex() { return m_iOriginalEntIndex; }
 	void SetOriginalItemId(std::string itemId) { m_originalItemId = itemId; }
@@ -282,8 +242,6 @@ public:
 
 	bool HasInfo() { return (m_info != null); }
 	std::vector<libretro_core_option*>& GetAllOptions() { return m_info->options; }	// others should always check if m_info exists first themselves!!
-	//int GetOptionCurrentValue(unsigned int index);
-	//std::string GetOptionCurrentValue(std::string name_internal);
 
 	bool IsSelected();
 	bool HasFocus();
@@ -297,14 +255,7 @@ public:
 
 	std::string GetURL() { return ""; }
 
-
-	// threaded
-	//unsigned Worker(void *params);
-
-//	int16_t GetInputState(LibretroInstanceInfo_t* info, unsigned int port, unsigned int device, unsigned int index, unsigned int id);
-
 	// callbacks
-	//static void cbRetroFrameTime(retro_usec_t usec);
 	static void cbMessage(enum retro_log_level level, const char * fmt, ...);
 	static bool cbEnvironment(unsigned cmd, void* data);
 	static void cbVideoRefresh(const void * data, unsigned width, unsigned height, size_t pitch);
@@ -315,7 +266,7 @@ public:
 
 	void ResizeFrameFromRGB565(const void* pSrc, void* pDst, unsigned int sourceWidth, unsigned int sourceHeight, size_t sourcePitch, unsigned int sourceDepth, unsigned int destWidth, unsigned int destHeight, size_t destPitch, unsigned int destDepth);
 	void ResizeFrameFromRGB1555(const void* pSrc, void* pDst, unsigned int sourceWidth, unsigned int sourceHeight, size_t sourcePitch, unsigned int sourceDepth, unsigned int destWidth, unsigned int destHeight, size_t destPitch, unsigned int destDepth);
-	void ResizeFrameFromXRGB8888(const void* pSrc, void* pDst, unsigned int sourceWidth, unsigned int sourceHeight, size_t sourcePitch, unsigned int sourceDepth, unsigned int destWidth, unsigned int destHeight, size_t destPitch, unsigned int destDepth);
+	void ResizeFrameFromXRGB8888(const void* pSrc, void* pDst, unsigned int sourceWidth, unsigned int sourceHeight, size_t sourcePitch, unsigned int sourceDepth, unsigned int destWidth, unsigned int destHeight, size_t destPitch, unsigned int destDepth, bool bFlip = false);
 	void ResizeFrameFromRGB888(const void* pSrc, void* pDst, unsigned int sourceWidth, unsigned int sourceHeight, size_t sourcePitch, unsigned int sourceDepth, unsigned int destWidth, unsigned int destHeight, size_t destPitch, unsigned int destDepth);
 	void CopyLastFrame(unsigned char* dest, unsigned int width, unsigned int height, size_t pitch, unsigned int depth);
 
@@ -341,7 +292,6 @@ public:
 	int GetLastDelta() { return m_iLastDelta; }
 	int GetAdjustedStartTime() { return m_iAdjustedStartTime; }
 	int FastForwardSeconds() { return m_iFastForwardSeconds; }
-	//bool GetIsAudioPlaying() { return m_bAudioIsPlaying; }
 	void GetLastMouse(float &fMouseX, float &fMouseY);
 	std::string GetOverlayId() { return m_overlayId; }
 	libretro_raw* GetRaw() { return m_raw; }
@@ -350,9 +300,7 @@ public:
 	int GetLastVisibleFrame() { return m_iLastVisibleFrame; }
 	int GetLastRenderedFrame() { return m_iLastRenderedFrame; }
 	C_InputListener* GetInputListener();
-	//std::mutex m_mutex;
 	std::string GetOriginalGame() { return m_originalGame; }
-//	std::string GetOriginalItemId() { return m_originalItemId; }
 	std::string GetTitle() { return m_title; }
 	bool GetShouldReopen() { return m_bShouldReopen; }
 	bool GetFinishedResuming() { return m_bFinishedResuming; }
@@ -360,10 +308,8 @@ public:
 	// mutators
 	void SetFastForwardSeconds(int iValue) { m_iFastForwardSeconds = iValue; }
 	void SetLastDelta(int iVal) { m_iLastDelta = iVal; }
-	//void SetIsAudioPlaying(bool bVal) { m_bAudioIsPlaying = bVal; }
 	bool SetGame(std::string file);
-	void SetOriginalGame(std::string file);// { m_originalGame = file; }
-//	void SetOriginalItemId(std::string itemId) { m_originalItemId = itemId; }
+	void SetOriginalGame(std::string file);
 	void SetTitle(std::string title) { m_title = title; }
 	void SetShouldReopen(bool bValue) { m_bShouldReopen = bValue; }
 	void MarkAsDirty() { m_bIsDirty = true; }
@@ -373,16 +319,12 @@ private:
 	bool m_bTakeScreenshot;
 	ConVar* m_pLocalVideoBehaviorConVar;
 	bool m_bGotTime;
-	//C_AwesomiumBrowserInstance* m_pHud;
 	int m_iLastDelta;
-	//int m_iCurrentSeconds;
 	bool m_bFinishedResuming;
 	int m_iFastForwardSeconds;
 	int m_iAdjustedStartTime;
-	//bool m_bAudioIsPlaying;
 	bool m_bIsDirty;
 	ConVar* m_pProjectorFixConVar;
-	//static bool s_bSoundInitialized;
 	float m_fLastMouseX;
 	float m_fLastMouseY;
 	bool m_bShouldReopen;
@@ -397,92 +339,8 @@ private:
 	std::string m_id;
 	std::string m_originalItemId;
 	libretro_raw* m_raw;
-	//std::string m_userBase;
-	//std::string m_corePath;
-	//std::string m_assetsPath;
-	//std::string m_systemPath;
-	//std::string m_savePath;
 	LibretroInstanceInfo_t* m_info;
 	int m_iOriginalEntIndex;
-	//float m_fPositionX;
-	//float m_fPositionY;
-	//float m_fSizeX;
-	//float m_fSizeY;
-	//std::string m_file;
-	//C_OpenGLManager* m_pOpenGLManager;
-	//CSysModule* m_pModule;
 };
 
-/*
-//-----------------------------------------------------------------------------
-// A thread that can execute a function asynchronously.
-//-----------------------------------------------------------------------------
-class CMyAsyncThread : public CWorkerThread
-{
-public:
-	CMyAsyncThread() :
-		m_Parameter1(NULL),
-		m_Parameter2(NULL)
-	{
-		SetName("MyAsyncThread");
-	}
-
-	~CMyAsyncThread()
-	{
-	}
-
-	enum
-	{
-		CALL_FUNC,
-		EXIT,
-	};
-
-	bool	CallThreadFunction(char* Parameter1, char* Parameter2)
-	{
-		Assert(!Parameter1);
-		Assert(!Parameter2);
-		m_Parameter1 = Parameter1;
-		m_Parameter2 = Parameter2;
-		CallWorker(CALL_FUNC);
-
-		return true;
-	}
-
-	int Run()
-	{
-		unsigned nCall;
-		while (WaitForCall(&nCall))
-		{
-			if (nCall == EXIT)
-			{
-				Reply(1);
-				break;
-			}
-
-			// Reset some variables
-			char* Parameter1 = m_Parameter1;
-			char* Parameter2 = m_Parameter2;
-			m_Parameter1 = 0;
-			m_Parameter2 = 0;
-
-			Reply(1);
-
-			FunctionToBeRunFromInsideTheThread(Parameter1, Parameter2);
-			Update();
-		}
-		return 0;
-	}
-
-private:
-	char* m_Parameter1;
-	char* m_Parameter2;
-
-public:
-	bool FunctionToBeRunFromInsideTheThread(char* Parameter1, char* Parameter2);
-	void Update();
-	static bool cbEnvironment(unsigned cmd, void* data);
-};
-
-static CMyAsyncThread g_CMyAsyncThread;
-*/
 #endif

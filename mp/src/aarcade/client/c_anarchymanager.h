@@ -771,6 +771,11 @@ public:
 	void PerformAutoScreenshot();
 
 	// accessors
+	float GetJoystickForward() { return m_flPreviousJoystickForward; }
+	float GetJoystickSide() { return m_flPreviousJoystickSide; }
+	float GetJoystickPitch() { return m_flPreviousJoystickPitch; }
+	float GetJoystickYaw() { return m_flPreviousJoystickYaw; }
+
 	aaPetStaggerPattern GetCurrentStaggerPattern() { return m_eStaggerPattern; }
 	std::string GetFailedModelThumbName() { return failedModelName; }
 	ISourceVirtualReality::VREye GetEye() { return m_eye; }
